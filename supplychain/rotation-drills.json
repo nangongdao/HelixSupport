@@ -37,6 +37,12 @@
       "ran_at": "2026-08-21T07:37:41.060982+00:00",
       "passed": true,
       "details": "1 run, 0 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-23T15:37:13.200026+00:00",
+      "passed": true,
+      "details": "1 run, 0 failures"
     }
   ]
 }

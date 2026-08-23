@@ -4,7 +4,7 @@
   "drills": [
     {
       "drill_type": "automated_rotation",
-      "started_at": "2026-08-20T15:13:27+00:00",
+      "started_at": "2026-08-23T15:37:13.200026+00:00",
       "owner": "release-eng",
       "scenario": "API key 轮换端到端：runtime issue → config promote → lifecycle.rotate（overlap 窗口内旧 key 仍 200）→ admin revoke → 旧 key 401、新 key 200、旁观 key 200",
       "duration_minutes": 2,
@@ -12,7 +12,7 @@
     },
     {
       "drill_type": "automated_restore",
-      "started_at": "2026-08-20T15:23:15+00:00",
+      "started_at": "2026-08-23T15:40:11.222143+00:00",
       "owner": "release-eng",
       "scenario": "审计 anchor 恢复演练：scratch DB 高危事件 + 真实 anchors/WORM claims → backup.py → restore.py → verify_audit_chain intact → 篡改一行 → verify TAMPER",
       "duration_minutes": 1,
@@ -20,7 +20,7 @@
     },
     {
       "drill_type": "automated_patch_release",
-      "started_at": "2026-08-20T15:33:26+00:00",
+      "started_at": "2026-08-23T15:39:42.274953+00:00",
       "owner": "release-eng",
       "scenario": "安全补丁发布演练：release manifest 构建 + 签名绑定（模拟签名；--cosign-key 时真实签名）+ canary 会话 + 签名/篡改绑定断言 + release 后 diagnostics 监控",
       "duration_minutes": 1,
