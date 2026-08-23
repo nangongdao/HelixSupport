@@ -23,6 +23,7 @@ from app.envelope_crypto import (
     TenantEnvelopeCipher,
     ensure_searchable_fields_are_classified,
 )
+from app.redaction import FIELD_REGISTRY
 
 
 def _seed(db: Database) -> None:
@@ -40,9 +41,7 @@ class EnvelopeCryptoTests(unittest.TestCase):
         self.kms = DiskKeyManagementService(root / "kek")
         self.kms.generate_initial()
         self.keystore = DatabaseDekKeystore(self.db)
-        self.cipher = TenantEnvelopeCipher(
-            self.kms, self.keystore, database=self.db
-        )
+        self.cipher = TenantEnvelopeCipher(self.kms, self.keystore, database=self.db)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -151,9 +150,7 @@ class EnvelopeCryptoTests(unittest.TestCase):
         self.kms.rotate()
         envelope = self.cipher.encrypt_text("t1", "post-rotation write")
         self.assertEqual(int(envelope["kek_version"]), 2)
-        self.assertEqual(
-            int(self.keystore.list_versions("t1")[0]["kek_version"]), 2
-        )
+        self.assertEqual(int(self.keystore.list_versions("t1")[0]["kek_version"]), 2)
 
     def test_rewrap_skips_revoked_deks(self) -> None:
         self.cipher.encrypt_text("t1", "x")
@@ -203,6 +200,23 @@ class EnvelopeFormatTests(unittest.TestCase):
         # An unclassified field must not be indexable.
         with self.assertRaises(ValueError):
             ensure_searchable_fields_are_classified(["made_up_searchable_field"])
+
+    def test_fts_indexes_pass_classification_gate_at_startup(self) -> None:
+        # 43.2 bullet 3 wiring: Database.initialize() runs both FTS index
+        # definitions through the classification gate, so the shipped column
+        # sets are classified (this test failing means an FTS column was
+        # added without a FIELD_REGISTRY entry).
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            db = Database(Path(tmp) / "fts-gate.db")
+            db.initialize()
+
+        knowledge_columns = ["title", "content", "tags", "category", "search_terms"]
+        message_columns = ["content", "search_terms"]
+        for name in knowledge_columns + message_columns:
+            self.assertIn(name, FIELD_REGISTRY)
+        classifications = ensure_searchable_fields_are_classified(knowledge_columns)
+        self.assertEqual(classifications["category"], "public")
+        self.assertEqual(classifications["title"], "confidential")
 
 
 if __name__ == "__main__":

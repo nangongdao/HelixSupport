@@ -143,6 +143,16 @@ FIELD_REGISTRY: dict[str, FieldInfo] = {
     "key_ref": FieldInfo("key_ref", RESTRICTED, "credential fingerprint", 2555, "global"),
     "encrypted_blob": FieldInfo("encrypted_blob", RESTRICTED, "encryption at rest", 1, "global"),
     "authorization": FieldInfo("authorization", RESTRICTED, "request auth", 0, "global"),
+    # Knowledge-article search/index fields (43.2 bullet 3): every column the
+    # knowledge FTS index makes searchable must carry an explicit
+    # classification so a future field cannot silently downgrade the
+    # encryption/redaction posture by becoming indexable.
+    "title": FieldInfo("title", CONFIDENTIAL, "knowledge article title", None, "global"),
+    "tags": FieldInfo("tags", CONFIDENTIAL, "knowledge article tags", None, "global"),
+    "category": FieldInfo("category", PUBLIC, "knowledge article category", None, "global"),
+    "search_terms": FieldInfo(
+        "search_terms", CONFIDENTIAL, "derived knowledge search terms", None, "global"
+    ),
 }
 
 

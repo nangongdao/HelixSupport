@@ -540,6 +540,16 @@ class DatabaseCoreSchemaMixin:
         self.seed_demo()
 
     def _initialize_knowledge_fts(self, connection: sqlite3.Connection) -> None:
+        # 43.2 bullet 3: no field becomes searchable/indexable before it is
+        # classified. The gate fails loud at startup if the FTS column set
+        # ever grows without a FIELD_REGISTRY entry, instead of silently
+        # downgrading the encryption/redaction posture of an unclassified
+        # field.
+        from app.envelope_crypto import ensure_searchable_fields_are_classified
+
+        ensure_searchable_fields_are_classified(
+            ["title", "content", "tags", "category", "search_terms"]
+        )
         try:
             connection.execute(
                 """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
@@ -609,6 +619,11 @@ class DatabaseCoreSchemaMixin:
             self._fts_enabled = True
 
     def _initialize_message_fts(self, connection: sqlite3.Connection) -> None:
+        # Same 43.2 gate as the knowledge index: message FTS exposes
+        # ``content`` (already classified CONFIDENTIAL as conversation body).
+        from app.envelope_crypto import ensure_searchable_fields_are_classified
+
+        ensure_searchable_fields_are_classified(["content", "search_terms"])
         try:
             connection.execute(
                 """CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
