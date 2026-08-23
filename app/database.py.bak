@@ -1,0 +1,3712 @@
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Lock
+from typing import Any, Iterator, Sequence
+from uuid import uuid4
+
+from app.cache import TTLCache
+from app.context import current_request_id
+from app.domain import ConversationStatus
+from app.labels import normalize_conversation_labels
+from app.security import sanitize_for_audit
+
+# Register a flag so the legacy initialize() can hand off to the migration
+# framework on the first run, while remaining compatible with existing tests.
+_MIGRATIONS_REGISTERED = False
+
+
+ASCII_TERM_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]+")
+CJK_SEQUENCE_PATTERN = re.compile(r"[\u3400-\u9fff]+")
+
+
+def knowledge_search_terms(value: str, limit: int = 2048) -> list[str]:
+    """Return stable, syntax-free terms shared by FTS indexing and querying."""
+    normalized = value.casefold()
+    terms: list[str] = ASCII_TERM_PATTERN.findall(normalized)
+    for sequence in CJK_SEQUENCE_PATTERN.findall(normalized):
+        if len(sequence) == 1:
+            terms.append(sequence)
+            continue
+        terms.extend(sequence[index : index + 2] for index in range(len(sequence) - 1))
+    return list(dict.fromkeys(terms))[:limit]
+
+
+def knowledge_search_document(value: str) -> str:
+    return " ".join(knowledge_search_terms(value))
+
+
+def utc_now() -> str:
+    """Current UTC time as an ISO-8601 string.
+
+    Microsecond precision matters: ``created_at`` is the primary sort key for
+    message transcripts, and IDs are random UUIDs, so a coarser clock lets two
+    messages written in the same tick sort arbitrarily — which showed up as
+    assistant replies rendering above the customer question that prompted them.
+    """
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def utc_after(minutes: int) -> str:
+    return (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat(timespec="microseconds")
+
+
+def utc_after_seconds(seconds: int) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+
+
+class Database:
+    def __init__(
+        self,
+        path: Path,
+        pool_size: int = 4,
+        busy_timeout_ms: int = 5000,
+        knowledge_cache_ttl_seconds: int = 30,
+        dashboard_cache_ttl_seconds: int = 5,
+        cache_max_entries: int = 512,
+    ) -> None:
+        if pool_size < 1:
+            raise ValueError("pool_size must be positive")
+        if busy_timeout_ms < 100:
+            raise ValueError("busy_timeout_ms must be at least 100")
+        self.path = path
+        self.pool_size = pool_size
+        self.busy_timeout_ms = busy_timeout_ms
+        self._pool: Queue[sqlite3.Connection] = Queue(maxsize=pool_size)
+        self._pool_lock = Lock()
+        self._created_connections = 0
+        self._closed = False
+        self._fts_enabled = False
+        self._fts_queries = 0
+        self._fts_fallbacks = 0
+        self._message_fts_enabled = False
+        self._message_fts_queries = 0
+        self._message_fts_fallbacks = 0
+        self._knowledge_cache: TTLCache[str, list[dict[str, Any]]] = TTLCache(
+            knowledge_cache_ttl_seconds, cache_max_entries
+        )
+        self._dashboard_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+            dashboard_cache_ttl_seconds, cache_max_entries
+        )
+        self._tenant_exists_cache: set[str] = set()
+        self._queue_watermarks: dict[str, str] = {}
+        self._queue_revision = 0
+
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = self._acquire_connection()
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            self._release_connection(connection)
+
+    def _acquire_connection(self) -> sqlite3.Connection:
+        if self._closed:
+            raise RuntimeError("Database connection pool is closed")
+        try:
+            return self._pool.get_nowait()
+        except Empty:
+            pass
+
+        with self._pool_lock:
+            if self._closed:
+                raise RuntimeError("Database connection pool is closed")
+            if self._created_connections < self.pool_size:
+                self._created_connections += 1
+                should_create = True
+            else:
+                should_create = False
+        if should_create:
+            try:
+                return self._new_connection()
+            except Exception:
+                with self._pool_lock:
+                    self._created_connections -= 1
+                raise
+        try:
+            return self._pool.get(timeout=self.busy_timeout_ms / 1000)
+        except Empty as exc:
+            raise sqlite3.OperationalError("Timed out waiting for a database connection") from exc
+
+    def _new_connection(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self.path,
+            timeout=self.busy_timeout_ms / 1000,
+            check_same_thread=False,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.execute("PRAGMA temp_store = MEMORY")
+        connection.execute("PRAGMA cache_size = -20000")
+        connection.execute("PRAGMA mmap_size = 268435456")
+        connection.execute("PRAGMA wal_autocheckpoint = 1000")
+        connection.create_function(
+            "helix_search_terms",
+            1,
+            knowledge_search_document,
+            deterministic=True,
+        )
+        return connection
+
+    def _release_connection(self, connection: sqlite3.Connection) -> None:
+        if self._closed:
+            connection.close()
+            with self._pool_lock:
+                self._created_connections = max(0, self._created_connections - 1)
+            return
+        try:
+            self._pool.put_nowait(connection)
+        except Exception:
+            connection.close()
+            with self._pool_lock:
+                self._created_connections = max(0, self._created_connections - 1)
+
+    def close(self) -> None:
+        with self._pool_lock:
+            self._closed = True
+        while True:
+            try:
+                connection = self._pool.get_nowait()
+            except Empty:
+                break
+            connection.close()
+            with self._pool_lock:
+                self._created_connections = max(0, self._created_connections - 1)
+
+    def performance_stats(self) -> dict[str, Any]:
+        with self._pool_lock:
+            pool = {
+                "size": self.pool_size,
+                "created": self._created_connections,
+                "idle": self._pool.qsize(),
+                "closed": self._closed,
+            }
+        knowledge = self._knowledge_cache.stats()
+        dashboard = self._dashboard_cache.stats()
+        return {
+            "pool": pool,
+            "cache": {
+                "knowledge": knowledge.__dict__,
+                "dashboard": dashboard.__dict__,
+            },
+            "knowledge_search": {
+                "fts5_enabled": self._fts_enabled,
+                "fts_queries": self._fts_queries,
+                "fallback_queries": self._fts_fallbacks,
+            },
+            "message_search": {
+                "fts5_enabled": self._message_fts_enabled,
+                "fts_queries": self._message_fts_queries,
+                "fallback_queries": self._message_fts_fallbacks,
+            },
+        }
+
+    def _invalidate_dashboard(self, tenant_id: str) -> None:
+        self._dashboard_cache.invalidate(tenant_id)
+        self._touch_queue_watermark(tenant_id)
+
+    def _invalidate_knowledge(self, tenant_id: str) -> None:
+        self._knowledge_cache.invalidate(tenant_id)
+
+    def _touch_queue_watermark(self, tenant_id: str, watermark: str | None = None) -> None:
+        with self._pool_lock:
+            self._queue_revision += 1
+            self._queue_watermarks[tenant_id] = watermark or f"rev:{self._queue_revision}"
+
+    def queue_revision(self, tenant_id: str) -> str:
+        with self._pool_lock:
+            cached = self._queue_watermarks.get(tenant_id)
+            if cached:
+                return cached
+        watermark = self.conversation_watermark(tenant_id)
+        with self._pool_lock:
+            self._queue_watermarks[tenant_id] = watermark or f"empty:{tenant_id}"
+            return self._queue_watermarks[tenant_id]
+
+    def _conversation_from_row(
+        self, row: sqlite3.Row | dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        item = dict(row)
+        item["labels"] = json.loads(item.pop("labels_json", "[]") or "[]")
+        now = utc_now()
+        item["claim_active"] = bool(
+            item.get("claimed_by")
+            and item.get("claim_expires_at")
+            and item["claim_expires_at"] > now
+        )
+        if not item["claim_active"]:
+            item["claimed_by"] = None
+            item["claimed_at"] = None
+            item["claim_expires_at"] = None
+        return item
+
+    def initialize(self) -> None:
+        with self.connect() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS tenants (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    customer_name TEXT NOT NULL,
+                    customer_ref TEXT,
+                    channel TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    intent TEXT,
+                    assigned_agent TEXT,
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    handoff_reason TEXT,
+                    sla_due_at TEXT,
+                    last_confidence REAL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    preview TEXT,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    last_message_at TEXT,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    claimed_by TEXT,
+                    claimed_at TEXT,
+                    claim_expires_at TEXT,
+                    needs_response INTEGER NOT NULL DEFAULT 0,
+                    waiting_since TEXT,
+                    first_response_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_conversations_tenant_updated
+                    ON conversations(tenant_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                    turn_id TEXT,
+                    role TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    seq INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_messages_conversation
+                    ON messages(tenant_id, conversation_id, created_at);
+                CREATE TABLE IF NOT EXISTS conversation_labels (
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                    label TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, conversation_id, label)
+                );
+                CREATE INDEX IF NOT EXISTS idx_conversation_labels_lookup
+                    ON conversation_labels(tenant_id, label, conversation_id);
+                CREATE TABLE IF NOT EXISTS knowledge_articles (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    tags TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'general',
+                    source_url TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_tenant_active
+                    ON knowledge_articles(tenant_id, active, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS orders (
+                    id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    customer_ref TEXT,
+                    customer_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    amount TEXT NOT NULL,
+                    eta TEXT,
+                    tracking_code TEXT,
+                    PRIMARY KEY (tenant_id, id)
+                );
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT,
+                    request_id TEXT,
+                    actor TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    seq INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_conversation
+                    ON audit_events(tenant_id, conversation_id, created_at);
+                CREATE TABLE IF NOT EXISTS turn_requests (
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                    idempotency_key TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    response_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, conversation_id, idempotency_key)
+                );
+                CREATE TABLE IF NOT EXISTS turn_jobs (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                    idempotency_key TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    available_at TEXT NOT NULL,
+                    locked_at TEXT,
+                    locked_by TEXT,
+                    response_json TEXT,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    UNIQUE (tenant_id, conversation_id, idempotency_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_turn_jobs_dispatch
+                    ON turn_jobs(status, available_at, created_at);
+                CREATE INDEX IF NOT EXISTS idx_turn_jobs_tenant
+                    ON turn_jobs(tenant_id, status, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                    message_id TEXT NOT NULL REFERENCES messages(id),
+                    actor TEXT NOT NULL,
+                    rating INTEGER NOT NULL CHECK (rating IN (-1, 1)),
+                    reason TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (tenant_id, message_id, actor)
+                );
+                CREATE TABLE IF NOT EXISTS canned_responses (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    shortcut TEXT,
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    created_by TEXT NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_canned_responses_tenant
+                    ON canned_responses(tenant_id, active, updated_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_canned_responses_shortcut
+                    ON canned_responses(tenant_id, shortcut)
+                    WHERE shortcut IS NOT NULL AND active = 1;
+                CREATE TABLE IF NOT EXISTS saved_views (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    actor_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    filters_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (tenant_id, actor_id, name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_saved_views_actor
+                    ON saved_views(tenant_id, actor_id, updated_at DESC);
+                CREATE TRIGGER IF NOT EXISTS messages_tenant_guard
+                BEFORE INSERT ON messages
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM conversations c
+                    WHERE c.id = NEW.conversation_id AND c.tenant_id = NEW.tenant_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'conversation tenant mismatch');
+                END;
+                CREATE TRIGGER IF NOT EXISTS feedback_tenant_guard
+                BEFORE INSERT ON feedback
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.id = NEW.message_id
+                      AND m.conversation_id = NEW.conversation_id
+                      AND m.tenant_id = NEW.tenant_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'message tenant mismatch');
+                END;
+                CREATE TRIGGER IF NOT EXISTS turn_jobs_tenant_guard
+                BEFORE INSERT ON turn_jobs
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM conversations c
+                    WHERE c.id = NEW.conversation_id AND c.tenant_id = NEW.tenant_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'conversation tenant mismatch');
+                END;
+                CREATE TRIGGER IF NOT EXISTS conversation_labels_tenant_guard
+                BEFORE INSERT ON conversation_labels
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM conversations c
+                    WHERE c.id = NEW.conversation_id AND c.tenant_id = NEW.tenant_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'conversation tenant mismatch');
+                END;
+                """
+            )
+            self._ensure_column(connection, "conversations", "customer_ref", "TEXT")
+            self._ensure_column(connection, "conversations", "handoff_reason", "TEXT")
+            self._ensure_column(connection, "conversations", "sla_due_at", "TEXT")
+            self._ensure_column(connection, "conversations", "last_confidence", "REAL")
+            self._ensure_column(
+                connection, "conversations", "version", "INTEGER NOT NULL DEFAULT 1"
+            )
+            self._ensure_column(connection, "conversations", "preview", "TEXT")
+            self._ensure_column(
+                connection, "conversations", "message_count", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(connection, "conversations", "last_message_at", "TEXT")
+            self._ensure_column(
+                connection, "conversations", "labels_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
+            self._ensure_column(connection, "conversations", "claimed_by", "TEXT")
+            self._ensure_column(connection, "conversations", "claimed_at", "TEXT")
+            self._ensure_column(connection, "conversations", "claim_expires_at", "TEXT")
+            self._ensure_column(
+                connection, "conversations", "needs_response", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(connection, "conversations", "waiting_since", "TEXT")
+            self._ensure_column(connection, "conversations", "first_response_at", "TEXT")
+            self._ensure_column(connection, "conversations", "resolved_at", "TEXT")
+            self._ensure_column(connection, "messages", "turn_id", "TEXT")
+            self._ensure_column(
+                connection, "knowledge_articles", "category", "TEXT NOT NULL DEFAULT 'general'"
+            )
+            self._ensure_column(
+                connection, "knowledge_articles", "version", "INTEGER NOT NULL DEFAULT 1"
+            )
+            self._ensure_column(connection, "orders", "customer_ref", "TEXT")
+            self._ensure_column(connection, "audit_events", "request_id", "TEXT")
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_queue
+                ON conversations(tenant_id, status, priority, sla_due_at)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_page
+                ON conversations(tenant_id, status, priority, updated_at DESC, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_assigned
+                ON conversations(tenant_id, assigned_agent, status, updated_at DESC)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_claimed
+                ON conversations(tenant_id, claimed_by, claim_expires_at)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_priority
+                ON conversations(tenant_id, priority, status, updated_at DESC)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_sla
+                ON conversations(tenant_id, status, sla_due_at)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_response_queue
+                ON conversations(tenant_id, needs_response, priority, updated_at DESC, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_waiting
+                ON conversations(tenant_id, needs_response, waiting_since, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_channel
+                ON conversations(tenant_id, channel, status, updated_at DESC)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_conversations_sla_sort
+                ON conversations(tenant_id, status, sla_due_at, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_audit_tenant_type
+                ON audit_events(tenant_id, event_type, created_at DESC, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_messages_tenant_role
+                ON messages(tenant_id, role, created_at DESC)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_messages_page
+                ON messages(tenant_id, conversation_id, created_at, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_audit_tenant_created
+                ON audit_events(tenant_id, created_at DESC, id)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_feedback_tenant_rating
+                ON feedback(tenant_id, rating)"""
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_orders_customer_lookup
+                ON orders(tenant_id, customer_ref COLLATE NOCASE, id COLLATE NOCASE)"""
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS messages_summary_insert
+                AFTER INSERT ON messages
+                BEGIN
+                    UPDATE conversations
+                    SET message_count = message_count + 1,
+                        preview = CASE
+                            WHEN last_message_at IS NULL OR NEW.created_at >= last_message_at
+                            THEN NEW.content ELSE preview END,
+                        last_message_at = CASE
+                            WHEN last_message_at IS NULL OR NEW.created_at >= last_message_at
+                            THEN NEW.created_at ELSE last_message_at END,
+                        updated_at = CASE
+                            WHEN NEW.created_at >= updated_at THEN NEW.created_at ELSE updated_at END,
+                        version = version + 1
+                    WHERE tenant_id = NEW.tenant_id AND id = NEW.conversation_id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS messages_summary_delete
+                AFTER DELETE ON messages
+                BEGIN
+                    UPDATE conversations
+                    SET message_count = MAX(0, message_count - 1),
+                        preview = (
+                            SELECT content FROM messages
+                            WHERE tenant_id = OLD.tenant_id
+                              AND conversation_id = OLD.conversation_id
+                            ORDER BY created_at DESC, rowid DESC LIMIT 1
+                        ),
+                        last_message_at = (
+                            SELECT created_at FROM messages
+                            WHERE tenant_id = OLD.tenant_id
+                              AND conversation_id = OLD.conversation_id
+                            ORDER BY created_at DESC, rowid DESC LIMIT 1
+                        ),
+                        version = version + 1
+                    WHERE tenant_id = OLD.tenant_id AND id = OLD.conversation_id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS messages_response_state_insert
+                AFTER INSERT ON messages
+                WHEN NEW.role IN ('customer', 'assistant', 'operator')
+                BEGIN
+                    UPDATE conversations
+                    SET needs_response = CASE WHEN NEW.role = 'customer' THEN 1 ELSE 0 END,
+                        waiting_since = CASE
+                            WHEN NEW.role = 'customer' THEN NEW.created_at ELSE NULL END,
+                        first_response_at = CASE
+                            WHEN NEW.role IN ('assistant', 'operator')
+                            THEN COALESCE(first_response_at, NEW.created_at)
+                            ELSE first_response_at END
+                    WHERE tenant_id = NEW.tenant_id AND id = NEW.conversation_id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS messages_response_state_delete
+                AFTER DELETE ON messages
+                WHEN OLD.role IN ('customer', 'assistant', 'operator')
+                BEGIN
+                    UPDATE conversations
+                    SET needs_response = CASE WHEN (
+                            SELECT role FROM messages
+                            WHERE tenant_id = OLD.tenant_id
+                              AND conversation_id = OLD.conversation_id
+                              AND role IN ('customer', 'assistant', 'operator')
+                            ORDER BY created_at DESC, rowid DESC LIMIT 1
+                        ) = 'customer' THEN 1 ELSE 0 END,
+                        waiting_since = CASE WHEN (
+                            SELECT role FROM messages
+                            WHERE tenant_id = OLD.tenant_id
+                              AND conversation_id = OLD.conversation_id
+                              AND role IN ('customer', 'assistant', 'operator')
+                            ORDER BY created_at DESC, rowid DESC LIMIT 1
+                        ) = 'customer' THEN (
+                            SELECT created_at FROM messages
+                            WHERE tenant_id = OLD.tenant_id
+                              AND conversation_id = OLD.conversation_id
+                              AND role = 'customer'
+                            ORDER BY created_at DESC, rowid DESC LIMIT 1
+                        ) ELSE NULL END
+                    WHERE tenant_id = OLD.tenant_id AND id = OLD.conversation_id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS messages_seq_fill
+                AFTER INSERT ON messages
+                BEGIN
+                    UPDATE messages SET seq = rowid WHERE id = NEW.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS audit_events_seq_fill
+                AFTER INSERT ON audit_events
+                BEGIN
+                    UPDATE audit_events SET seq = rowid WHERE id = NEW.id;
+                END;
+                """
+            )
+            connection.execute(
+                """UPDATE conversations
+                SET message_count = (
+                        SELECT COUNT(*) FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                    ),
+                    preview = (
+                        SELECT content FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                        ORDER BY created_at DESC, rowid DESC LIMIT 1
+                    ),
+                    last_message_at = (
+                        SELECT created_at FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                        ORDER BY created_at DESC, rowid DESC LIMIT 1
+                    )
+                WHERE EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.tenant_id = conversations.tenant_id
+                      AND m.conversation_id = conversations.id
+                ) AND (message_count = 0 OR last_message_at IS NULL)"""
+            )
+            connection.execute(
+                """UPDATE conversations
+                SET needs_response = CASE WHEN (
+                        SELECT role FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                          AND m.role IN ('customer', 'assistant', 'operator')
+                        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
+                    ) = 'customer' THEN 1 ELSE 0 END,
+                    waiting_since = CASE WHEN (
+                        SELECT role FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                          AND m.role IN ('customer', 'assistant', 'operator')
+                        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
+                    ) = 'customer' THEN (
+                        SELECT created_at FROM messages m
+                        WHERE m.tenant_id = conversations.tenant_id
+                          AND m.conversation_id = conversations.id
+                          AND m.role = 'customer'
+                        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
+                    ) ELSE NULL END
+                WHERE EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.tenant_id = conversations.tenant_id
+                      AND m.conversation_id = conversations.id
+                )"""
+            )
+            connection.execute(
+                """UPDATE conversations
+                SET labels_json = COALESCE((
+                    SELECT json_group_array(label) FROM (
+                        SELECT label FROM conversation_labels l
+                        WHERE l.tenant_id = conversations.tenant_id
+                          AND l.conversation_id = conversations.id
+                        ORDER BY l.created_at, l.label
+                    )
+                ), '[]')
+                WHERE labels_json = '[]' AND EXISTS (
+                    SELECT 1 FROM conversation_labels l
+                    WHERE l.tenant_id = conversations.tenant_id
+                      AND l.conversation_id = conversations.id
+                )"""
+            )
+            self._initialize_knowledge_fts(connection)
+            self._initialize_message_fts(connection)
+
+            # Ensure data governance tables exist (added by migration framework).
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS retention_policies (
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    data_type TEXT NOT NULL,
+                    retention_days INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, data_type)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS data_subject_requests (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+                    customer_ref TEXT NOT NULL,
+                    request_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    requested_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                )
+                """
+            )
+
+            # Run versioned migrations on top of the legacy schema.
+            from app.migrations import all_migrations, run_migrations
+
+            run_migrations(connection, all_migrations())
+        self.seed_demo()
+
+    def _initialize_knowledge_fts(self, connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+                    article_id UNINDEXED,
+                    tenant_id UNINDEXED,
+                    title,
+                    content,
+                    tags,
+                    category,
+                    search_terms,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )"""
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS knowledge_fts_insert
+                AFTER INSERT ON knowledge_articles
+                BEGIN
+                    INSERT INTO knowledge_fts(
+                        article_id, tenant_id, title, content, tags, category, search_terms
+                    ) VALUES (
+                        NEW.id, NEW.tenant_id, NEW.title, NEW.content, NEW.tags, NEW.category,
+                        helix_search_terms(
+                            NEW.tags || ' ' || NEW.title || ' ' || NEW.category || ' ' || NEW.content
+                        )
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS knowledge_fts_update
+                AFTER UPDATE OF tenant_id, title, content, tags, category ON knowledge_articles
+                BEGIN
+                    DELETE FROM knowledge_fts
+                    WHERE article_id = OLD.id AND tenant_id = OLD.tenant_id;
+                    INSERT INTO knowledge_fts(
+                        article_id, tenant_id, title, content, tags, category, search_terms
+                    ) VALUES (
+                        NEW.id, NEW.tenant_id, NEW.title, NEW.content, NEW.tags, NEW.category,
+                        helix_search_terms(
+                            NEW.tags || ' ' || NEW.title || ' ' || NEW.category || ' ' || NEW.content
+                        )
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS knowledge_fts_delete
+                AFTER DELETE ON knowledge_articles
+                BEGIN
+                    DELETE FROM knowledge_fts
+                    WHERE article_id = OLD.id AND tenant_id = OLD.tenant_id;
+                END;
+                """
+            )
+            connection.execute(
+                """INSERT INTO knowledge_fts(
+                    article_id, tenant_id, title, content, tags, category, search_terms
+                )
+                SELECT k.id, k.tenant_id, k.title, k.content, k.tags, k.category,
+                       helix_search_terms(
+                           k.tags || ' ' || k.title || ' ' || k.category || ' ' || k.content
+                       )
+                FROM knowledge_articles k
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM knowledge_fts f
+                    WHERE f.article_id = k.id AND f.tenant_id = k.tenant_id
+                )"""
+            )
+        except sqlite3.OperationalError:
+            self._fts_enabled = False
+        else:
+            self._fts_enabled = True
+
+    def _initialize_message_fts(self, connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
+                    message_id UNINDEXED,
+                    tenant_id UNINDEXED,
+                    conversation_id UNINDEXED,
+                    content,
+                    search_terms,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )"""
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS message_fts_insert
+                AFTER INSERT ON messages
+                BEGIN
+                    INSERT INTO message_fts(
+                        message_id, tenant_id, conversation_id, content, search_terms
+                    ) VALUES (
+                        NEW.id, NEW.tenant_id, NEW.conversation_id, NEW.content,
+                        helix_search_terms(NEW.content)
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS message_fts_update
+                AFTER UPDATE OF content ON messages
+                BEGIN
+                    DELETE FROM message_fts WHERE message_id = OLD.id;
+                    INSERT INTO message_fts(
+                        message_id, tenant_id, conversation_id, content, search_terms
+                    ) VALUES (
+                        NEW.id, NEW.tenant_id, NEW.conversation_id, NEW.content,
+                        helix_search_terms(NEW.content)
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS message_fts_delete
+                AFTER DELETE ON messages
+                BEGIN
+                    DELETE FROM message_fts WHERE message_id = OLD.id;
+                END;
+                """
+            )
+            connection.execute(
+                """INSERT INTO message_fts(
+                    message_id, tenant_id, conversation_id, content, search_terms
+                )
+                SELECT m.id, m.tenant_id, m.conversation_id, m.content,
+                       helix_search_terms(m.content)
+                FROM messages m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM message_fts f WHERE f.message_id = m.id
+                )"""
+            )
+        except sqlite3.OperationalError:
+            self._message_fts_enabled = False
+        else:
+            self._message_fts_enabled = True
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection, table: str, column: str, definition: str
+    ) -> None:
+        columns = {
+            row["name"] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def ping(self) -> bool:
+        try:
+            with self.connect() as connection:
+                return connection.execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            return False
+
+    def ensure_tenant(self, tenant_id: str, name: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO tenants(id, name, created_at) VALUES (?, ?, ?)",
+                (tenant_id, name or tenant_id, utc_now()),
+            )
+        with self._pool_lock:
+            self._tenant_exists_cache.add(tenant_id)
+
+    def set_tenant_model_policy(
+        self,
+        tenant_id: str,
+        allowed_models: list[str] | None,
+        daily_turn_budget: int | None,
+    ) -> None:
+        """Set the per-tenant model policy (Phase 19.4).
+
+        ``allowed_models`` is the allow-list of model refs; ``None`` means no
+        restriction. ``daily_turn_budget`` is the per-day turn cap; ``None``
+        means unlimited (the default). Raises ``LookupError`` if the tenant
+        does not exist so the API can return 404.
+        """
+        models_json = json.dumps(allowed_models) if allowed_models else None
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tenants SET allowed_models_json = ?, daily_turn_budget = ? WHERE id = ?",
+                (models_json, daily_turn_budget, tenant_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("Tenant not found")
+
+    def get_tenant_model_policy(self, tenant_id: str) -> dict[str, Any]:
+        """Read the per-tenant model policy (Phase 19.4)."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT allowed_models_json, daily_turn_budget FROM tenants WHERE id = ?",
+                (tenant_id,),
+            ).fetchone()
+        if row is None:
+            raise LookupError("Tenant not found")
+        models = json.loads(row["allowed_models_json"]) if row["allowed_models_json"] else None
+        return {
+            "allowed_models": models,
+            "daily_turn_budget": row["daily_turn_budget"],
+        }
+
+    def increment_tenant_usage(self, tenant_id: str, date_str: str) -> int:
+        """Increment and return the per-tenant daily turn count (Phase 19.4)."""
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO tenant_usage_daily(tenant_id, date, turn_count) "
+                "VALUES (?, ?, 1) "
+                "ON CONFLICT(tenant_id, date) DO UPDATE SET turn_count = turn_count + 1",
+                (tenant_id, date_str),
+            )
+            row = connection.execute(
+                "SELECT turn_count FROM tenant_usage_daily WHERE tenant_id = ? AND date = ?",
+                (tenant_id, date_str),
+            ).fetchone()
+        return int(row["turn_count"]) if row else 0
+
+    def increment_tenant_usage_conversations(self, tenant_id: str, date_str: str) -> int:
+        """Increment the per-tenant daily conversation count (Phase 22.4).
+
+        Called once per created conversation so ``GET /api/admin/usage`` can
+        reconcile billing data against the audit trail.
+        """
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO tenant_usage_daily(tenant_id, date, conversation_count) "
+                "VALUES (?, ?, 1) "
+                "ON CONFLICT(tenant_id, date) DO UPDATE SET "
+                "conversation_count = conversation_count + 1",
+                (tenant_id, date_str),
+            )
+            row = connection.execute(
+                "SELECT conversation_count FROM tenant_usage_daily "
+                "WHERE tenant_id = ? AND date = ?",
+                (tenant_id, date_str),
+            ).fetchone()
+        return int(row["conversation_count"]) if row else 0
+
+    def increment_tenant_usage_messages(self, tenant_id: str, date_str: str) -> int:
+        """Increment the per-tenant daily message count (Phase 22.4)."""
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO tenant_usage_daily(tenant_id, date, message_count) "
+                "VALUES (?, ?, 1) "
+                "ON CONFLICT(tenant_id, date) DO UPDATE SET "
+                "message_count = message_count + 1",
+                (tenant_id, date_str),
+            )
+            row = connection.execute(
+                "SELECT message_count FROM tenant_usage_daily WHERE tenant_id = ? AND date = ?",
+                (tenant_id, date_str),
+            ).fetchone()
+        return int(row["message_count"]) if row else 0
+
+    def list_tenant_usage(
+        self,
+        tenant_id: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Raw daily usage rows for billing export (Phase 22.4).
+
+        Columns: tenant_id, date, turn_count, conversation_count,
+        message_count. Filtered by optional date range and bounded by limit.
+        """
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if since:
+            clauses.append("date >= ?")
+            values.append(since)
+        if until:
+            clauses.append("date <= ?")
+            values.append(until)
+        limit = max(1, min(int(limit), 500))
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT tenant_id, date, turn_count, conversation_count, message_count "
+                f"FROM tenant_usage_daily WHERE {' AND '.join(clauses)} "
+                "ORDER BY date DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_tenant_daily_usage(self, tenant_id: str, date_str: str) -> int:
+        """Read the per-tenant daily turn count (Phase 19.4)."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT turn_count FROM tenant_usage_daily WHERE tenant_id = ? AND date = ?",
+                (tenant_id, date_str),
+            ).fetchone()
+        return int(row["turn_count"]) if row else 0
+
+    def tenant_exists(self, tenant_id: str) -> bool:
+        with self._pool_lock:
+            if tenant_id in self._tenant_exists_cache:
+                return True
+        with self.connect() as connection:
+            row = connection.execute("SELECT 1 FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
+        exists = row is not None
+        if exists:
+            with self._pool_lock:
+                self._tenant_exists_cache.add(tenant_id)
+        return exists
+
+    def seed_demo(self) -> None:
+        now = utc_now()
+        self.ensure_tenant("demo", "Northstar Retail")
+        with self.connect() as connection:
+            articles = [
+                (
+                    "kb-shipping",
+                    "配送时效",
+                    "现货订单付款后 24 小时内出库。标准配送通常需要 2-4 个工作日；偏远地区可能延长 1-2 个工作日。",
+                    "配送 物流 时效 shipping delivery 多久",
+                    "shipping",
+                    "/kb/shipping",
+                ),
+                (
+                    "kb-return",
+                    "退换货政策",
+                    "商品签收后 7 天内可申请无理由退货。商品须保持未使用且包装完整。质量问题由平台承担退回运费。退款必须由人工客服审核。",
+                    "退货 退款 换货 return refund",
+                    "returns",
+                    "/kb/returns",
+                ),
+                (
+                    "kb-warranty",
+                    "保修服务",
+                    "电子产品享受 12 个月有限保修。人为损坏、进水及未经授权拆修不在保修范围内。",
+                    "保修 维修 warranty repair",
+                    "warranty",
+                    "/kb/warranty",
+                ),
+            ]
+            for article_id, title, content, tags, category, url in articles:
+                connection.execute(
+                    """INSERT OR IGNORE INTO knowledge_articles
+                    (id, tenant_id, title, content, tags, category, source_url, updated_at)
+                    VALUES (?, 'demo', ?, ?, ?, ?, ?, ?)""",
+                    (article_id, title, content, tags, category, url, now),
+                )
+            orders = [
+                (
+                    "ORD-10482",
+                    "CUST-1001",
+                    "林嘉",
+                    "运输中",
+                    "¥629.00",
+                    "2026-07-20",
+                    "SF1380010482",
+                ),
+                (
+                    "ORD-10931",
+                    "CUST-1002",
+                    "周然",
+                    "已出库",
+                    "¥189.00",
+                    "2026-07-21",
+                    "YT202610931",
+                ),
+            ]
+            for order in orders:
+                connection.execute(
+                    """INSERT OR IGNORE INTO orders
+                    (id, tenant_id, customer_ref, customer_name, status, amount, eta, tracking_code)
+                    VALUES (?, 'demo', ?, ?, ?, ?, ?, ?)""",
+                    order,
+                )
+                connection.execute(
+                    "UPDATE orders SET customer_ref = ? WHERE tenant_id = 'demo' AND id = ?",
+                    (order[1], order[0]),
+                )
+            macros = [
+                (
+                    "macro_greeting",
+                    "开场问候",
+                    "您好，我是人工客服，已接手您的会话，请稍候。",
+                    "greeting",
+                    '["欢迎","接入"]',
+                ),
+                (
+                    "macro_shipping",
+                    "配送说明",
+                    "标准配送通常需要 2-4 个工作日，偏远地区可能再延长 1-2 天。如需查单请提供订单号。",
+                    "shipping",
+                    '["配送","物流"]',
+                ),
+                (
+                    "macro_wait",
+                    "请稍候",
+                    "正在为您核实信息，请稍等片刻。",
+                    "wait",
+                    '["等待"]',
+                ),
+            ]
+            for macro_id, title, body, shortcut, tags_json in macros:
+                connection.execute(
+                    """INSERT OR IGNORE INTO canned_responses
+                    (id, tenant_id, title, body, shortcut, tags_json, active, usage_count,
+                     created_by, updated_by, created_at, updated_at)
+                    VALUES (?, 'demo', ?, ?, ?, ?, 1, 0, 'system', 'system', ?, ?)""",
+                    (macro_id, title, body, shortcut, tags_json, now, now),
+                )
+
+    # ------------------------------------------------------------------ Phase 22
+
+    def provision_tenant(
+        self,
+        tenant_id: str,
+        name: str,
+        actor_id: str,
+        *,
+        allowed_models: list[str] | None = None,
+        daily_turn_budget: int | None = None,
+        conversation_quota: int | None = None,
+        storage_quota_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Idempotently provision a tenant with default policy (Phase 22.1).
+
+        Creates the tenant row (if absent) and seeds baseline knowledge
+        articles so the new tenant is immediately serviceable. Re-running
+        with the same id is a no-op for the tenant row but updates quota
+        columns, so provisioning is idempotent.
+        """
+        now = utc_now()
+        models_json = json.dumps(allowed_models) if allowed_models else None
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO tenants(id, name, created_at) VALUES (?, ?, ?)",
+                (tenant_id, name, now),
+            )
+            connection.execute(
+                """UPDATE tenants
+                SET allowed_models_json = COALESCE(?, allowed_models_json),
+                    daily_turn_budget = COALESCE(?, daily_turn_budget),
+                    conversation_quota = COALESCE(?, conversation_quota),
+                    storage_quota_bytes = COALESCE(?, storage_quota_bytes)
+                WHERE id = ?""",
+                (
+                    models_json,
+                    daily_turn_budget,
+                    conversation_quota,
+                    storage_quota_bytes,
+                    tenant_id,
+                ),
+            )
+        with self._pool_lock:
+            self._tenant_exists_cache.add(tenant_id)
+        self._seed_tenant_knowledge(tenant_id)
+        self.audit(tenant_id, None, actor_id, "tenant.provisioned", {"name": name})
+        return self.get_tenant_quota(tenant_id)
+
+    def get_tenant_quota(self, tenant_id: str) -> dict[str, Any]:
+        """Read a tenant's quota and model policy (Phase 22.4)."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT id, name, allowed_models_json, daily_turn_budget, "
+                "conversation_quota, storage_quota_bytes, created_at "
+                "FROM tenants WHERE id = ?",
+                (tenant_id,),
+            ).fetchone()
+        if row is None:
+            raise LookupError("Tenant not found")
+        models = json.loads(row["allowed_models_json"]) if row["allowed_models_json"] else None
+        return {
+            "tenant_id": row["id"],
+            "name": row["name"],
+            "allowed_models": models,
+            "daily_turn_budget": row["daily_turn_budget"],
+            "conversation_quota": row["conversation_quota"],
+            "storage_quota_bytes": row["storage_quota_bytes"],
+            "created_at": row["created_at"],
+        }
+
+    def set_tenant_quota(
+        self,
+        tenant_id: str,
+        *,
+        conversation_quota: int | None = None,
+        storage_quota_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Update quota limits for a tenant (Phase 22.4). None = unchanged."""
+        sets: list[str] = []
+        values: list[Any] = []
+        if conversation_quota is not None:
+            sets.append("conversation_quota = ?")
+            values.append(conversation_quota)
+        if storage_quota_bytes is not None:
+            sets.append("storage_quota_bytes = ?")
+            values.append(storage_quota_bytes)
+        if not sets:
+            return self.get_tenant_quota(tenant_id)
+        values.append(tenant_id)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE tenants SET {', '.join(sets)} WHERE id = ?", values
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("Tenant not found")
+        return self.get_tenant_quota(tenant_id)
+
+    def _seed_tenant_knowledge(self, tenant_id: str) -> None:
+        """Seed a new tenant with the standard knowledge articles (22.1).
+
+        Idempotent: articles are keyed by id and inserted with
+        ``INSERT OR IGNORE``. Only runs for tenants that have none, so a
+        tenant that later removes an article keeps it removed.
+        """
+        now = utc_now()
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT COUNT(*) AS n FROM knowledge_articles WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+            if existing and existing["n"] > 0:
+                return
+            articles = [
+                (
+                    f"kb-{tenant_id}-shipping",
+                    "配送时效",
+                    "现货订单付款后 24 小时内出库。标准配送通常需要 2-4 个工作日；偏远地区可能延长 1-2 个工作日。",
+                    "配送 物流 时效 shipping delivery 多久",
+                    "shipping",
+                    f"/kb/{tenant_id}/shipping",
+                ),
+                (
+                    f"kb-{tenant_id}-return",
+                    "退换货政策",
+                    "商品签收后 7 天内可申请无理由退货。商品须保持未使用且包装完整。质量问题由平台承担退回运费。退款必须由人工客服审核。",
+                    "退货 退款 换货 return refund",
+                    "returns",
+                    f"/kb/{tenant_id}/returns",
+                ),
+            ]
+            for article_id, title, content, tags, category, source_url in articles:
+                connection.execute(
+                    """INSERT OR IGNORE INTO knowledge_articles
+                    (id, tenant_id, title, content, tags, category, source_url,
+                     active, version, updated_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 'published')""",
+                    (article_id, tenant_id, title, content, tags, category, source_url, now),
+                )
+
+    # -------------------------------------------------------------- members (22.2)
+
+    def invite_member(
+        self,
+        tenant_id: str,
+        actor_id: str,
+        role: str,
+        invited_by: str,
+    ) -> dict[str, Any]:
+        """Create a tenant member in ``invited`` status (Phase 22.2).
+
+        Idempotent per ``(tenant_id, actor_id)``: re-inviting an existing
+        member updates role and resets status to ``invited``. Raises
+        ``LookupError`` if the tenant does not exist.
+        """
+        if not self.tenant_exists(tenant_id):
+            raise LookupError("Tenant not found")
+        now = utc_now()
+        member_id = f"mem_{uuid4().hex[:12]}"
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO tenant_members
+                (id, tenant_id, actor_id, role, status, invited_by, invited_at,
+                 updated_at)
+                VALUES (?, ?, ?, ?, 'invited', ?, ?, ?)
+                ON CONFLICT(tenant_id, actor_id) DO UPDATE SET
+                    role = excluded.role,
+                    status = 'invited',
+                    invited_by = excluded.invited_by,
+                    invited_at = excluded.invited_at,
+                    updated_at = excluded.updated_at""",
+                (member_id, tenant_id, actor_id, role, invited_by, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM tenant_members WHERE tenant_id = ? AND actor_id = ?",
+                (tenant_id, actor_id),
+            ).fetchone()
+        self.audit(
+            tenant_id,
+            None,
+            invited_by,
+            "member.invited",
+            {"actor_id": actor_id, "role": role},
+        )
+        return dict(row)
+
+    def list_members(self, tenant_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, tenant_id, actor_id, role, status, invited_by, "
+                "invited_at, updated_at, last_login_at "
+                "FROM tenant_members WHERE tenant_id = ? ORDER BY actor_id",
+                (tenant_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_member(self, tenant_id: str, actor_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM tenant_members WHERE tenant_id = ? AND actor_id = ?",
+                (tenant_id, actor_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_member_role(
+        self, tenant_id: str, actor_id: str, role: str, updated_by: str
+    ) -> dict[str, Any]:
+        """Change a member's role (Phase 22.2). No-op for unknown members."""
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tenant_members SET role = ?, status = 'active', "
+                "updated_at = ? WHERE tenant_id = ? AND actor_id = ?",
+                (role, now, tenant_id, actor_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("Member not found")
+            row = connection.execute(
+                "SELECT * FROM tenant_members WHERE tenant_id = ? AND actor_id = ?",
+                (tenant_id, actor_id),
+            ).fetchone()
+        self.audit(
+            tenant_id,
+            None,
+            updated_by,
+            "member.role_changed",
+            {"actor_id": actor_id, "role": role},
+        )
+        return dict(row)
+
+    def deactivate_member(
+        self, tenant_id: str, actor_id: str, deactivated_by: str
+    ) -> dict[str, Any]:
+        """Deactivate a member; sessions and audit history are retained (22.2)."""
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tenant_members SET status = 'deactivated', updated_at = ? "
+                "WHERE tenant_id = ? AND actor_id = ?",
+                (now, tenant_id, actor_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("Member not found")
+            row = connection.execute(
+                "SELECT * FROM tenant_members WHERE tenant_id = ? AND actor_id = ?",
+                (tenant_id, actor_id),
+            ).fetchone()
+        self.audit(
+            tenant_id,
+            None,
+            deactivated_by,
+            "member.deactivated",
+            {"actor_id": actor_id},
+        )
+        return dict(row)
+
+    def record_member_login(self, tenant_id: str, actor_id: str) -> None:
+        """Update last_login_at; tolerates members not yet provisioned."""
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE tenant_members SET last_login_at = ?, updated_at = ? "
+                "WHERE tenant_id = ? AND actor_id = ?",
+                (utc_now(), utc_now(), tenant_id, actor_id),
+            )
+
+    def create_conversation(
+        self,
+        tenant_id: str,
+        customer_name: str,
+        customer_ref: str | None,
+        channel: str,
+        actor: str,
+        sla_minutes: int,
+    ) -> dict[str, Any]:
+        conversation_id = f"conv_{uuid4().hex[:12]}"
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO conversations
+                (id, tenant_id, customer_name, customer_ref, channel, status, priority,
+                 sla_due_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?)""",
+                (
+                    conversation_id,
+                    tenant_id,
+                    customer_name,
+                    customer_ref,
+                    channel,
+                    ConversationStatus.OPEN,
+                    utc_after(sla_minutes),
+                    now,
+                    now,
+                ),
+            )
+        self._invalidate_dashboard(tenant_id)
+        self.increment_tenant_usage_conversations(tenant_id, utc_now()[:10])
+        self.audit(
+            tenant_id,
+            conversation_id,
+            actor,
+            "conversation.created",
+            {"channel": channel, "customer_verified": bool(customer_ref)},
+        )
+        return self.get_conversation(tenant_id, conversation_id) or {}
+
+    def get_conversation(self, tenant_id: str, conversation_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+        return self._conversation_from_row(row)
+
+    def list_conversations(
+        self,
+        tenant_id: str,
+        status: str | None = None,
+        search: str | None = None,
+        label: str | None = None,
+        priority: str | None = None,
+        channel: str | None = None,
+        assigned_to: str | None = None,
+        claimed_by: str | None = None,
+        unassigned: bool = False,
+        unclaimed: bool = False,
+        sla_breached: bool | None = None,
+        needs_response: bool | None = None,
+        sort: str = "priority",
+        limit: int = 100,
+        offset: int = 0,
+        cursor: tuple[str, int | None, str | None, str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, limit)
+        offset = max(0, offset)
+        if sort not in {"priority", "waiting", "sla", "updated"}:
+            raise ValueError("Unsupported conversation sort")
+        search_terms = knowledge_search_terms(search, limit=64) if search else []
+        use_fts = bool(search and search_terms and self._message_fts_enabled)
+        try:
+            rows = self._query_conversations(
+                tenant_id,
+                status=status,
+                search=search,
+                label=label,
+                priority=priority,
+                channel=channel,
+                assigned_to=assigned_to,
+                claimed_by=claimed_by,
+                unassigned=unassigned,
+                unclaimed=unclaimed,
+                sla_breached=sla_breached,
+                needs_response=needs_response,
+                sort=sort,
+                limit=limit,
+                offset=offset,
+                cursor=cursor,
+                search_terms=search_terms,
+                use_fts=use_fts,
+            )
+        except sqlite3.OperationalError:
+            if not use_fts:
+                raise
+            with self._pool_lock:
+                self._message_fts_fallbacks += 1
+            rows = self._query_conversations(
+                tenant_id,
+                status=status,
+                search=search,
+                label=label,
+                priority=priority,
+                channel=channel,
+                assigned_to=assigned_to,
+                claimed_by=claimed_by,
+                unassigned=unassigned,
+                unclaimed=unclaimed,
+                sla_breached=sla_breached,
+                needs_response=needs_response,
+                sort=sort,
+                limit=limit,
+                offset=offset,
+                cursor=cursor,
+                search_terms=search_terms,
+                use_fts=False,
+            )
+        else:
+            if search:
+                with self._pool_lock:
+                    if use_fts:
+                        self._message_fts_queries += 1
+                    else:
+                        self._message_fts_fallbacks += 1
+        return [dict(row) for row in rows]
+
+    def conversation_watermark(self, tenant_id: str) -> str:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(updated_at), '') AS watermark FROM conversations WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+        return str(row["watermark"] if row else "")
+
+    def _query_conversations(
+        self,
+        tenant_id: str,
+        *,
+        status: str | None,
+        search: str | None,
+        label: str | None,
+        priority: str | None,
+        channel: str | None,
+        assigned_to: str | None,
+        claimed_by: str | None,
+        unassigned: bool,
+        unclaimed: bool,
+        sla_breached: bool | None,
+        needs_response: bool | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        cursor: tuple[str, int | None, str | None, str, str] | None,
+        search_terms: Sequence[str],
+        use_fts: bool,
+    ) -> list[sqlite3.Row]:
+        now = utc_now()
+        cte = ""
+        from_clause = "FROM conversations c"
+        values: list[Any] = []
+        if use_fts:
+            match_query = " OR ".join(f'"{term}"' for term in search_terms)
+            cte = """WITH message_matches AS (
+                SELECT DISTINCT tenant_id, conversation_id FROM message_fts
+                WHERE message_fts MATCH ? AND tenant_id = ?
+            ) """
+            from_clause += " LEFT JOIN message_matches mm ON mm.tenant_id = c.tenant_id "
+            from_clause += "AND mm.conversation_id = c.id"
+            values.extend([match_query, tenant_id])
+        clauses = ["c.tenant_id = ?"]
+        query_values: list[Any] = [tenant_id]
+        if status:
+            clauses.append("c.status = ?")
+            query_values.append(status)
+        if priority:
+            clauses.append("c.priority = ?")
+            query_values.append(priority)
+        if channel:
+            clauses.append("c.channel = ?")
+            query_values.append(channel)
+        if assigned_to:
+            clauses.append("c.assigned_agent = ?")
+            query_values.append(assigned_to)
+        if unassigned:
+            clauses.append(
+                "(c.assigned_agent IS NULL OR c.assigned_agent IN "
+                "('knowledge', 'order', 'escalation', 'policy', 'triage', 'quality'))"
+            )
+        if claimed_by:
+            clauses.append(
+                "c.claimed_by = ? AND c.claim_expires_at IS NOT NULL AND c.claim_expires_at > ?"
+            )
+            query_values.extend([claimed_by, now])
+        if unclaimed:
+            clauses.append(
+                "(c.claimed_by IS NULL OR c.claim_expires_at IS NULL OR c.claim_expires_at <= ?)"
+            )
+            query_values.append(now)
+        if sla_breached is True:
+            clauses.append(
+                "c.status != 'resolved' AND c.sla_due_at IS NOT NULL AND c.sla_due_at < ?"
+            )
+            query_values.append(now)
+        elif sla_breached is False:
+            clauses.append("(c.status = 'resolved' OR c.sla_due_at IS NULL OR c.sla_due_at >= ?)")
+            query_values.append(now)
+        if needs_response is not None:
+            clauses.append("c.needs_response = ?")
+            query_values.append(int(needs_response))
+        if label:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM conversation_labels cl "
+                "WHERE cl.tenant_id = c.tenant_id AND cl.conversation_id = c.id "
+                "AND cl.label = ?)"
+            )
+            query_values.append(label.casefold())
+        if cursor:
+            cursor_sort, priority_rank, sort_key, updated_at, conversation_id = cursor
+            if cursor_sort != sort:
+                raise ValueError("cursor sort does not match requested sort")
+            if sort == "priority":
+                rank = "CASE c.priority WHEN 'high' THEN 0 ELSE 1 END"
+                clauses.append(
+                    f"({rank} > ? OR ({rank} = ? AND c.updated_at < ?) "
+                    f"OR ({rank} = ? AND c.updated_at = ? AND c.id < ?))"
+                )
+                query_values.extend(
+                    [
+                        priority_rank,
+                        priority_rank,
+                        updated_at,
+                        priority_rank,
+                        updated_at,
+                        conversation_id,
+                    ]
+                )
+            elif sort == "waiting":
+                wait_expr = "COALESCE(c.waiting_since, '9999-12-31T00:00:00+00:00')"
+                clauses.append(
+                    f"({wait_expr} > ? OR ({wait_expr} = ? AND c.updated_at < ?) "
+                    f"OR ({wait_expr} = ? AND c.updated_at = ? AND c.id < ?))"
+                )
+                query_values.extend(
+                    [sort_key, sort_key, updated_at, sort_key, updated_at, conversation_id]
+                )
+            elif sort == "sla":
+                sla_expr = "COALESCE(c.sla_due_at, '9999-12-31T00:00:00+00:00')"
+                clauses.append(
+                    f"({sla_expr} > ? OR ({sla_expr} = ? AND c.updated_at < ?) "
+                    f"OR ({sla_expr} = ? AND c.updated_at = ? AND c.id < ?))"
+                )
+                query_values.extend(
+                    [sort_key, sort_key, updated_at, sort_key, updated_at, conversation_id]
+                )
+            else:
+                clauses.append("(c.updated_at < ? OR (c.updated_at = ? AND c.id < ?))")
+                query_values.extend([updated_at, updated_at, conversation_id])
+        if search:
+            needle = f"%{search}%"
+            if use_fts:
+                clauses.append(
+                    "(c.customer_name LIKE ? OR c.id LIKE ? OR c.customer_ref LIKE ? "
+                    "OR mm.conversation_id IS NOT NULL)"
+                )
+                query_values.extend([needle, needle, needle])
+            else:
+                clauses.append(
+                    "(c.customer_name LIKE ? OR c.id LIKE ? OR c.customer_ref LIKE ? OR EXISTS ("
+                    "SELECT 1 FROM messages sm WHERE sm.tenant_id = c.tenant_id "
+                    "AND sm.conversation_id = c.id AND sm.content LIKE ?))"
+                )
+                query_values.extend([needle, needle, needle, needle])
+        where = " AND ".join(clauses)
+        if sort == "waiting":
+            order_by = (
+                "COALESCE(c.waiting_since, '9999-12-31T00:00:00+00:00') ASC, "
+                "c.updated_at DESC, c.id DESC"
+            )
+        elif sort == "sla":
+            order_by = (
+                "COALESCE(c.sla_due_at, '9999-12-31T00:00:00+00:00') ASC, "
+                "c.updated_at DESC, c.id DESC"
+            )
+        elif sort == "updated":
+            order_by = "c.updated_at DESC, c.id DESC"
+        else:
+            order_by = "CASE c.priority WHEN 'high' THEN 0 ELSE 1 END, c.updated_at DESC, c.id DESC"
+        query = f"""{cte}SELECT c.*,
+            CASE c.priority WHEN 'high' THEN 0 ELSE 1 END AS queue_priority_rank,
+            CASE WHEN c.status != 'resolved' AND c.sla_due_at IS NOT NULL
+                 AND c.sla_due_at < ? THEN 1 ELSE 0 END AS sla_breached,
+            CASE WHEN c.claimed_by IS NOT NULL AND c.claim_expires_at IS NOT NULL
+                 AND c.claim_expires_at > ? THEN 1 ELSE 0 END AS claim_active
+            {from_clause} WHERE {where}
+            ORDER BY {order_by} LIMIT ? OFFSET ?"""
+        values.extend([now, now, *query_values, limit, offset])
+        with self.connect() as connection:
+            return connection.execute(query, values).fetchall()
+
+    def add_message(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        role: str,
+        author: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        turn_id: str | None = None,
+        channel_message_id: str | None = None,
+    ) -> dict[str, Any]:
+        message_id = f"msg_{uuid4().hex[:12]}"
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO messages
+                (id, tenant_id, conversation_id, turn_id, role, author, content,
+                 metadata_json, created_at, channel_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    message_id,
+                    tenant_id,
+                    conversation_id,
+                    turn_id,
+                    role,
+                    author,
+                    content,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    now,
+                    channel_message_id,
+                ),
+            )
+        self._invalidate_dashboard(tenant_id)
+        self.increment_tenant_usage_messages(tenant_id, utc_now()[:10])
+        return {
+            "id": message_id,
+            "role": role,
+            "author": author,
+            "content": content,
+            "metadata": metadata or {},
+            "created_at": now,
+        }
+
+    def get_message_by_channel_id(
+        self, tenant_id: str, conversation_id: str, channel_message_id: str
+    ) -> dict[str, Any] | None:
+        """Look up a message by its channel message id (Phase 23.2).
+
+        The unique index ``idx_messages_channel_dedup`` guarantees at most one
+        message per (tenant, conversation, channel_message_id), so replaying
+        the same channel message can never create a second turn.
+        """
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM messages WHERE tenant_id = ? AND conversation_id = ? "
+                "AND channel_message_id = ?",
+                (tenant_id, conversation_id, channel_message_id),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["metadata"] = json.loads(item.pop("metadata_json"))
+        return item
+
+    def list_messages(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+        cursor: tuple[str, int] | None = None,
+        before: bool = False,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?", "conversation_id = ?"]
+        values: list[Any] = [tenant_id, conversation_id]
+        if cursor:
+            created_at, seq = cursor
+            if before:
+                clauses.append("(created_at < ? OR (created_at = ? AND seq < ?))")
+            else:
+                clauses.append("(created_at > ? OR (created_at = ? AND seq > ?))")
+            values.extend([created_at, created_at, seq])
+        where = " AND ".join(clauses)
+        order = "created_at DESC, seq DESC" if before else "created_at ASC, seq ASC"
+        # ``seq`` is the monotonic insertion-order column (filled from the
+        # implicit rowid on SQLite, from a sequence on PostgreSQL), so ordering
+        # and pagination stay deterministic even when two messages land in the
+        # same microsecond.  It is surfaced to the caller so the API can build
+        # the next cursor.
+        query = f"SELECT * FROM messages WHERE {where} ORDER BY {order}"
+        if limit is not None:
+            query += " LIMIT ?"
+            values.append(max(1, limit))
+        with self.connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item.pop("metadata_json"))
+            item.pop("tenant_id", None)
+            item.pop("conversation_id", None)
+            item.pop("turn_id", None)
+            result.append(item)
+        if before:
+            result.reverse()
+        return result
+
+    def get_message(
+        self, tenant_id: str, conversation_id: str, message_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM messages
+                WHERE tenant_id = ? AND conversation_id = ? AND id = ?""",
+                (tenant_id, conversation_id, message_id),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["metadata"] = json.loads(item.pop("metadata_json"))
+        item.pop("tenant_id", None)
+        item.pop("conversation_id", None)
+        item.pop("turn_id", None)
+        item.pop("seq", None)  # internal monotonic ordering column
+        return item
+
+    def set_routing(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        status: ConversationStatus,
+        intent: str,
+        assigned_agent: str,
+        priority: str,
+        handoff_reason: str | None,
+        confidence: float,
+        sla_minutes: int,
+    ) -> bool:
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE conversations
+                SET status = ?, intent = ?, assigned_agent = ?, priority = ?,
+                    handoff_reason = ?, last_confidence = ?,
+                    sla_due_at = CASE WHEN ? = 'waiting_human' THEN ? ELSE sla_due_at END,
+                    updated_at = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ? AND status = 'open'""",
+                (
+                    status,
+                    intent,
+                    assigned_agent,
+                    priority,
+                    handoff_reason,
+                    confidence,
+                    status,
+                    utc_after(sla_minutes),
+                    now,
+                    tenant_id,
+                    conversation_id,
+                ),
+            )
+        updated = cursor.rowcount == 1
+        if updated:
+            self._invalidate_dashboard(tenant_id)
+        return updated
+
+    def transition_conversation(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        expected_statuses: Sequence[ConversationStatus | str],
+        new_status: ConversationStatus,
+        assigned_agent: str | None = None,
+        clear_handoff: bool = False,
+        clear_assignment: bool = False,
+        clear_claim: bool = False,
+        sla_minutes: int | None = None,
+    ) -> dict[str, Any] | None:
+        statuses = [str(status) for status in expected_statuses]
+        if not statuses:
+            raise ValueError("expected_statuses cannot be empty")
+        placeholders = ", ".join("?" for _ in statuses)
+        resolved_at = utc_now() if new_status == ConversationStatus.RESOLVED else None
+        sla_due_at = utc_after(sla_minutes) if sla_minutes is not None else None
+        clear_claim_flag = clear_claim or new_status == ConversationStatus.RESOLVED
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"""UPDATE conversations
+                SET status = ?,
+                    assigned_agent = CASE WHEN ? THEN NULL
+                                          ELSE COALESCE(?, assigned_agent) END,
+                    handoff_reason = CASE WHEN ? THEN NULL ELSE handoff_reason END,
+                    claimed_by = CASE WHEN ? THEN NULL ELSE claimed_by END,
+                    claimed_at = CASE WHEN ? THEN NULL ELSE claimed_at END,
+                    claim_expires_at = CASE WHEN ? THEN NULL ELSE claim_expires_at END,
+                    sla_due_at = COALESCE(?, sla_due_at),
+                    resolved_at = ?, updated_at = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ? AND status IN ({placeholders})""",
+                (
+                    new_status,
+                    int(clear_assignment),
+                    assigned_agent,
+                    int(clear_handoff),
+                    int(clear_claim_flag),
+                    int(clear_claim_flag),
+                    int(clear_claim_flag),
+                    sla_due_at,
+                    resolved_at,
+                    utc_now(),
+                    tenant_id,
+                    conversation_id,
+                    *statuses,
+                ),
+            )
+        if cursor.rowcount != 1:
+            return None
+        self._invalidate_dashboard(tenant_id)
+        return self.get_conversation(tenant_id, conversation_id)
+
+    def claim_conversation(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        actor_id: str,
+        claim_seconds: int,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any] | None:
+        if claim_seconds < 30:
+            raise ValueError("claim_seconds must be at least 30")
+        now = utc_now()
+        expires_at = utc_after_seconds(claim_seconds)
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+            if current is None:
+                return None
+            if current["status"] == ConversationStatus.RESOLVED:
+                return None
+            active_claim = (
+                current["claimed_by"]
+                and current["claim_expires_at"]
+                and current["claim_expires_at"] > now
+            )
+            if active_claim and current["claimed_by"] != actor_id and not force:
+                return None
+            if active_claim and current["claimed_by"] == actor_id:
+                cursor = connection.execute(
+                    """UPDATE conversations
+                    SET claimed_at = ?, claim_expires_at = ?, updated_at = ?, version = version + 1
+                    WHERE tenant_id = ? AND id = ?""",
+                    (now, expires_at, now, tenant_id, conversation_id),
+                )
+            else:
+                cursor = connection.execute(
+                    """UPDATE conversations
+                    SET claimed_by = ?, claimed_at = ?, claim_expires_at = ?,
+                        updated_at = ?, version = version + 1
+                    WHERE tenant_id = ? AND id = ?
+                      AND status != 'resolved'
+                      AND (
+                        claimed_by IS NULL OR claim_expires_at IS NULL
+                        OR claim_expires_at <= ? OR claimed_by = ? OR ? = 1
+                      )""",
+                    (
+                        actor_id,
+                        now,
+                        expires_at,
+                        now,
+                        tenant_id,
+                        conversation_id,
+                        now,
+                        actor_id,
+                        int(force),
+                    ),
+                )
+            if cursor.rowcount != 1:
+                return None
+            updated = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+        self._invalidate_dashboard(tenant_id)
+        return self._conversation_from_row(updated)
+
+    def assign_conversation(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        assignee_id: str,
+        claim_seconds: int,
+        *,
+        force: bool = False,
+        actor_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if claim_seconds < 30:
+            raise ValueError("claim_seconds must be at least 30")
+        now = utc_now()
+        expires_at = utc_after_seconds(claim_seconds)
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+            if current is None or current["status"] == ConversationStatus.RESOLVED:
+                return None
+            active_claim = (
+                current["claimed_by"]
+                and current["claim_expires_at"]
+                and current["claim_expires_at"] > now
+            )
+            if (
+                active_claim
+                and current["claimed_by"] not in {None, assignee_id, actor_id}
+                and not force
+            ):
+                return None
+            cursor = connection.execute(
+                """UPDATE conversations
+                SET assigned_agent = ?, claimed_by = ?, claimed_at = ?, claim_expires_at = ?,
+                    status = CASE
+                        WHEN status IN ('open', 'waiting_human') THEN 'human_active'
+                        ELSE status
+                    END,
+                    updated_at = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ? AND status != 'resolved'""",
+                (
+                    assignee_id,
+                    assignee_id,
+                    now,
+                    expires_at,
+                    now,
+                    tenant_id,
+                    conversation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        self._invalidate_dashboard(tenant_id)
+        return self.get_conversation(tenant_id, conversation_id)
+
+    def bulk_claim_conversations(
+        self,
+        tenant_id: str,
+        conversation_ids: Sequence[str],
+        actor_id: str,
+        claim_seconds: int,
+        *,
+        force: bool = False,
+    ) -> tuple[list[str], int]:
+        ids = list(dict.fromkeys(conversation_ids))
+        if not ids:
+            return [], 0
+        if claim_seconds < 30:
+            raise ValueError("claim_seconds must be at least 30")
+        now = utc_now()
+        expires_at = utc_after_seconds(claim_seconds)
+        placeholders = ", ".join("?" for _ in ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, status, claimed_by, claim_expires_at FROM conversations
+                WHERE tenant_id = ? AND id IN ({placeholders})""",
+                (tenant_id, *ids),
+            ).fetchall()
+            matched = len(rows)
+            claimable: list[str] = []
+            for row in rows:
+                if row["status"] == ConversationStatus.RESOLVED:
+                    continue
+                active_claim = (
+                    row["claimed_by"] and row["claim_expires_at"] and row["claim_expires_at"] > now
+                )
+                if active_claim and row["claimed_by"] != actor_id and not force:
+                    continue
+                claimable.append(str(row["id"]))
+            if claimable:
+                claim_placeholders = ", ".join("?" for _ in claimable)
+                connection.execute(
+                    f"""UPDATE conversations
+                    SET claimed_by = ?, claimed_at = ?, claim_expires_at = ?,
+                        updated_at = ?, version = version + 1
+                    WHERE tenant_id = ? AND id IN ({claim_placeholders})
+                      AND status != 'resolved'""",
+                    (actor_id, now, expires_at, now, tenant_id, *claimable),
+                )
+        if claimable:
+            self._invalidate_dashboard(tenant_id)
+        return claimable, matched
+
+    def bulk_release_claims(
+        self,
+        tenant_id: str,
+        conversation_ids: Sequence[str],
+        actor_id: str,
+        *,
+        force: bool = False,
+    ) -> tuple[list[str], int]:
+        ids = list(dict.fromkeys(conversation_ids))
+        if not ids:
+            return [], 0
+        now = utc_now()
+        placeholders = ", ".join("?" for _ in ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, claimed_by, claim_expires_at FROM conversations
+                WHERE tenant_id = ? AND id IN ({placeholders})""",
+                (tenant_id, *ids),
+            ).fetchall()
+            matched = len(rows)
+            releasable: list[str] = []
+            for row in rows:
+                active_claim = (
+                    row["claimed_by"] and row["claim_expires_at"] and row["claim_expires_at"] > now
+                )
+                if not active_claim:
+                    continue
+                if row["claimed_by"] != actor_id and not force:
+                    continue
+                releasable.append(str(row["id"]))
+            if releasable:
+                release_placeholders = ", ".join("?" for _ in releasable)
+                connection.execute(
+                    f"""UPDATE conversations
+                    SET claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL,
+                        updated_at = ?, version = version + 1
+                    WHERE tenant_id = ? AND id IN ({release_placeholders})""",
+                    (now, tenant_id, *releasable),
+                )
+        if releasable:
+            self._invalidate_dashboard(tenant_id)
+        return releasable, matched
+
+    def release_conversation_claim(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        actor_id: str,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+            if current is None:
+                return None
+            active_claim = (
+                current["claimed_by"]
+                and current["claim_expires_at"]
+                and current["claim_expires_at"] > now
+            )
+            if not active_claim:
+                item = dict(current)
+                item["labels"] = json.loads(item.pop("labels_json", "[]") or "[]")
+                return item
+            if current["claimed_by"] != actor_id and not force:
+                return None
+            cursor = connection.execute(
+                """UPDATE conversations
+                SET claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL,
+                    updated_at = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ?""",
+                (now, tenant_id, conversation_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            updated = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+        self._invalidate_dashboard(tenant_id)
+        return self._conversation_from_row(updated)
+
+    def update_priority(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        priority: str,
+        sla_minutes: int | None = None,
+    ) -> dict[str, Any] | None:
+        if priority not in {"normal", "high"}:
+            raise ValueError("Unsupported conversation priority")
+        tightened_due_at = utc_after(sla_minutes) if sla_minutes is not None else None
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE conversations
+                SET priority = ?,
+                    sla_due_at = CASE
+                        WHEN ? IS NOT NULL AND status != 'resolved'
+                             AND (sla_due_at IS NULL OR sla_due_at > ?)
+                        THEN ? ELSE sla_due_at END,
+                    updated_at = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ?""",
+                (
+                    priority,
+                    tightened_due_at,
+                    tightened_due_at,
+                    tightened_due_at,
+                    utc_now(),
+                    tenant_id,
+                    conversation_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            return None
+        self._invalidate_dashboard(tenant_id)
+        return self.get_conversation(tenant_id, conversation_id)
+
+    def replace_conversation_labels(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        labels: Sequence[str],
+        actor_id: str,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        normalized = normalize_conversation_labels(labels)
+        now = utc_now()
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+            if current is None:
+                return None, False
+            existing = json.loads(current["labels_json"] or "[]")
+            if existing == normalized:
+                return dict(current), False
+            connection.execute(
+                "DELETE FROM conversation_labels WHERE tenant_id = ? AND conversation_id = ?",
+                (tenant_id, conversation_id),
+            )
+            connection.executemany(
+                """INSERT INTO conversation_labels
+                (tenant_id, conversation_id, label, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?)""",
+                [(tenant_id, conversation_id, label, actor_id, now) for label in normalized],
+            )
+            connection.execute(
+                """UPDATE conversations SET labels_json = ?, version = version + 1
+                WHERE tenant_id = ? AND id = ?""",
+                (json.dumps(normalized, ensure_ascii=False), tenant_id, conversation_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM conversations WHERE tenant_id = ? AND id = ?",
+                (tenant_id, conversation_id),
+            ).fetchone()
+        return (dict(updated) if updated else None), True
+
+    def list_conversation_labels(self, tenant_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT label, COUNT(*) AS conversation_count
+                FROM conversation_labels WHERE tenant_id = ?
+                GROUP BY label ORDER BY conversation_count DESC, label""",
+                (tenant_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_saved_views(self, tenant_id: str, actor_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT id, tenant_id, actor_id, name, filters_json, created_at, updated_at
+                FROM saved_views WHERE tenant_id = ? AND actor_id = ?
+                ORDER BY updated_at DESC, id DESC""",
+                (tenant_id, actor_id),
+            ).fetchall()
+        return [self._saved_view_row(row) for row in rows]
+
+    def create_saved_view(
+        self, tenant_id: str, actor_id: str, name: str, filters: dict[str, Any]
+    ) -> dict[str, Any]:
+        now = utc_now()
+        view_id = f"view_{uuid4().hex}"
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO saved_views
+                (id, tenant_id, actor_id, name, filters_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    view_id,
+                    tenant_id,
+                    actor_id,
+                    name,
+                    json.dumps(filters, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM saved_views WHERE id = ?", (view_id,)
+            ).fetchone()
+        return self._saved_view_row(row)
+
+    def delete_saved_view(self, tenant_id: str, actor_id: str, view_id: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM saved_views WHERE id = ? AND tenant_id = ? AND actor_id = ?",
+                (view_id, tenant_id, actor_id),
+            )
+        return cursor.rowcount == 1
+
+    @staticmethod
+    def _saved_view_row(row: sqlite3.Row | None) -> dict[str, Any]:
+        if row is None:
+            raise ValueError("Saved view not found")
+        item = dict(row)
+        item["filters"] = json.loads(item.pop("filters_json"))
+        return item
+
+    def bulk_update_priority(
+        self,
+        tenant_id: str,
+        conversation_ids: Sequence[str],
+        priority: str,
+        sla_minutes: int | None = None,
+    ) -> tuple[list[dict[str, str]], int]:
+        if priority not in {"normal", "high"}:
+            raise ValueError("Unsupported conversation priority")
+        ids = list(dict.fromkeys(conversation_ids))
+        if not ids:
+            return [], 0
+        placeholders = ", ".join("?" for _ in ids)
+        tightened_due_at = utc_after(sla_minutes) if sla_minutes is not None else None
+        now = utc_now()
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, priority FROM conversations
+                WHERE tenant_id = ? AND id IN ({placeholders})""",
+                (tenant_id, *ids),
+            ).fetchall()
+            changed = [
+                {"id": str(row["id"]), "from": str(row["priority"]), "to": priority}
+                for row in rows
+                if row["priority"] != priority
+            ]
+            changed_ids = [item["id"] for item in changed]
+            if changed_ids:
+                changed_placeholders = ", ".join("?" for _ in changed_ids)
+                connection.execute(
+                    f"""UPDATE conversations
+                    SET priority = ?,
+                        sla_due_at = CASE
+                            WHEN ? IS NOT NULL AND status != 'resolved'
+                                 AND (sla_due_at IS NULL OR sla_due_at > ?)
+                            THEN ? ELSE sla_due_at END,
+                        updated_at = ?, version = version + 1
+                    WHERE tenant_id = ? AND id IN ({changed_placeholders})""",
+                    (
+                        priority,
+                        tightened_due_at,
+                        tightened_due_at,
+                        tightened_due_at,
+                        now,
+                        tenant_id,
+                        *changed_ids,
+                    ),
+                )
+        if changed:
+            self._invalidate_dashboard(tenant_id)
+        return changed, len(rows)
+
+    def bulk_modify_labels(
+        self,
+        tenant_id: str,
+        conversation_ids: Sequence[str],
+        labels: Sequence[str],
+        actor_id: str,
+        *,
+        add: bool,
+    ) -> tuple[list[str], int]:
+        normalized = normalize_conversation_labels(labels)
+        if not normalized:
+            raise ValueError("labels cannot be empty")
+        ids = list(dict.fromkeys(conversation_ids))
+        if not ids:
+            return [], 0
+        placeholders = ", ".join("?" for _ in ids)
+        now = utc_now()
+        changed: list[str] = []
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, labels_json FROM conversations
+                WHERE tenant_id = ? AND id IN ({placeholders})""",
+                (tenant_id, *ids),
+            ).fetchall()
+            for row in rows:
+                conversation_id = str(row["id"])
+                current = normalize_conversation_labels(json.loads(row["labels_json"] or "[]"))
+                if add:
+                    target = normalize_conversation_labels([*current, *normalized])
+                else:
+                    target = [label for label in current if label not in normalized]
+                if target == current:
+                    continue
+                if add:
+                    connection.executemany(
+                        """INSERT OR IGNORE INTO conversation_labels
+                        (tenant_id, conversation_id, label, created_by, created_at)
+                        VALUES (?, ?, ?, ?, ?)""",
+                        [
+                            (tenant_id, conversation_id, label, actor_id, now)
+                            for label in normalized
+                        ],
+                    )
+                else:
+                    label_placeholders = ", ".join("?" for _ in normalized)
+                    connection.execute(
+                        f"""DELETE FROM conversation_labels
+                        WHERE tenant_id = ? AND conversation_id = ?
+                          AND label IN ({label_placeholders})""",
+                        (tenant_id, conversation_id, *normalized),
+                    )
+                connection.execute(
+                    """UPDATE conversations SET labels_json = ?, version = version + 1
+                    WHERE tenant_id = ? AND id = ?""",
+                    (
+                        json.dumps(target, ensure_ascii=False),
+                        tenant_id,
+                        conversation_id,
+                    ),
+                )
+                changed.append(conversation_id)
+        return changed, len(rows)
+
+    def claim_turn(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        idempotency_key: str,
+        processing_timeout_seconds: int,
+    ) -> tuple[str, dict[str, Any] | None]:
+        now = datetime.now(UTC)
+        now_text = now.isoformat(timespec="seconds")
+        with self.connect() as connection:
+            try:
+                connection.execute(
+                    """INSERT INTO turn_requests
+                    (tenant_id, conversation_id, idempotency_key, status, created_at, updated_at)
+                    VALUES (?, ?, ?, 'processing', ?, ?)""",
+                    (tenant_id, conversation_id, idempotency_key, now_text, now_text),
+                )
+                return "new", None
+            except sqlite3.IntegrityError:
+                row = connection.execute(
+                    """SELECT * FROM turn_requests
+                    WHERE tenant_id = ? AND conversation_id = ? AND idempotency_key = ?""",
+                    (tenant_id, conversation_id, idempotency_key),
+                ).fetchone()
+                if row is None:
+                    raise
+                if row["status"] == "completed" and row["response_json"]:
+                    return "completed", json.loads(row["response_json"])
+                updated_at = datetime.fromisoformat(row["updated_at"])
+                stale = (now - updated_at).total_seconds() >= processing_timeout_seconds
+                if row["status"] == "failed" or stale:
+                    connection.execute(
+                        """UPDATE turn_requests
+                        SET status = 'processing', response_json = NULL, error_code = NULL,
+                            updated_at = ?
+                        WHERE tenant_id = ? AND conversation_id = ? AND idempotency_key = ?""",
+                        (now_text, tenant_id, conversation_id, idempotency_key),
+                    )
+                    return "new", None
+                return "processing", None
+
+    def get_turn_by_message_id(
+        self, tenant_id: str, conversation_id: str, message_id: str
+    ) -> dict[str, Any] | None:
+        """Return a completed turn whose response contains ``message_id``.
+
+        Used by channel-level idempotency (Phase 23.2): when a channel message
+        id is replayed, the original turn response (customer message +
+        assistant reply) is returned so the client sees the same result
+        without a duplicate turn being processed.
+        """
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT response_json FROM turn_requests
+                WHERE tenant_id = ? AND conversation_id = ? AND status = 'completed'
+                  AND response_json LIKE ?""",
+                (tenant_id, conversation_id, f"%{message_id}%"),
+            ).fetchall()
+        for row in rows:
+            try:
+                response = json.loads(row["response_json"])
+            except (TypeError, ValueError):
+                continue
+            customer = response.get("customer_message") or {}
+            if customer.get("id") == message_id:
+                return response
+        return None
+
+    def complete_turn(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        idempotency_key: str,
+        response: dict[str, Any],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE turn_requests
+                SET status = 'completed', response_json = ?, error_code = NULL, updated_at = ?
+                WHERE tenant_id = ? AND conversation_id = ? AND idempotency_key = ?""",
+                (
+                    json.dumps(response, ensure_ascii=False),
+                    utc_now(),
+                    tenant_id,
+                    conversation_id,
+                    idempotency_key,
+                ),
+            )
+
+    def fail_turn(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        idempotency_key: str,
+        error_code: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE turn_requests
+                SET status = 'failed', error_code = ?, updated_at = ?
+                WHERE tenant_id = ? AND conversation_id = ? AND idempotency_key = ?""",
+                (error_code[:80], utc_now(), tenant_id, conversation_id, idempotency_key),
+            )
+
+    def enqueue_turn_job(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        idempotency_key: str,
+        actor_id: str,
+        content: str,
+        max_attempts: int = 3,
+    ) -> tuple[dict[str, Any], bool]:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        job_id = f"job_{uuid4().hex[:12]}"
+        now = utc_now()
+        with self.connect() as connection:
+            try:
+                connection.execute(
+                    """INSERT INTO turn_jobs
+                    (id, tenant_id, conversation_id, idempotency_key, actor_id, content,
+                     status, attempts, max_attempts, available_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)""",
+                    (
+                        job_id,
+                        tenant_id,
+                        conversation_id,
+                        idempotency_key,
+                        actor_id,
+                        content,
+                        max_attempts,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM turn_jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("Queued turn job could not be read back")
+                return dict(row), False
+            except sqlite3.IntegrityError:
+                row = connection.execute(
+                    """SELECT * FROM turn_jobs
+                    WHERE tenant_id = ? AND conversation_id = ? AND idempotency_key = ?""",
+                    (tenant_id, conversation_id, idempotency_key),
+                ).fetchone()
+                if row is None:
+                    raise
+                return dict(row), True
+
+    def get_turn_job(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM turn_jobs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, job_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_latest_turn_job(self, tenant_id: str, conversation_id: str) -> dict[str, Any] | None:
+        """Return the most recently created turn job for a conversation (23.1)."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM turn_jobs WHERE tenant_id = ? AND conversation_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (tenant_id, conversation_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_turn_jobs(
+        self,
+        tenant_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, limit)
+        offset = max(0, offset)
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT id, tenant_id, conversation_id, status, attempts, max_attempts,
+                    available_at, locked_at, error_code, created_at, updated_at, completed_at
+                FROM turn_jobs
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
+                [*values, limit, offset],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def append_turn_job_chunk(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        job_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Persist one streaming output chunk for a turn job.
+
+        ``seq`` is filled by the ``turn_job_chunks_seq_fill`` trigger from the
+        insertion rowid (SQLite) or a dedicated sequence (PostgreSQL), so chunks
+        read back in exactly the order they were written, across every backend.
+        """
+        if not content:
+            raise ValueError("chunk content cannot be empty")
+        chunk_id = f"chk_{uuid4().hex[:12]}"
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO turn_job_chunks
+                (id, tenant_id, conversation_id, job_id, seq, content, created_at)
+                VALUES (?, ?, ?, ?, 0, ?, ?)""",
+                (chunk_id, tenant_id, conversation_id, job_id, content, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM turn_job_chunks WHERE id = ?", (chunk_id,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Appended turn job chunk could not be read back")
+        return dict(row)
+
+    def list_turn_job_chunks(
+        self,
+        tenant_id: str,
+        job_id: str,
+        after_seq: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return streamed chunks for a job, oldest first.
+
+        ``after_seq`` enables resumable polling: the SSE endpoint passes the
+        last ``seq`` it emitted and only receives newer chunks.
+        """
+        after_seq = max(0, after_seq)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT id, tenant_id, conversation_id, job_id, seq, content, created_at
+                FROM turn_job_chunks
+                WHERE tenant_id = ? AND job_id = ? AND seq > ?
+                ORDER BY seq""",
+                (tenant_id, job_id, after_seq),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def claim_next_turn_job(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> dict[str, Any] | None:
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive")
+        now = utc_now()
+        stale_at = utc_after_seconds(-lease_seconds)
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'failed', error_code = 'lease_expired',
+                    locked_at = NULL, locked_by = NULL, updated_at = ?, completed_at = ?
+                WHERE status = 'processing' AND attempts >= max_attempts
+                  AND (locked_at IS NULL OR locked_at <= ?)""",
+                (now, now, stale_at),
+            )
+            row = connection.execute(
+                """SELECT j.*
+                FROM turn_jobs j
+                JOIN conversations c
+                  ON c.id = j.conversation_id AND c.tenant_id = j.tenant_id
+                WHERE j.attempts < j.max_attempts
+                  AND (
+                    (j.status = 'queued' AND j.available_at <= ?)
+                    OR (j.status = 'processing' AND (j.locked_at IS NULL OR j.locked_at <= ?))
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turn_jobs active
+                    WHERE active.tenant_id = j.tenant_id
+                      AND active.conversation_id = j.conversation_id
+                      AND active.id != j.id
+                      AND active.status = 'processing'
+                      AND active.locked_at > ?
+                  )
+                ORDER BY CASE c.priority WHEN 'high' THEN 0 ELSE 1 END,
+                         j.available_at, j.created_at, j.id
+                LIMIT 1""",
+                (now, stale_at, stale_at),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'processing', attempts = attempts + 1,
+                    locked_at = ?, locked_by = ?, updated_at = ?
+                WHERE id = ?""",
+                (now, worker_id, now, row["id"]),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM turn_jobs WHERE id = ?", (row["id"],)
+            ).fetchone()
+        return dict(claimed) if claimed else None
+
+    def claim_turn_job_by_id(
+        self, job_id: str, worker_id: str, lease_seconds: int
+    ) -> dict[str, Any] | None:
+        """Atomically claim a specific turn job by id.
+
+        Keeps the same invariants as :meth:`claim_next_turn_job` — per-
+        conversation serialization, lease expiry, attempts ceiling — but targets
+        a single job, for the Redis queue to reconcile a job that was atomically
+        handed out from its dispatch list.
+        """
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive")
+        now = utc_now()
+        stale_at = utc_after_seconds(-lease_seconds)
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'processing', attempts = attempts + 1,
+                    locked_at = ?, locked_by = ?, updated_at = ?
+                WHERE id = ?
+                  AND attempts < max_attempts
+                  AND (
+                    (status = 'queued' AND available_at <= ?)
+                    OR (status = 'processing' AND (locked_at IS NULL OR locked_at <= ?))
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turn_jobs active
+                    WHERE active.tenant_id = turn_jobs.tenant_id
+                      AND active.conversation_id = turn_jobs.conversation_id
+                      AND active.id != turn_jobs.id
+                      AND active.status = 'processing'
+                      AND active.locked_at > ?
+                  )""",
+                (now, worker_id, now, job_id, now, stale_at, stale_at),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM turn_jobs WHERE id = ? AND status = 'processing' AND locked_by = ?",
+                (job_id, worker_id),
+            ).fetchone()
+        return dict(claimed) if claimed else None
+
+    def complete_turn_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        response: dict[str, Any],
+    ) -> bool:
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'completed', response_json = ?, error_code = NULL,
+                    locked_at = NULL, locked_by = NULL, updated_at = ?, completed_at = ?
+                WHERE id = ? AND status = 'processing' AND locked_by = ?""",
+                (json.dumps(response, ensure_ascii=False), now, now, job_id, worker_id),
+            )
+        return cursor.rowcount == 1
+
+    def fail_turn_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        error_code: str,
+        retry_base_seconds: int,
+        retryable: bool = True,
+    ) -> dict[str, Any] | None:
+        if retry_base_seconds < 0:
+            raise ValueError("retry_base_seconds cannot be negative")
+        now = utc_now()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM turn_jobs WHERE id = ? AND status = 'processing' AND locked_by = ?",
+                (job_id, worker_id),
+            ).fetchone()
+            if row is None:
+                return None
+            attempts = int(row["attempts"])
+            terminal = not retryable or attempts >= int(row["max_attempts"])
+            status = "failed" if terminal else "queued"
+            delay = min(300, retry_base_seconds * (2 ** max(0, attempts - 1)))
+            updated = utc_after_seconds(delay)
+            connection.execute(
+                """UPDATE turn_jobs
+                SET status = ?, available_at = ?, error_code = ?, locked_at = NULL,
+                    locked_by = NULL, updated_at = ?, completed_at = CASE WHEN ? THEN ? ELSE NULL END
+                WHERE id = ? AND status = 'processing' AND locked_by = ?""",
+                (
+                    status,
+                    updated,
+                    error_code[:80],
+                    now,
+                    int(terminal),
+                    now if terminal else None,
+                    job_id,
+                    worker_id,
+                ),
+            )
+            result = connection.execute(
+                "SELECT * FROM turn_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return dict(result) if result else None
+
+    def retry_turn_job(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'queued', attempts = 0, available_at = ?, locked_at = NULL,
+                    locked_by = NULL, response_json = NULL, error_code = NULL,
+                    updated_at = ?, completed_at = NULL
+                WHERE tenant_id = ? AND id = ? AND status = 'failed'""",
+                (now, now, tenant_id, job_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = connection.execute(
+                "SELECT * FROM turn_jobs WHERE tenant_id = ? AND id = ?",
+                (tenant_id, job_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def recover_turn_jobs(self) -> dict[str, int]:
+        now = utc_now()
+        with self.connect() as connection:
+            failed = connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'failed', error_code = 'worker_restarted',
+                    locked_at = NULL, locked_by = NULL, updated_at = ?, completed_at = ?
+                WHERE status = 'processing' AND attempts >= max_attempts""",
+                (now, now),
+            ).rowcount
+            queued = connection.execute(
+                """UPDATE turn_jobs
+                SET status = 'queued', error_code = 'worker_restarted',
+                    locked_at = NULL, locked_by = NULL, updated_at = ?
+                WHERE status = 'processing' AND attempts < max_attempts""",
+                (now,),
+            ).rowcount
+        return {"queued": queued, "failed": failed}
+
+    def prune_turn_jobs(self, retention_days: int, batch_size: int = 5000) -> int:
+        if retention_days < 1:
+            raise ValueError("retention_days must be positive")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(timespec="seconds")
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """DELETE FROM turn_jobs WHERE id IN (
+                    SELECT id FROM turn_jobs
+                    WHERE status IN ('completed', 'failed')
+                      AND completed_at IS NOT NULL AND completed_at < ?
+                    ORDER BY completed_at LIMIT ?
+                )""",
+                (cutoff, batch_size),
+            )
+        return cursor.rowcount
+
+    def turn_job_stats(self, tenant_id: str | None = None) -> dict[str, Any]:
+        clauses = ""
+        values: list[Any] = []
+        if tenant_id is not None:
+            clauses = " WHERE tenant_id = ?"
+            values.append(tenant_id)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT status, COUNT(*) AS count
+                FROM turn_jobs{clauses} GROUP BY status""",
+                values,
+            ).fetchall()
+            oldest = connection.execute(
+                f"""SELECT MIN(created_at) AS oldest_queued
+                FROM turn_jobs{clauses}{" AND" if clauses else " WHERE"} status = 'queued'""",
+                values,
+            ).fetchone()["oldest_queued"]
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        oldest_age_seconds = 0
+        if oldest:
+            oldest_age_seconds = max(
+                0, int((datetime.now(UTC) - datetime.fromisoformat(oldest)).total_seconds())
+            )
+        return {
+            "queued": counts.get("queued", 0),
+            "processing": counts.get("processing", 0),
+            "completed": counts.get("completed", 0),
+            "failed": counts.get("failed", 0),
+            "total": sum(counts.values()),
+            "oldest_queued_age_seconds": oldest_age_seconds,
+        }
+
+    def search_knowledge(self, tenant_id: str, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        limit = max(1, limit)
+        query_terms = knowledge_search_terms(query, limit=64)
+        if self._fts_enabled and query_terms:
+            match_query = " OR ".join(f'"{term}"' for term in query_terms)
+            try:
+                with self.connect() as connection:
+                    rows = connection.execute(
+                        """SELECT k.*,
+                            bm25(knowledge_fts, 0.0, 0.0, 5.0, 1.0, 8.0, 3.0, 4.0)
+                                AS fts_rank
+                        FROM knowledge_fts
+                        JOIN knowledge_articles k
+                          ON k.id = knowledge_fts.article_id
+                         AND k.tenant_id = knowledge_fts.tenant_id
+                        WHERE knowledge_fts MATCH ?
+                          AND knowledge_fts.tenant_id = ?
+                          AND k.tenant_id = ?
+                          AND k.active = 1
+                          AND (k.status = 'published' OR k.status IS NULL)
+                        ORDER BY fts_rank, k.updated_at DESC
+                        LIMIT ?""",
+                        (match_query, tenant_id, tenant_id, limit),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                with self._pool_lock:
+                    self._fts_fallbacks += 1
+            else:
+                with self._pool_lock:
+                    self._fts_queries += 1
+                return self._decorate_knowledge_matches(rows, query_terms)
+        else:
+            with self._pool_lock:
+                self._fts_fallbacks += 1
+        return self._fallback_search_knowledge(tenant_id, query, limit)
+
+    @staticmethod
+    def _decorate_knowledge_matches(
+        rows: Sequence[sqlite3.Row], query_terms: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            article_terms = set(
+                knowledge_search_terms(
+                    f"{item['tags']} {item['title']} {item['category']} {item['content']}"
+                )
+            )
+            tag_terms = set(knowledge_search_terms(str(item["tags"])))
+            title_terms = set(knowledge_search_terms(str(item["title"])))
+            matched = [term for term in query_terms if term in article_terms]
+            score = len(matched)
+            score += 2 * sum(term in tag_terms for term in matched)
+            score += 2 * sum(term in title_terms for term in matched)
+            item["retrieval_score"] = max(1, score)
+            item["matched_terms"] = matched
+            result.append(item)
+        return result
+
+    def _fallback_search_knowledge(
+        self, tenant_id: str, query: str, limit: int
+    ) -> list[dict[str, Any]]:
+        normalized = query.casefold()
+        ascii_terms = set(ASCII_TERM_PATTERN.findall(normalized))
+        cached = self._knowledge_cache.get(tenant_id)
+        if cached is None:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    """SELECT * FROM knowledge_articles
+                    WHERE tenant_id = ? AND active = 1
+                      AND (status = 'published' OR status IS NULL)""",
+                    (tenant_id,),
+                ).fetchall()
+            cached = [dict(row) for row in rows]
+            self._knowledge_cache.set(tenant_id, cached)
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for cached_item in cached:
+            item = dict(cached_item)
+            tags = [tag.casefold() for tag in item["tags"].split() if tag.strip()]
+            matched = [tag for tag in tags if tag in normalized or tag in ascii_terms]
+            title_match = item["title"].casefold() in normalized
+            score = len(matched) * 3 + (4 if title_match else 0)
+            if score:
+                item["retrieval_score"] = score
+                item["matched_terms"] = matched
+                scored.append((score, item))
+        scored.sort(key=lambda pair: (pair[0], pair[1]["updated_at"]), reverse=True)
+        return [item for _, item in scored[:limit]]
+
+    def list_knowledge(
+        self, tenant_id: str, include_inactive: bool = False
+    ) -> list[dict[str, Any]]:
+        if not include_inactive:
+            cached = self._knowledge_cache.get(tenant_id)
+            if cached is not None:
+                return [dict(item) for item in cached]
+        query = "SELECT * FROM knowledge_articles WHERE tenant_id = ?"
+        values: list[Any] = [tenant_id]
+        if not include_inactive:
+            query += " AND active = 1 AND (status = 'published' OR status IS NULL)"
+        query += " ORDER BY updated_at DESC, title"
+        with self.connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        result = [dict(row) for row in rows]
+        if not include_inactive:
+            self._knowledge_cache.set(tenant_id, result)
+        return [dict(item) for item in result]
+
+    def create_knowledge(
+        self,
+        tenant_id: str,
+        title: str,
+        content: str,
+        tags: list[str],
+        category: str,
+        source_url: str,
+    ) -> dict[str, Any]:
+        article_id = f"kb_{uuid4().hex[:12]}"
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO knowledge_articles
+                (id, tenant_id, title, content, tags, category, source_url, active, version, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)""",
+                (
+                    article_id,
+                    tenant_id,
+                    title,
+                    content,
+                    " ".join(dict.fromkeys(tags)),
+                    category,
+                    source_url,
+                    utc_now(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_articles WHERE id = ? AND tenant_id = ?",
+                (article_id, tenant_id),
+            ).fetchone()
+        self._invalidate_knowledge(tenant_id)
+        return dict(row)
+
+    def update_knowledge(
+        self,
+        tenant_id: str,
+        article_id: str,
+        fields: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        allowed = {
+            "title",
+            "content",
+            "tags",
+            "category",
+            "source_url",
+            "active",
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+        }
+        changes = {key: value for key, value in fields.items() if key in allowed}
+        if "tags" in changes and isinstance(changes["tags"], list):
+            changes["tags"] = " ".join(dict.fromkeys(changes["tags"]))
+        if changes:
+            changes["updated_at"] = utc_now()
+            assignments = ", ".join(f"{key} = ?" for key in changes)
+            with self.connect() as connection:
+                connection.execute(
+                    f"""UPDATE knowledge_articles
+                    SET {assignments}, version = version + 1
+                    WHERE tenant_id = ? AND id = ?""",
+                    [*changes.values(), tenant_id, article_id],
+                )
+            self._invalidate_knowledge(tenant_id)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_articles WHERE tenant_id = ? AND id = ?",
+                (tenant_id, article_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    # -- Phase 21.3: knowledge lifecycle ----------------------------------
+    def create_knowledge_draft(
+        self,
+        tenant_id: str,
+        title: str,
+        content: str,
+        tags: list[str],
+        category: str,
+        source_url: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        """Create a knowledge article in ``draft`` status (Phase 21.3).
+
+        Drafts are not retrievable by ``search_knowledge``/``list_knowledge``
+        (which filter on ``status='published'`` once a draft is created via
+        this path); they require explicit approval before going live.
+        """
+        article_id = f"kb_{uuid4().hex[:12]}"
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO knowledge_articles
+                (id, tenant_id, title, content, tags, category, source_url,
+                 active, version, updated_at, status, reviewed_by, reviewed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 'draft', NULL, NULL)""",
+                (
+                    article_id,
+                    tenant_id,
+                    title,
+                    content,
+                    " ".join(dict.fromkeys(tags)),
+                    category,
+                    source_url,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_articles WHERE id = ? AND tenant_id = ?",
+                (article_id, tenant_id),
+            ).fetchone()
+        self._invalidate_knowledge(tenant_id)
+        return dict(row)
+
+    def review_knowledge(
+        self,
+        tenant_id: str,
+        article_id: str,
+        action: str,
+        actor_id: str,
+    ) -> dict[str, Any] | None:
+        """Approve (publish) or reject (retire) a pending knowledge article.
+
+        ``action`` is ``publish`` (sets ``status='published'``, ``active=1``)
+        or ``retire`` (sets ``status='retired'``, ``active=0``).  Only
+        ``draft`` and ``pending_review`` articles can be reviewed -- publishing
+        an already-published article is rejected so the approval step cannot
+        be bypassed.
+        """
+        from app.orchestrator import InvalidTransitionError
+
+        if action not in {"publish", "retire"}:
+            raise ValueError("action must be 'publish' or 'retire'")
+        now = utc_now()
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT status FROM knowledge_articles WHERE id = ? AND tenant_id = ?",
+                (article_id, tenant_id),
+            ).fetchone()
+            if current is None:
+                return None
+            current_status = current["status"] or "published"
+            if action == "publish" and current_status not in {"draft", "pending_review"}:
+                raise InvalidTransitionError(
+                    "only draft or pending_review articles can be published"
+                )
+            if action == "retire" and current_status == "retired":
+                raise InvalidTransitionError("article is already retired")
+            new_status = "published" if action == "publish" else "retired"
+            new_active = 1 if action == "publish" else 0
+            connection.execute(
+                """UPDATE knowledge_articles
+                SET status = ?, active = ?, reviewed_by = ?, reviewed_at = ?,
+                    updated_at = ?, version = version + 1
+                WHERE id = ? AND tenant_id = ?""",
+                (new_status, new_active, actor_id, now, now, article_id, tenant_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_articles WHERE id = ? AND tenant_id = ?",
+                (article_id, tenant_id),
+            ).fetchone()
+        self._invalidate_knowledge(tenant_id)
+        return dict(row) if row else None
+
+    def list_knowledge_gaps(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return conversations with negative feedback and no citations.
+
+        Used by the supervisor quality panel (Phase 21.2) to surface where
+        the knowledge base is failing customers.  Each row carries the
+        conversation id, customer name, intent, and the rated assistant
+        message id so a draft can be generated from it.
+        """
+        limit = max(1, min(int(limit), 100))
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT
+                       c.id AS conversation_id,
+                       c.customer_name,
+                       c.intent,
+                       f.message_id,
+                       m.content AS assistant_content,
+                       m.metadata_json
+                   FROM feedback f
+                   JOIN messages m
+                     ON m.id = f.message_id AND m.tenant_id = f.tenant_id
+                   JOIN conversations c
+                     ON c.id = f.conversation_id AND c.tenant_id = f.tenant_id
+                   WHERE f.tenant_id = ?
+                     AND f.rating = -1
+                     AND (
+                       json_valid(m.metadata_json) = 0
+                       OR COALESCE(
+                            json_type(m.metadata_json, '$.citations'),
+                            'null'
+                          ) IN ('null', 'text', 'integer', 'real', 'boolean')
+                       OR json_array_length(m.metadata_json, '$.citations') = 0
+                     )
+                   ORDER BY f.updated_at DESC
+                   LIMIT ?""",
+                (tenant_id, limit),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                metadata = json.loads(item.pop("metadata_json") or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            item["prompt_version"] = metadata.get("prompt_version")
+            result.append(item)
+        return result
+
+    def get_order_for_customer(
+        self, tenant_id: str, customer_ref: str, order_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM orders
+                WHERE tenant_id = ?
+                  AND customer_ref = ? COLLATE NOCASE
+                  AND id = ? COLLATE NOCASE""",
+                (tenant_id, customer_ref, order_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_customer_profile(self, tenant_id: str, customer_ref: str) -> dict[str, Any] | None:
+        """Resolve a customer reference to a profile, if they have any orders."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT customer_ref, customer_name FROM orders
+                WHERE tenant_id = ? AND customer_ref = ? COLLATE NOCASE
+                LIMIT 1""",
+                (tenant_id, customer_ref),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_feedback(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        message_id: str,
+        actor: str,
+        rating: int,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with self.connect() as connection:
+            existing = connection.execute(
+                """SELECT id FROM feedback
+                WHERE tenant_id = ? AND message_id = ? AND actor = ?""",
+                (tenant_id, message_id, actor),
+            ).fetchone()
+            feedback_id = existing["id"] if existing else f"fb_{uuid4().hex[:12]}"
+            connection.execute(
+                """INSERT INTO feedback
+                (id, tenant_id, conversation_id, message_id, actor, rating, reason,
+                 created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, message_id, actor) DO UPDATE SET
+                    rating = excluded.rating,
+                    reason = excluded.reason,
+                    updated_at = excluded.updated_at""",
+                (
+                    feedback_id,
+                    tenant_id,
+                    conversation_id,
+                    message_id,
+                    actor,
+                    rating,
+                    reason,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM feedback WHERE id = ?", (feedback_id,)
+            ).fetchone()
+        self._invalidate_dashboard(tenant_id)
+        return dict(row)
+
+    def audit(
+        self,
+        tenant_id: str,
+        conversation_id: str | None,
+        actor: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO audit_events
+                (id, tenant_id, conversation_id, request_id, actor, event_type,
+                 payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"evt_{uuid4().hex[:12]}",
+                    tenant_id,
+                    conversation_id,
+                    current_request_id(),
+                    str(actor),
+                    event_type,
+                    json.dumps(sanitize_for_audit(payload), ensure_ascii=False),
+                    utc_now(),
+                ),
+            )
+
+    def audit_many(
+        self,
+        tenant_id: str,
+        actor: str,
+        events: Sequence[tuple[str, str, dict[str, Any]]],
+    ) -> None:
+        if not events:
+            return
+        request_id = current_request_id()
+        now = utc_now()
+        with self.connect() as connection:
+            connection.executemany(
+                """INSERT INTO audit_events
+                (id, tenant_id, conversation_id, request_id, actor, event_type,
+                 payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        f"evt_{uuid4().hex[:12]}",
+                        tenant_id,
+                        conversation_id,
+                        request_id,
+                        str(actor),
+                        event_type,
+                        json.dumps(sanitize_for_audit(payload), ensure_ascii=False),
+                        now,
+                    )
+                    for conversation_id, event_type, payload in events
+                ],
+            )
+
+    def list_audit(self, tenant_id: str, conversation_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM audit_events
+                WHERE tenant_id = ? AND conversation_id = ?
+                ORDER BY created_at, rowid""",
+                (tenant_id, conversation_id),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            item.pop("tenant_id", None)
+            item.pop("conversation_id", None)
+            item.pop("seq", None)  # internal monotonic ordering column
+            result.append(item)
+        return result
+
+    def export_audit_events(
+        self,
+        tenant_id: str,
+        *,
+        conversation_id: str | None = None,
+        event_type: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if conversation_id:
+            clauses.append("conversation_id = ?")
+            values.append(conversation_id)
+        if event_type:
+            clauses.append("event_type = ?")
+            values.append(event_type)
+        if since:
+            clauses.append("created_at >= ?")
+            values.append(since)
+        if until:
+            clauses.append("created_at <= ?")
+            values.append(until)
+        where = " AND ".join(clauses)
+        values.extend([max(1, min(limit, 2000)), max(0, offset)])
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM audit_events WHERE {where}
+                ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?""",
+                values,
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            item.pop("seq", None)  # internal monotonic ordering column
+            result.append(item)
+        return result
+
+    def list_canned_responses(
+        self,
+        tenant_id: str,
+        *,
+        include_inactive: bool = False,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if not include_inactive:
+            clauses.append("active = 1")
+        if search:
+            needle = f"%{search.strip()}%"
+            clauses.append("(title LIKE ? OR body LIKE ? OR COALESCE(shortcut, '') LIKE ?)")
+            values.extend([needle, needle, needle])
+        where = " AND ".join(clauses)
+        values.append(max(1, min(limit, 200)))
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM canned_responses WHERE {where}
+                ORDER BY usage_count DESC, updated_at DESC, id DESC LIMIT ?""",
+                values,
+            ).fetchall()
+        return [self._canned_response_row(row) for row in rows]
+
+    def get_canned_response(self, tenant_id: str, response_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM canned_responses WHERE tenant_id = ? AND id = ?",
+                (tenant_id, response_id),
+            ).fetchone()
+        return self._canned_response_row(row) if row else None
+
+    def create_canned_response(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        body: str,
+        shortcut: str | None,
+        tags: Sequence[str],
+        actor_id: str,
+    ) -> dict[str, Any]:
+        response_id = f"macro_{uuid4().hex[:12]}"
+        now = utc_now()
+        normalized_shortcut = shortcut.strip().casefold() if shortcut else None
+        if normalized_shortcut == "":
+            normalized_shortcut = None
+        tags_json = json.dumps(list(tags), ensure_ascii=False)
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO canned_responses
+                (id, tenant_id, title, body, shortcut, tags_json, active, usage_count,
+                 created_by, updated_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)""",
+                (
+                    response_id,
+                    tenant_id,
+                    title,
+                    body,
+                    normalized_shortcut,
+                    tags_json,
+                    actor_id,
+                    actor_id,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_canned_response(tenant_id, response_id) or {}
+
+    def update_canned_response(
+        self,
+        tenant_id: str,
+        response_id: str,
+        changes: dict[str, Any],
+        actor_id: str,
+    ) -> dict[str, Any] | None:
+        if not changes:
+            return self.get_canned_response(tenant_id, response_id)
+        assignments: list[str] = []
+        values: list[Any] = []
+        if "title" in changes and changes["title"] is not None:
+            assignments.append("title = ?")
+            values.append(changes["title"])
+        if "body" in changes and changes["body"] is not None:
+            assignments.append("body = ?")
+            values.append(changes["body"])
+        if "shortcut" in changes:
+            shortcut = changes["shortcut"]
+            normalized = shortcut.strip().casefold() if isinstance(shortcut, str) else None
+            assignments.append("shortcut = ?")
+            values.append(normalized or None)
+        if "tags" in changes and changes["tags"] is not None:
+            assignments.append("tags_json = ?")
+            values.append(json.dumps(list(changes["tags"]), ensure_ascii=False))
+        if "active" in changes and changes["active"] is not None:
+            assignments.append("active = ?")
+            values.append(int(bool(changes["active"])))
+        if not assignments:
+            return self.get_canned_response(tenant_id, response_id)
+        assignments.extend(["updated_by = ?", "updated_at = ?"])
+        values.extend([actor_id, utc_now(), tenant_id, response_id])
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"""UPDATE canned_responses SET {", ".join(assignments)}
+                WHERE tenant_id = ? AND id = ?""",
+                values,
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_canned_response(tenant_id, response_id)
+
+    def record_canned_response_usage(
+        self, tenant_id: str, response_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE canned_responses
+                SET usage_count = usage_count + 1, updated_at = updated_at
+                WHERE tenant_id = ? AND id = ? AND active = 1""",
+                (tenant_id, response_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_canned_response(tenant_id, response_id)
+
+    @staticmethod
+    def _canned_response_row(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any]:
+        if row is None:
+            return {}
+        item = dict(row)
+        item["tags"] = json.loads(item.pop("tags_json", "[]") or "[]")
+        item["active"] = bool(item.get("active", 1))
+        return item
+
+    @staticmethod
+    def _assistant_metrics(
+        connection: sqlite3.Connection, tenant_id: str
+    ) -> tuple[int, int, float, int]:
+        try:
+            row = connection.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE
+                              WHEN json_valid(metadata_json)
+                               AND COALESCE(json_extract(metadata_json, '$.agent'), '')
+                                   != 'escalation'
+                              THEN 1 ELSE 0 END) AS automated,
+                          AVG(CASE
+                              WHEN json_valid(metadata_json)
+                               AND typeof(json_extract(metadata_json, '$.confidence'))
+                                   IN ('integer', 'real')
+                              THEN CAST(json_extract(metadata_json, '$.confidence') AS REAL)
+                              ELSE NULL END) AS average_confidence,
+                          SUM(CASE
+                              WHEN json_valid(metadata_json)
+                               AND json_array_length(
+                                   json_extract(metadata_json, '$.citations')
+                               ) > 0
+                              THEN 1 ELSE 0 END) AS grounded
+                FROM messages WHERE tenant_id = ? AND role = 'assistant'""",
+                (tenant_id,),
+            ).fetchone()
+            return (
+                int(row["total"] or 0),
+                int(row["automated"] or 0),
+                float(row["average_confidence"] or 0.0),
+                int(row["grounded"] or 0),
+            )
+        except sqlite3.OperationalError:
+            rows = connection.execute(
+                """SELECT metadata_json FROM messages
+                WHERE tenant_id = ? AND role = 'assistant'""",
+                (tenant_id,),
+            ).fetchall()
+            confidences: list[float] = []
+            grounded = 0
+            automated = 0
+            for item in rows:
+                metadata = json.loads(item["metadata_json"])
+                confidence = metadata.get("confidence")
+                if isinstance(confidence, (int, float)):
+                    confidences.append(float(confidence))
+                if metadata.get("citations"):
+                    grounded += 1
+                if metadata.get("agent") != "escalation":
+                    automated += 1
+            average = sum(confidences) / len(confidences) if confidences else 0.0
+            return len(rows), automated, average, grounded
+
+    def dashboard(self, tenant_id: str) -> dict[str, Any]:
+        cached = self._dashboard_cache.get(tenant_id)
+        if cached is not None:
+            return dict(cached)
+        now = utc_now()
+        with self.connect() as connection:
+            conversation_row = connection.execute(
+                """SELECT
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
+                    SUM(CASE WHEN status = 'waiting_human' THEN 1 ELSE 0 END) AS waiting_human,
+                    SUM(CASE WHEN status = 'human_active' THEN 1 ELSE 0 END) AS human_active,
+                    SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status != 'resolved' AND sla_due_at IS NOT NULL
+                              AND sla_due_at < ? THEN 1 ELSE 0 END) AS sla_breached,
+                    SUM(CASE WHEN status != 'resolved' AND claimed_by IS NOT NULL
+                              AND claim_expires_at IS NOT NULL AND claim_expires_at > ?
+                         THEN 1 ELSE 0 END) AS claimed_active,
+                    SUM(CASE WHEN status != 'resolved' AND priority = 'high'
+                         THEN 1 ELSE 0 END) AS high_priority,
+                    SUM(CASE WHEN status != 'resolved' AND needs_response = 1
+                         THEN 1 ELSE 0 END) AS needs_response,
+                    AVG(CASE WHEN status != 'resolved' AND first_response_at IS NOT NULL
+                         THEN (julianday(first_response_at) - julianday(created_at)) * 86400.0
+                         ELSE NULL END) AS first_response_seconds
+                FROM conversations WHERE tenant_id = ?""",
+                (now, now, tenant_id),
+            ).fetchone()
+            total_assistant, automated, average_confidence, grounded = self._assistant_metrics(
+                connection, tenant_id
+            )
+            feedback_row = connection.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) AS positive
+                FROM feedback WHERE tenant_id = ?""",
+                (tenant_id,),
+            ).fetchone()
+        feedback_total = int(feedback_row["total"] or 0)
+        result = {
+            "open": int(conversation_row["open_count"] or 0),
+            "waiting_human": int(conversation_row["waiting_human"] or 0),
+            "human_active": int(conversation_row["human_active"] or 0),
+            "resolved": int(conversation_row["resolved"] or 0),
+            "total": int(conversation_row["total"] or 0),
+            "sla_breached": int(conversation_row["sla_breached"] or 0),
+            "claimed_active": int(conversation_row["claimed_active"] or 0),
+            "high_priority": int(conversation_row["high_priority"] or 0),
+            "needs_response": int(conversation_row["needs_response"] or 0),
+            "average_first_response_seconds": round(
+                float(conversation_row["first_response_seconds"] or 0.0), 1
+            ),
+            "automated_responses": automated,
+            "average_confidence": round(average_confidence, 3),
+            "grounded_rate": round(grounded / total_assistant, 3) if total_assistant else 0.0,
+            "positive_feedback_rate": round(int(feedback_row["positive"] or 0) / feedback_total, 3)
+            if feedback_total
+            else 0.0,
+        }
+        self._dashboard_cache.set(tenant_id, result)
+        return dict(result)

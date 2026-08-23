@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "policy": "restore drill ledger (Gate B)",
+  "drills": [
+    {
+      "drill_type": "audit_anchor_restore",
+      "ran_at": "2026-08-20T15:23:15.376175+00:00",
+      "passed": true,
+      "details": "backup→restore→verify intact; tamper→TAMPER"
+    },
+    {
+      "drill_type": "audit_anchor_restore",
+      "ran_at": "2026-08-21T04:48:33.171286+00:00",
+      "passed": true,
+      "details": "backup→restore→verify intact; tamper→TAMPER"
+    },
+    {
+      "drill_type": "audit_anchor_restore",
+      "ran_at": "2026-08-21T07:37:42.685172+00:00",
+      "passed": true,
+      "details": "backup→restore→verify intact; tamper→TAMPER"
+    }
+  ]
+}

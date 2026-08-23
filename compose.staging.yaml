@@ -1,0 +1,66 @@
+# Staging environment (Phase 30.5): PG + Redis + OTel collector, one command.
+#
+#   docker compose --profile staging up --build
+#
+# The app runs with the full integration stack: PostgreSQL backend, Redis
+# queue, and an OpenTelemetry collector receiving traces.
+
+services:
+  helix-support:
+    build:
+      context: .
+    profiles: ["staging"]
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_BACKEND: postgresql
+      DATABASE_URL: postgresql://helix:helix@postgres:5432/helix
+      QUEUE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      ENABLE_TELEMETRY: "true"
+      ENABLE_LLM: "false"
+      AUTH_MODE: demo
+      TURN_WORKER_ENABLED: "true"
+    depends_on:
+      - postgres
+      - redis
+      - otel-collector
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["staging"]
+    environment:
+      POSTGRES_USER: helix
+      POSTGRES_PASSWORD: helix
+      POSTGRES_DB: helix
+    volumes:
+      - staging-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helix -d helix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["staging"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    profiles: ["staging"]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./ops/otel-collector.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  staging-pg-data:

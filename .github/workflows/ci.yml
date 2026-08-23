@@ -1,0 +1,312 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # ROADMAP §43.6: the browser performance + visual gates run nightly; their
+  # wall-clock budgets (LCP/render/heap) and pixel baselines are runner-
+  # sensitive, so they stay out of the per-PR gate.
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r requirements.lock
+          python -m pip install --no-deps -e .
+          python -m pip install "ruff>=0.9,<1" "pyright>=1.1.390,<2" "coverage[toml]>=7.6,<8" "pip-audit>=2.7,<3"
+
+      - name: Ruff format check
+        run: python -m ruff format --check app tests scripts
+
+      - name: Ruff lint
+        run: python -m ruff check app tests scripts
+
+      - name: Pyright type check
+        run: python -m pyright app tests scripts
+
+      - name: JavaScript syntax check
+        run: node --check app/static/app.js
+
+      - name: OpenAPI snapshot gate
+        run: python scripts/openapi_snapshot.py
+
+      - name: Frontend gate
+        run: python scripts/frontend_gate.py
+
+      - name: Unit tests with coverage
+        run: |
+          python -m coverage run -m pytest tests -q
+          python -m coverage report --fail-under=85
+
+      - name: M0 negative-path tests (Gate A)
+        # SEC-001 (OIDC), SEC-002 (DSR), REL-001 (fail-closed queue) negative
+        # paths run in-process; the Redis-unavailable cases self-skip on
+        # happy-path infra only, asserting nothing when Redis is reachable.
+        run: |
+          python -m pytest tests/test_oidc_flow.py tests/test_dsr.py \
+            tests/test_queue_fail_closed.py -q
+
+      - name: Phase 41.4 privacy-operations tests
+        # DATA: field registry, unified redaction, DSR SLA, deletion proof,
+        # tombstone-after-restore, deferred large-deletion drain.
+        run: python -m pytest tests/test_privacy.py -q
+
+      - name: Dependency consistency
+        run: python -m pip check
+
+      - name: Dependency vulnerability audit
+        run: |
+          python -m pip_audit .
+          python -m pip_audit -r requirements.lock
+
+      - name: Generate SBOM (Phase 28.5)
+        run: |
+          python -m pip install "cyclonedx-python-lib>=11,<12"
+          python scripts/generate_sbom.py --out artifacts/sbom.json
+          test -s artifacts/sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: artifacts/sbom.json
+
+      - name: Migration drill gate (Phase 30.6)
+        run: |
+          python scripts/migration_drill.py --db /tmp/migration-drill.db
+          python -m pytest tests/test_migrations.py -q
+
+      - name: Migration registry gate (Phase 41.6 / ARC-001)
+        run: |
+          python scripts/verify_migration_registry.py
+          python -m pytest tests/test_migration_registry.py -q
+
+  supply-chain:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # 43.2 contract (a): the RLS drill needs a live PostgreSQL cluster to
+        # provision scratch roles/databases on.
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: helix
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r requirements.lock
+          python -m pip install --no-deps -e ".[postgres]"
+          python -m pip install "pip-audit>=2.7,<3"
+
+      - name: Secret scan gate (Phase 41.2)
+        run: python scripts/scan_secrets.py
+
+      - name: Workflow pin consistency (Phase 41.2)
+        run: python scripts/check_workflows.py
+
+      - name: License policy gate (Phase 41.2)
+        run: python scripts/license_gate.py
+
+      - name: Migration discipline gate (Phase 42.2)
+        run: python scripts/migration_gate.py
+
+      - name: Vulnerability exception review (Phase 41.2)
+        run: python scripts/vuln_review.py
+
+      - name: Threat-model governance gate (Phase 41.7)
+        # Nil-tolerant: empty delta/drill registry is only a failure at
+        # release time (--release / --check-today), not on every PR.
+        run: python scripts/threat_model_gate.py
+
+      - name: Dependency audit + exception coverage (Phase 41.2)
+        run: |
+          python -m pip_audit -r requirements.lock --format json --output /tmp/pip-audit.json
+          python -m pip_audit .
+          python scripts/vuln_review.py --audit /tmp/pip-audit.json --require-coverage
+
+      - name: Release manifest build + verify (Phase 41.2)
+        run: |
+          python scripts/release_manifest.py --build --out artifacts/release-manifest.json
+          python scripts/release_manifest.py --verify --out artifacts/release-manifest.json
+
+      - name: Admission gate — manifest/SBOM consistency (Gate B #2)
+        # fail-closed on drift/missing SBOM; digest backfill is deployer-
+        # controlled, so CI runs with --no-digest-required.
+        run: |
+          python -m pip install "cyclonedx-python-lib>=11,<12"
+          python scripts/generate_sbom.py --out artifacts/sbom.json
+          test -s artifacts/sbom.json
+          python scripts/image_admission_check.py --no-digest-required
+
+      - name: Gate B automated drills — rotation/restore/patch (Gate B #3/4/7)
+        run: |
+          python scripts/run_rotation_drill.py
+          python scripts/run_restore_drill.py
+          python scripts/run_patch_drill.py
+
+      - name: RLS tenant-isolation drill (43.2 contract a)
+        # Live PostgreSQL: least-privilege app role proves no-context fail-
+        # closed, scope confinement, pool-reuse context reset and policy
+        # coverage; the drill writes its own ledger entry.
+        run: python scripts/run_rls_drill.py
+
+      - name: Threat-model governance recency (post-drills)
+        run: python scripts/threat_model_gate.py --check-today --drill-max-days 90
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: artifacts/release-manifest.json
+
+  ai-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r requirements.lock
+          python -m pip install --no-deps -e .
+
+      - name: Adversarial set schema gate (Phase 41.5 / AI-001)
+        run: python -c "from pathlib import Path; from scripts.adversarial_schema import load_adversarial_set; load_adversarial_set(Path('golden/adversarial.json'))"
+
+      - name: Adversarial eval gate (Phase 41.5 / AI-001)
+        # Deterministic safety gate: 23 adversarial cases must pass 100% and
+        # the report is persisted to a WORM store (ADR-014 decision 1/5).
+        run: |
+          python scripts/evaluate_adversarial.py --worm-dir artifacts/eval-reports
+          python scripts/evaluate_adversarial.py --worm-dir artifacts/eval-reports --format json > artifacts/adversarial-report.json
+
+      - name: Golden eval gate (no regression)
+        run: python scripts/evaluate.py --min-pass-rate 1.0
+
+      - name: Phase 41.5 gate tests
+        run: python -m pytest tests/test_eval_reports.py tests/test_adversarial_eval.py -q
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: artifacts/eval-reports
+          if-no-files-found: ignore
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build container image
+        run: docker build -t helix-support:ci .
+
+      - name: Container smoke test
+        run: |
+          docker run -d --name helix -p 8000:8000 helix-support:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health/ready > /dev/null 2>&1; then
+              echo "ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "container did not become ready"
+          docker logs helix
+          exit 1
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r requirements.lock
+          python -m pip install --no-deps -e .
+          python -m pip install "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+          npm ci --ignore-scripts
+
+      - name: Start server on clean database
+        run: |
+          DATABASE_PATH=/tmp/helix_ci.db LOG_LEVEL=WARNING RATE_LIMIT_PER_MINUTE=1000 \
+            python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 \
+            --log-level warning --no-access-log &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health/ready > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Browser smoke test
+        run: |
+          python tests/ui_smoke.py
+          python tests/ui_admin.py
+          python tests/ui_knowledge.py
+          python tests/ui_accessibility.py
+
+      - name: Nightly performance and visual gates (schedule only)
+        if: github.event_name == 'schedule'
+        run: |
+          python -m pip install "Pillow>=10,<12"
+          python scripts/performance_gate.py --base-url http://127.0.0.1:8765
+          python scripts/visual_gate.py
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: artifacts/*.png
+          if-no-files-found: ignore

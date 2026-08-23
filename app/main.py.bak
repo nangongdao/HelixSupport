@@ -1,0 +1,2268 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import sqlite3
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from time import perf_counter
+from typing import Annotated, Any, AsyncIterator, Callable, Sequence
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from starlette.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.config import Settings
+from app.context import request_id_context
+from app.database import Database, utc_now
+from app.errors import (
+    conflict_response,
+    not_found_response,
+    problem_response,
+)
+from app.jobs import TurnJobWorker
+from app.queue import create_task_queue
+from app.labels import normalize_conversation_labels
+from app.model_provider import OpenAICompatibleProvider
+from app.observability import RuntimeMetrics, configure_logging
+from app.orchestrator import (
+    ConversationOrchestrator,
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    TurnInProgressError,
+)
+from app.retention import RetentionService, redact_pii
+from app.webhooks import WebhookService
+from app.quality import QualityService
+from app.prompts import PromptRegistry
+from app.session_auth import (
+    OIDCConfig,
+    OIDCAuthenticator,
+    SESSION_COOKIE_NAME,
+    decode_id_token,
+    generate_state,
+    renew_session_cookie,
+    verify_session_cookie,
+)
+from app.telemetry import configure_tracing, metrics as telemetry_metrics, span
+from app.pagination import (
+    InvalidCursorError,
+    decode_conversation_cursor,
+    decode_message_cursor,
+    encode_conversation_cursor,
+    encode_message_cursor,
+)
+from app.schemas import (
+    AssignConversationRequest,
+    AuditEventOut,
+    BulkConversationActionOut,
+    BulkConversationActionRequest,
+    CannedResponseCreateRequest,
+    CannedResponseOut,
+    CannedResponseUpdateRequest,
+    ConversationLabelOut,
+    ConversationLabelsRequest,
+    ConversationPriorityRequest,
+    ConversationDetail,
+    ConversationOut,
+    CreateConversationRequest,
+    DashboardOut,
+    FeedbackOut,
+    FeedbackRequest,
+    InternalNoteRequest,
+    KnowledgeArticleOut,
+    KnowledgeCreateRequest,
+    KnowledgeReviewRequest,
+    KnowledgeUpdateRequest,
+    MeOut,
+    MessageOut,
+    MessageRequest,
+    MemberInviteRequest,
+    MemberRoleUpdateRequest,
+    OperatorMessageRequest,
+    PromptVersionActionRequest,
+    PromptVersionCreateRequest,
+    PromptVersionOut,
+    TenantMemberOut,
+    TenantModelPolicyOut,
+    TenantModelPolicyRequest,
+    TenantProvisionRequest,
+    TenantQuotaOut,
+    TenantUsageRowOut,
+    SavedQueueViewCreateRequest,
+    SavedQueueViewOut,
+    TurnJobOut,
+    TurnResponse,
+    WebhookCreateRequest,
+    WebhookDeliveryOut,
+    WebhookOut,
+)
+from app.security import (
+    ROLE_PERMISSIONS,
+    AuthenticationError,
+    Authenticator,
+    AuthorizationError,
+    Principal,
+    Role,
+    SlidingWindowRateLimiter,
+)
+
+
+configure_logging()
+configure_tracing()
+logger = logging.getLogger("helix")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+APP_VERSION = "1.1.0"
+
+
+def _http_exception_code(status_code: int) -> str:
+    """Map an HTTP status to a stable Problem Details code slug (Phase 25.1)."""
+    return {
+        400: "bad_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        422: "unprocessable",
+        429: "rate_limited",
+    }.get(status_code, "http_error")
+
+
+def _conversation_quota_exceeded(database: Any, tenant_id: str) -> str | None:
+    """Return a message when the tenant's conversation quota is exhausted (22.4).
+
+    The quota counts *active* conversations (status != 'resolved'). Returns
+    ``None`` when the tenant has no quota (unlimited) or is under it.
+    """
+    try:
+        quota = database.get_tenant_quota(tenant_id)
+    except LookupError:
+        return None
+    limit = quota.get("conversation_quota")
+    if limit is None:
+        return None
+    with database.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM conversations WHERE tenant_id = ? AND status != 'resolved'",
+            (tenant_id,),
+        ).fetchone()
+    count = int(row["n"]) if row else 0
+    if count >= limit:
+        return f"Conversation quota exceeded ({count}/{limit})"
+    return None
+
+
+def _json_safe_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:
+    """Make FastAPI validation errors JSON-serializable (Phase 25.1).
+
+    Pydantic's ``ctx`` may embed the exception object raised by a model
+    validator (e.g. ``ValueError``); replace any non-serializable value with
+    its string form so the 422 body can be rendered.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for error in errors:
+        item = dict(error)
+        ctx = item.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = {
+                key: (
+                    str(value)
+                    if not isinstance(value, (str, int, float, bool, type(None)))
+                    else value
+                )
+                for key, value in ctx.items()
+            }
+        cleaned.append(item)
+    return cleaned
+
+
+@dataclass(frozen=True)
+class AppServices:
+    settings: Settings
+    database: Database
+    authenticator: Authenticator
+    orchestrator: ConversationOrchestrator
+    turn_worker: TurnJobWorker
+    limiter: SlidingWindowRateLimiter
+    metrics: RuntimeMetrics
+    retention_service: RetentionService | None = None
+    webhooks: WebhookService | None = None
+    quality: QualityService | None = None
+    prompts: PromptRegistry | None = None
+
+
+def get_services(request: Request) -> AppServices:
+    return request.app.state.services
+
+
+def get_principal(
+    request: Request,
+    response: Response,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+) -> Principal:
+    services = get_services(request)
+    try:
+        principal = services.authenticator.authenticate(x_api_key, x_tenant_id)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not services.database.tenant_exists(principal.tenant_id):
+        raise HTTPException(status_code=403, detail="Tenant is not provisioned")
+    allowed, remaining, retry_after = services.limiter.check(principal.credential_id)
+    response.headers["X-RateLimit-Limit"] = str(services.settings.rate_limit_per_minute)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+    request.state.principal = principal
+    return principal
+
+
+def require_permission(permission: str) -> Callable[..., Principal]:
+    def dependency(
+        principal: Annotated[Principal, Depends(get_principal)],
+    ) -> Principal:
+        if not principal.can(permission):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return principal
+
+    return dependency
+
+
+def require_any_permission(*permissions: str) -> Callable[..., Principal]:
+    def dependency(
+        principal: Annotated[Principal, Depends(get_principal)],
+    ) -> Principal:
+        if not any(principal.can(permission) for permission in permissions):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return principal
+
+    return dependency
+
+
+def conversation_out(row: dict[str, Any]) -> ConversationOut:
+    payload = dict(row)
+    payload.pop("queue_priority_rank", None)
+    if "labels_json" in payload:
+        labels = payload.pop("labels_json")
+        payload["labels"] = json.loads(labels) if isinstance(labels, str) else labels
+    else:
+        payload.setdefault("labels", [])
+    now = datetime.now(UTC)
+    if "sla_breached" not in payload:
+        due_at = payload.get("sla_due_at")
+        breached = False
+        if due_at and payload.get("status") != "resolved":
+            breached = datetime.fromisoformat(due_at) < now
+        payload["sla_breached"] = breached
+    expires_at = payload.get("claim_expires_at")
+    claim_active = bool(
+        payload.get("claimed_by") and expires_at and datetime.fromisoformat(expires_at) > now
+    )
+    payload["claim_active"] = claim_active
+    if not claim_active:
+        payload["claimed_by"] = None
+        payload["claimed_at"] = None
+        payload["claim_expires_at"] = None
+    return ConversationOut(**payload)
+
+
+def canned_response_out(row: dict[str, Any]) -> CannedResponseOut:
+    return CannedResponseOut(**row)
+
+
+def knowledge_out(row: dict[str, Any]) -> KnowledgeArticleOut:
+    payload = dict(row)
+    payload["tags"] = [tag for tag in str(payload["tags"]).split() if tag]
+    payload["active"] = bool(payload["active"])
+    payload.pop("retrieval_score", None)
+    payload.pop("matched_terms", None)
+    return KnowledgeArticleOut(**payload)
+
+
+def turn_job_out(
+    row: dict[str, Any],
+    *,
+    idempotent_replay: bool = False,
+    include_result: bool = True,
+) -> TurnJobOut:
+    result = None
+    if include_result and row.get("response_json"):
+        result = TurnResponse(**json.loads(row["response_json"]))
+    return TurnJobOut(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        conversation_id=row["conversation_id"],
+        status=row["status"],
+        attempts=row["attempts"],
+        max_attempts=row["max_attempts"],
+        available_at=row["available_at"],
+        locked_at=row.get("locked_at"),
+        error_code=row.get("error_code"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        completed_at=row.get("completed_at"),
+        idempotent_replay=idempotent_replay,
+        result=result,
+    )
+
+
+def message_out(row: dict[str, Any]) -> MessageOut:
+    """Build the public message resource, dropping internal columns.
+
+    ``list_messages`` keeps ``seq`` (the monotonic cursor key) in the row so the
+    API can build the next cursor; it is not part of the public resource. The
+    ``channel_message_id`` (Phase 23.2) is likewise an internal dedup key.
+    """
+    payload = dict(row)
+    payload.pop("seq", None)
+    payload.pop("channel_message_id", None)
+    return MessageOut(**payload)
+
+
+def _message_intent_for_quality(
+    database: Any, tenant_id: str, conversation_id: str, message_id: str
+) -> str | None:
+    """Best-effort intent lookup for a feedback-rated message.
+
+    The assistant message's metadata carries the turn's intent (written by the
+    orchestrator during routing).  Returns ``None`` when the metadata is
+    missing so the aggregator falls back to the ``unknown`` bucket.
+    """
+    try:
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT metadata_json FROM messages WHERE tenant_id=? AND id=?",
+                (tenant_id, message_id),
+            ).fetchone()
+        if row is None:
+            return None
+        metadata = json.loads(row["metadata_json"] or "{}")
+        intent = metadata.get("intent")
+        return str(intent) if intent else None
+    except Exception:
+        logger.exception("failed to resolve intent for quality feedback")
+        return None
+
+
+def _message_prompt_version_for_quality(
+    database: Any, tenant_id: str, message_id: str
+) -> str | None:
+    """Best-effort prompt-version lookup for a feedback-rated message."""
+    try:
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT metadata_json FROM messages WHERE tenant_id=? AND id=?",
+                (tenant_id, message_id),
+            ).fetchone()
+        if row is None:
+            return None
+        metadata = json.loads(row["metadata_json"] or "{}")
+        version = metadata.get("prompt_version")
+        return str(version) if version else None
+    except Exception:
+        logger.exception("failed to resolve prompt_version for quality feedback")
+        return None
+
+
+def _message_date_for_quality(database: Any, tenant_id: str, message_id: str) -> str | None:
+    """Best-effort creation date (YYYY-MM-DD) of a feedback-rated message.
+
+    The quality aggregate attributes a turn to the day the turn was
+    processed, so feedback must land in the same bucket: using the rating
+    submission date instead would misattribute negative counts when a
+    customer rates a message on a later calendar day.
+    """
+    try:
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT created_at FROM messages WHERE tenant_id=? AND id=?",
+                (tenant_id, message_id),
+            ).fetchone()
+        if row is None or not row["created_at"]:
+            return None
+        return str(row["created_at"])[:10]
+    except Exception:
+        logger.exception("failed to resolve message date for quality feedback")
+        return None
+
+
+def create_app(app_settings: Settings | None = None) -> FastAPI:
+    settings = app_settings or Settings.from_env()
+    settings.validate()
+
+    database: Any
+    if settings.database_backend == "postgresql":
+        from app.postgres_db import create_postgres_database
+
+        database = create_postgres_database(settings.database_url)
+    else:
+        database = Database(
+            settings.database_path,
+            pool_size=settings.database_pool_size,
+            busy_timeout_ms=settings.database_busy_timeout_ms,
+            knowledge_cache_ttl_seconds=settings.knowledge_cache_ttl_seconds,
+            dashboard_cache_ttl_seconds=settings.dashboard_cache_ttl_seconds,
+            cache_max_entries=settings.cache_max_entries,
+        )
+        database.initialize()
+    authenticator = Authenticator(settings)
+    for tenant_id in authenticator.configured_tenants:
+        database.ensure_tenant(tenant_id)
+    provider = OpenAICompatibleProvider(settings) if settings.enable_llm else None
+    queue = create_task_queue(database, settings)
+    webhook_service = WebhookService(database)
+    orchestrator = ConversationOrchestrator(
+        database, settings, provider, queue=queue, webhook_service=webhook_service
+    )
+    turn_worker = TurnJobWorker(
+        database,
+        orchestrator,
+        queue=queue,
+        enabled=settings.turn_worker_enabled,
+        concurrency=settings.turn_worker_concurrency,
+        poll_interval_ms=settings.turn_job_poll_interval_ms,
+        lease_seconds=settings.turn_job_lease_seconds,
+        retry_base_seconds=settings.turn_job_retry_base_seconds,
+        retention_days=settings.turn_job_retention_days,
+        stream_enabled=settings.turn_job_stream_enabled,
+        stream_pacing_ms=settings.turn_job_stream_pacing_ms,
+        webhook_service=webhook_service,
+        webhook_interval_seconds=settings.webhook_delivery_interval_seconds,
+    )
+    services = AppServices(
+        settings=settings,
+        database=database,
+        authenticator=authenticator,
+        orchestrator=orchestrator,
+        turn_worker=turn_worker,
+        limiter=SlidingWindowRateLimiter(settings.rate_limit_per_minute),
+        metrics=RuntimeMetrics(),
+        retention_service=RetentionService(database),
+        webhooks=webhook_service,
+        quality=QualityService(database),
+        prompts=PromptRegistry(database),
+    )
+
+    app = FastAPI(
+        title="Helix Support",
+        version=APP_VERSION,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+    )
+    app.state.services = services
+    app.router.on_startup.append(turn_worker.start)
+    app.router.on_shutdown.append(turn_worker.stop)
+    app.router.on_shutdown.append(database.close)
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH"],
+            allow_headers=[
+                "Content-Type",
+                "X-API-Key",
+                "X-Tenant-Id",
+                "X-Request-Id",
+                "Idempotency-Key",
+            ],
+            expose_headers=[
+                "X-Has-More",
+                "X-Next-Cursor",
+                "X-Prev-Cursor",
+                "X-Page-Limit",
+                "X-Page-Offset",
+                "X-Queue-Sort",
+                "X-Idempotent-Replay",
+                "Location",
+                "X-Request-Id",
+                "X-RateLimit-Limit",
+                "X-RateLimit-Remaining",
+            ],
+        )
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.middleware("http")
+    async def request_controls(request: Request, call_next: Callable[..., Any]) -> Response:
+        supplied_id = request.headers.get("X-Request-Id", "")
+        request_id = (
+            supplied_id if REQUEST_ID_PATTERN.fullmatch(supplied_id) else f"req_{uuid4().hex}"
+        )
+        token = request_id_context.set(request_id)
+        started = perf_counter()
+        status_code = 500
+        route = request.url.path
+        with span(
+            "http.request",
+            method=request.method,
+            path=request.url.path,
+            request_id=request_id,
+        ) as request_span:
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+                response.headers["X-Request-Id"] = request_id
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "DENY"
+                response.headers["Referrer-Policy"] = "no-referrer"
+                response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+                response.headers["Content-Security-Policy"] = (
+                    "default-src 'self'; script-src 'self'; style-src 'self'; "
+                    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+                )
+                if request.url.path.startswith("/api/"):
+                    response.headers["Cache-Control"] = "no-store"
+                elif request.url.path == "/" or request.url.path.startswith("/static/"):
+                    response.headers["Cache-Control"] = "no-cache"
+                if settings.is_production:
+                    response.headers["Strict-Transport-Security"] = (
+                        "max-age=31536000; includeSubDomains"
+                    )
+                return response
+            except Exception:
+                logger.exception(
+                    "request.failed",
+                    extra={
+                        "request_id": request_id,
+                        "method": request.method,
+                        "route": request.url.path,
+                    },
+                )
+                raise
+            finally:
+                duration_ms = int((perf_counter() - started) * 1000)
+                route_object = request.scope.get("route")
+                route = getattr(route_object, "path", request.url.path)
+                request_span.set_attribute("route", route)
+                request_span.set_attribute("status_code", status_code)
+                services.metrics.observe_request(route, status_code, duration_ms)
+                telemetry_metrics.observe(
+                    "http_request_duration_ms", duration_ms, route=route, method=request.method
+                )
+                telemetry_metrics.increment(
+                    "http_requests_total",
+                    route=route,
+                    method=request.method,
+                    status=str(status_code),
+                )
+                logger.info(
+                    "request.completed",
+                    extra={
+                        "request_id": request_id,
+                        "method": request.method,
+                        "route": route,
+                        "status_code": status_code,
+                        "duration_ms": duration_ms,
+                    },
+                )
+                request_id_context.reset(token)
+
+    @app.exception_handler(LookupError)
+    async def lookup_error_handler(request: Request, exc: LookupError) -> JSONResponse:
+        return not_found_response(request, str(exc))
+
+    @app.exception_handler(TurnInProgressError)
+    async def turn_in_progress_handler(request: Request, exc: TurnInProgressError) -> JSONResponse:
+        return conflict_response(
+            request,
+            str(exc),
+            code="turn_in_progress",
+            headers={"Retry-After": "1"},
+        )
+
+    @app.exception_handler(IdempotencyConflictError)
+    async def idempotency_conflict_handler(
+        request: Request, exc: IdempotencyConflictError
+    ) -> JSONResponse:
+        return conflict_response(request, str(exc), code="idempotency_conflict")
+
+    @app.exception_handler(InvalidTransitionError)
+    async def transition_error_handler(
+        request: Request, exc: InvalidTransitionError
+    ) -> JSONResponse:
+        return conflict_response(request, str(exc), code="invalid_transition")
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        # FastAPI's default HTTPException renders {"detail": ...}; route code
+        # raises HTTPException for 400/401/403/404/409/422/429. Normalize every
+        # one to Problem Details while keeping the detail field intact.
+        return problem_response(
+            request,
+            status_code=exc.status_code,
+            detail=str(exc.detail),
+            code=_http_exception_code(exc.status_code),
+            headers=exc.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # 422 with per-field details; the body retains FastAPI's structured
+        # error list under "errors" plus the Problem Details envelope.
+        return problem_response(
+            request,
+            status_code=422,
+            detail="Request validation failed",
+            code="validation_error",
+            errors=_json_safe_errors(exc.errors()),
+        )
+
+    @app.get("/health")
+    @app.get("/health/live")
+    def liveness() -> dict[str, str]:
+        return {"status": "ok", "env": settings.app_env}
+
+    @app.get("/health/ready", response_model=None)
+    def readiness() -> JSONResponse:
+        ready = database.ping()
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={"status": "ready" if ready else "not_ready", "database": ready},
+        )
+
+    @app.get("/", response_class=HTMLResponse)
+    def operator_home() -> HTMLResponse:
+        index = static_dir / "index.html"
+        if not index.exists():
+            return HTMLResponse("<h1>Helix Support API</h1><p>Operator UI missing.</p>")
+        return HTMLResponse(index.read_text(encoding="utf-8"))
+
+    @app.get("/favicon.ico", include_in_schema=False, response_model=None)
+    def favicon() -> FileResponse:
+        return FileResponse(static_dir / "favicon.svg", media_type="image/svg+xml")
+
+    @app.get("/api/me", response_model=MeOut)
+    def me(principal: Annotated[Principal, Depends(get_principal)]) -> MeOut:
+        return MeOut(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.actor_id,
+            role=principal.role,
+            permissions=sorted(ROLE_PERMISSIONS[principal.role]),
+            local_drafts_enabled=settings.local_drafts_enabled,
+            local_draft_ttl_minutes=settings.local_draft_ttl_minutes,
+        )
+
+    @app.get("/api/dashboard", response_model=DashboardOut)
+    def dashboard(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+    ) -> DashboardOut:
+        return DashboardOut(**database.dashboard(principal.tenant_id))
+
+    @app.get("/api/conversations", response_model=list[ConversationOut])
+    def list_conversations(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        response: Response,
+        status: Annotated[
+            str | None,
+            Query(pattern=r"^(open|waiting_human|human_active|resolved)$"),
+        ] = None,
+        search: Annotated[str | None, Query(max_length=120)] = None,
+        label: Annotated[str | None, Query(max_length=32)] = None,
+        priority: Annotated[str | None, Query(pattern=r"^(normal|high)$")] = None,
+        channel: Annotated[str | None, Query(max_length=40, pattern=r"^[a-zA-Z0-9_-]+$")] = None,
+        assigned_to: Annotated[str | None, Query(max_length=80)] = None,
+        claimed_by: Annotated[str | None, Query(max_length=80)] = None,
+        mine: Annotated[bool, Query()] = False,
+        unassigned: Annotated[bool, Query()] = False,
+        unclaimed: Annotated[bool, Query()] = False,
+        sla_breached: Annotated[bool | None, Query()] = None,
+        needs_response: Annotated[bool | None, Query()] = None,
+        sort: Annotated[
+            str,
+            Query(pattern=r"^(priority|waiting|sla|updated)$"),
+        ] = "priority",
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+    ) -> list[ConversationOut]:
+        if cursor and offset:
+            raise HTTPException(status_code=400, detail="cursor and offset cannot be combined")
+        if mine and assigned_to:
+            raise HTTPException(status_code=400, detail="mine and assigned_to cannot be combined")
+        if unassigned and assigned_to:
+            raise HTTPException(
+                status_code=400, detail="unassigned and assigned_to cannot be combined"
+            )
+        if unclaimed and claimed_by:
+            raise HTTPException(
+                status_code=400, detail="unclaimed and claimed_by cannot be combined"
+            )
+        try:
+            decoded_cursor = decode_conversation_cursor(cursor) if cursor else None
+        except InvalidCursorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if decoded_cursor is not None and decoded_cursor[0] != sort:
+            raise HTTPException(status_code=400, detail="cursor sort does not match requested sort")
+        try:
+            normalized_label = normalize_conversation_labels([label])[0] if label else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        resolved_assigned = principal.actor_id if mine else assigned_to
+        try:
+            rows = database.list_conversations(
+                principal.tenant_id,
+                status=status,
+                search=search,
+                label=normalized_label,
+                priority=priority,
+                channel=channel,
+                assigned_to=resolved_assigned,
+                claimed_by=claimed_by,
+                unassigned=unassigned,
+                unclaimed=unclaimed,
+                sla_breached=sla_breached,
+                needs_response=needs_response,
+                sort=sort,
+                limit=limit + 1,
+                offset=offset,
+                cursor=decoded_cursor,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        has_more = len(rows) > limit
+        visible_rows = rows[:limit]
+        response.headers["X-Has-More"] = str(has_more).lower()
+        response.headers["X-Page-Limit"] = str(limit)
+        response.headers["X-Page-Offset"] = str(offset)
+        response.headers["X-Queue-Sort"] = sort
+        if has_more and visible_rows:
+            last = visible_rows[-1]
+            if sort == "waiting":
+                sort_key = str(last.get("waiting_since") or "9999-12-31T00:00:00+00:00")
+            elif sort == "sla":
+                sort_key = str(last.get("sla_due_at") or "9999-12-31T00:00:00+00:00")
+            else:
+                sort_key = None
+            response.headers["X-Next-Cursor"] = encode_conversation_cursor(
+                int(last["queue_priority_rank"]),
+                str(last["updated_at"]),
+                str(last["id"]),
+                sort=sort,
+                sort_key=sort_key,
+            )
+        return [conversation_out(row) for row in visible_rows]
+
+    @app.get("/api/events/queue")
+    async def stream_queue_events(
+        request: Request,
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        timeout: Annotated[int, Query(ge=5, le=120)] = 45,
+    ) -> StreamingResponse:
+        async def event_stream() -> AsyncIterator[str]:
+            last_watermark = database.queue_revision(principal.tenant_id)
+            deadline = perf_counter() + timeout
+            yield (
+                "event: snapshot\ndata: "
+                f"{json.dumps({'watermark': last_watermark}, ensure_ascii=False)}\n\n"
+            )
+            while True:
+                if await request.is_disconnected():
+                    break
+                current = database.queue_revision(principal.tenant_id)
+                if current != last_watermark:
+                    payload = {"watermark": current, "changed": True}
+                    yield f"event: queue\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_watermark = current
+                if perf_counter() >= deadline:
+                    yield 'event: timeout\ndata: {"detail":"stream timeout"}\n\n'
+                    break
+                yield "event: ping\ndata: {}\n\n"
+                await asyncio.sleep(2.5 if not request.headers.get("X-Low-Perf") else 5.0)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/saved-views", response_model=list[SavedQueueViewOut])
+    def list_saved_views(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+    ) -> list[SavedQueueViewOut]:
+        return [
+            SavedQueueViewOut(**row)
+            for row in database.list_saved_views(principal.tenant_id, principal.actor_id)
+        ]
+
+    @app.post("/api/saved-views", response_model=SavedQueueViewOut, status_code=201)
+    def create_saved_view(
+        payload: SavedQueueViewCreateRequest,
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+    ) -> SavedQueueViewOut:
+        try:
+            row = database.create_saved_view(
+                principal.tenant_id,
+                principal.actor_id,
+                payload.name,
+                payload.filters.model_dump(exclude_none=True),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=409, detail="A saved view with this name already exists"
+            ) from exc
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "saved_view.created",
+            {"view_id": row["id"], "name": row["name"], "filters": row["filters"]},
+        )
+        return SavedQueueViewOut(**row)
+
+    @app.delete("/api/saved-views/{view_id}", status_code=204)
+    def delete_saved_view(
+        view_id: str,
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+    ) -> Response:
+        if not database.delete_saved_view(principal.tenant_id, principal.actor_id, view_id):
+            raise HTTPException(status_code=404, detail="Saved view not found")
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "saved_view.deleted",
+            {"view_id": view_id},
+        )
+        return Response(status_code=204)
+
+    @app.get("/api/conversation-labels", response_model=list[ConversationLabelOut])
+    def list_conversation_labels(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+    ) -> list[ConversationLabelOut]:
+        return [
+            ConversationLabelOut(**row)
+            for row in database.list_conversation_labels(principal.tenant_id)
+        ]
+
+    @app.post(
+        "/api/conversations/bulk-actions",
+        response_model=BulkConversationActionOut,
+    )
+    def bulk_conversation_action(
+        payload: BulkConversationActionRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> BulkConversationActionOut:
+        force = principal.role in {Role.ADMIN, Role.SUPERVISOR}
+        try:
+            result = orchestrator.bulk_action(
+                principal.tenant_id,
+                principal.actor_id,
+                payload.conversation_ids,
+                payload.action,
+                priority=payload.priority,
+                labels=payload.labels,
+                force=force,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return BulkConversationActionOut(**result)
+
+    @app.post("/api/conversations", response_model=ConversationOut, status_code=201)
+    def create_conversation(
+        payload: CreateConversationRequest,
+        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
+    ) -> ConversationOut:
+        # Phase 22.4: enforce the tenant conversation quota before creating.
+        quota_error = _conversation_quota_exceeded(database, principal.tenant_id)
+        if quota_error:
+            raise HTTPException(
+                status_code=429,
+                detail=quota_error,
+                headers={"Retry-After": "3600"},
+            )
+        row = database.create_conversation(
+            principal.tenant_id,
+            payload.customer_name,
+            payload.customer_ref,
+            payload.channel,
+            principal.actor_id,
+            settings.normal_sla_minutes,
+        )
+        # Phase 20.5: outbound webhook event; failures must not break creation.
+        assert services.webhooks is not None
+        try:
+            services.webhooks.emit_event(
+                principal.tenant_id,
+                "conversation.created",
+                {
+                    "conversation_id": row["id"],
+                    "customer_name": row["customer_name"],
+                    "channel": row["channel"],
+                    "created_at": row["created_at"],
+                },
+                str(uuid4()),
+            )
+        except Exception:
+            logger.exception("webhook.emit_failed", extra={"event_type": "conversation.created"})
+        return conversation_out(row)
+
+    @app.patch("/api/conversations/{conversation_id}", response_model=ConversationOut)
+    def update_conversation(
+        conversation_id: str,
+        payload: ConversationPriorityRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.update_priority(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                payload.priority,
+            )
+        )
+
+    @app.put("/api/conversations/{conversation_id}/labels", response_model=ConversationOut)
+    def replace_conversation_labels(
+        conversation_id: str,
+        payload: ConversationLabelsRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.replace_labels(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                payload.labels,
+            )
+        )
+
+    @app.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)
+    def get_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        message_limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+        message_cursor: Annotated[str | None, Query(max_length=512)] = None,
+        messages_before: Annotated[bool, Query()] = False,
+    ) -> ConversationDetail:
+        conversation = database.get_conversation(principal.tenant_id, conversation_id)
+        if not conversation:
+            raise LookupError("Conversation not found")
+        try:
+            decoded_message_cursor = (
+                decode_message_cursor(message_cursor) if message_cursor else None
+            )
+        except InvalidCursorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        messages = database.list_messages(
+            principal.tenant_id,
+            conversation_id,
+            limit=message_limit,
+            cursor=decoded_message_cursor,
+            before=messages_before,
+        )
+        return ConversationDetail(
+            conversation=conversation_out(conversation),
+            messages=[message_out(item) for item in messages],
+            audit_events=[
+                AuditEventOut(**item)
+                for item in database.list_audit(principal.tenant_id, conversation_id)
+            ],
+        )
+
+    @app.get(
+        "/api/conversations/{conversation_id}/messages",
+        response_model=list[MessageOut],
+    )
+    def list_conversation_messages(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+        before: Annotated[bool, Query()] = False,
+    ) -> list[MessageOut]:
+        if not database.get_conversation(principal.tenant_id, conversation_id):
+            raise LookupError("Conversation not found")
+        try:
+            decoded_cursor = decode_message_cursor(cursor) if cursor else None
+        except InvalidCursorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        rows = database.list_messages(
+            principal.tenant_id,
+            conversation_id,
+            limit=limit + 1,
+            cursor=decoded_cursor,
+            before=before,
+        )
+        has_more = len(rows) > limit
+        if before:
+            visible_rows = rows[-limit:] if has_more else rows
+        else:
+            visible_rows = rows[:limit]
+        response.headers["X-Has-More"] = str(has_more).lower()
+        response.headers["X-Page-Limit"] = str(limit)
+        if visible_rows:
+            first = visible_rows[0]
+            last = visible_rows[-1]
+            response.headers["X-Prev-Cursor"] = encode_message_cursor(
+                str(first["created_at"]), int(first["seq"])
+            )
+            response.headers["X-Next-Cursor"] = encode_message_cursor(
+                str(last["created_at"]), int(last["seq"])
+            )
+        return [message_out(item) for item in visible_rows]
+
+    @app.post("/api/conversations/{conversation_id}/claim", response_model=ConversationOut)
+    def claim_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.claim(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                force=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+            )
+        )
+
+    @app.post("/api/conversations/{conversation_id}/release", response_model=ConversationOut)
+    def release_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.release_claim(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                force=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+            )
+        )
+
+    @app.post("/api/conversations/{conversation_id}/assign", response_model=ConversationOut)
+    def assign_conversation(
+        conversation_id: str,
+        payload: AssignConversationRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.assign(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                payload.assignee_id,
+                force=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+            )
+        )
+
+    @app.post(
+        "/api/conversations/{conversation_id}/messages",
+        response_model=TurnResponse,
+    )
+    def post_customer_message(
+        conversation_id: str,
+        payload: MessageRequest,
+        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> TurnResponse:
+        if idempotency_key and not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
+            raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+        key = idempotency_key or f"turn_{uuid4().hex}"
+        result = orchestrator.handle_customer_message(
+            principal.tenant_id,
+            conversation_id,
+            payload.content,
+            principal.actor_id,
+            key,
+        )
+        return TurnResponse(**result)
+
+    @app.post(
+        "/api/conversations/{conversation_id}/turn-jobs",
+        response_model=TurnJobOut,
+        status_code=202,
+    )
+    def enqueue_turn_job(
+        conversation_id: str,
+        payload: MessageRequest,
+        response: Response,
+        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> TurnJobOut:
+        if idempotency_key and not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
+            raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+        key = idempotency_key or f"turn_{uuid4().hex}"
+        job, replayed = orchestrator.queue_customer_message(
+            principal.tenant_id,
+            conversation_id,
+            payload.content,
+            principal.actor_id,
+            key,
+            settings.turn_job_max_attempts,
+        )
+        response.headers["Location"] = f"/api/turn-jobs/{job['id']}"
+        response.headers["X-Idempotent-Replay"] = str(replayed).lower()
+        turn_worker.notify()
+        return turn_job_out(job, idempotent_replay=replayed)
+
+    @app.get("/api/turn-jobs", response_model=list[TurnJobOut])
+    def list_turn_jobs(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        response: Response,
+        status: Annotated[
+            str | None,
+            Query(pattern=r"^(queued|processing|completed|failed)$"),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+    ) -> list[TurnJobOut]:
+        rows = database.list_turn_jobs(
+            principal.tenant_id,
+            status=status,
+            limit=limit + 1,
+            offset=offset,
+        )
+        response.headers["X-Has-More"] = str(len(rows) > limit).lower()
+        response.headers["X-Page-Limit"] = str(limit)
+        response.headers["X-Page-Offset"] = str(offset)
+        return [turn_job_out(row, include_result=False) for row in rows[:limit]]
+
+    @app.get("/api/turn-jobs/{job_id}", response_model=TurnJobOut)
+    def get_turn_job(
+        job_id: str,
+        principal: Annotated[
+            Principal,
+            Depends(require_any_permission("conversation:read", "conversation:write")),
+        ],
+    ) -> TurnJobOut:
+        job = database.get_turn_job(principal.tenant_id, job_id)
+        if not job:
+            raise LookupError("Turn job not found")
+        return turn_job_out(job)
+
+    @app.get("/api/turn-jobs/{job_id}/events")
+    async def stream_turn_job_events(
+        job_id: str,
+        request: Request,
+        principal: Annotated[
+            Principal,
+            Depends(require_any_permission("conversation:read", "conversation:write")),
+        ],
+        timeout: Annotated[int, Query(ge=1, le=120)] = 30,
+    ) -> StreamingResponse:
+        job = database.get_turn_job(principal.tenant_id, job_id)
+        if not job:
+            raise LookupError("Turn job not found")
+
+        async def event_stream() -> AsyncIterator[str]:
+            last_status = ""
+            last_updated = ""
+            last_chunk_seq = 0
+            deadline = perf_counter() + timeout
+            while True:
+                if await request.is_disconnected():
+                    # Client gone: stop writing remaining paced chunks for this
+                    # turn (Phase 19.5). The reply itself is already durable.
+                    turn_worker.cancel_stream(job_id)
+                    break
+                current = database.get_turn_job(principal.tenant_id, job_id)
+                if not current:
+                    yield 'event: error\ndata: {"detail":"Turn job not found"}\n\n'
+                    break
+                # Emit any newly persisted output chunks before the job state,
+                # so the client sees tokens arrive progressively while the
+                # worker is still pacing writes.  ``seq`` is monotonic, so a
+                # resumable poll can never skip or repeat a chunk.
+                for chunk in database.list_turn_job_chunks(
+                    principal.tenant_id, job_id, after_seq=last_chunk_seq
+                ):
+                    payload = {
+                        "seq": int(chunk["seq"]),
+                        "content": str(chunk["content"]),
+                    }
+                    yield f"event: token\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_chunk_seq = int(chunk["seq"])
+                status = str(current["status"])
+                updated_at = str(current["updated_at"])
+                if status != last_status or updated_at != last_updated:
+                    payload = turn_job_out(current).model_dump(mode="json")
+                    yield f"event: job\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_status = status
+                    last_updated = updated_at
+                    if status in {"completed", "failed"}:
+                        break
+                if perf_counter() >= deadline:
+                    yield 'event: timeout\ndata: {"detail":"stream timeout"}\n\n'
+                    break
+                yield "event: ping\ndata: {}\n\n"
+                await asyncio.sleep(0.2)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/turn-jobs/{job_id}/retry", response_model=TurnJobOut, status_code=202)
+    def retry_turn_job(
+        job_id: str,
+        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
+    ) -> TurnJobOut:
+        job = orchestrator.retry_turn_job(
+            principal.tenant_id,
+            job_id,
+            principal.actor_id,
+        )
+        turn_worker.notify()
+        return turn_job_out(job)
+
+    @app.post("/api/conversations/{conversation_id}/accept", response_model=ConversationOut)
+    def accept_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        row = orchestrator.handoff(
+            principal.tenant_id,
+            conversation_id,
+            principal.actor_id,
+            can_override=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+        )
+        return conversation_out(row)
+
+    @app.post(
+        "/api/conversations/{conversation_id}/operator-messages",
+        response_model=MessageOut,
+    )
+    def operator_message(
+        conversation_id: str,
+        payload: OperatorMessageRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> MessageOut:
+        message = orchestrator.operator_reply(
+            principal.tenant_id,
+            conversation_id,
+            principal.actor_id,
+            payload.content,
+            can_override=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+        )
+        return MessageOut(**message)
+
+    @app.post(
+        "/api/conversations/{conversation_id}/notes",
+        response_model=MessageOut,
+    )
+    def internal_note(
+        conversation_id: str,
+        payload: InternalNoteRequest,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> MessageOut:
+        return MessageOut(
+            **orchestrator.add_internal_note(
+                principal.tenant_id,
+                conversation_id,
+                principal.actor_id,
+                payload.content,
+            )
+        )
+
+    @app.post("/api/conversations/{conversation_id}/resolve", response_model=ConversationOut)
+    def resolve_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        row = orchestrator.resolve(
+            principal.tenant_id,
+            conversation_id,
+            principal.actor_id,
+            can_override=principal.role in {Role.ADMIN, Role.SUPERVISOR},
+        )
+        return conversation_out(row)
+
+    @app.post("/api/conversations/{conversation_id}/reopen", response_model=ConversationOut)
+    def reopen_conversation(
+        conversation_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> ConversationOut:
+        return conversation_out(
+            orchestrator.reopen(principal.tenant_id, conversation_id, principal.actor_id)
+        )
+
+    @app.post("/api/conversations/{conversation_id}/feedback", response_model=FeedbackOut)
+    def submit_feedback(
+        conversation_id: str,
+        payload: FeedbackRequest,
+        principal: Annotated[
+            Principal,
+            Depends(require_any_permission("conversation:read", "conversation:write")),
+        ],
+    ) -> FeedbackOut:
+        if not database.get_message(principal.tenant_id, conversation_id, payload.message_id):
+            raise LookupError("Message not found")
+        # Read the previous rating *before* persisting so the quality
+        # aggregate can compute the correct delta (Phase 21.1).
+        previous_rating = (
+            services.quality.get_feedback_rating(
+                principal.tenant_id, payload.message_id, principal.actor_id
+            )
+            if services.quality is not None
+            else None
+        )
+        feedback = database.record_feedback(
+            principal.tenant_id,
+            conversation_id,
+            payload.message_id,
+            principal.actor_id,
+            payload.rating,
+            payload.reason,
+        )
+        database.audit(
+            principal.tenant_id,
+            conversation_id,
+            principal.actor_id,
+            "message.feedback_recorded",
+            {"message_id": payload.message_id, "rating": payload.rating},
+        )
+        # Phase 21.1: keep the daily quality aggregate in sync with feedback
+        # changes. A negative rating lands in ``quality_daily``; flipping back
+        # to positive decrements it. Best-effort; failures here never block
+        # the feedback write that already succeeded. The bucket date is the
+        # turn's date (the rated message's creation date), not the rating
+        # submission date, so a same-bucket invariant holds across days.
+        if services.quality is not None:
+            try:
+                services.quality.apply_feedback_rating(
+                    principal.tenant_id,
+                    message_id=payload.message_id,
+                    actor=principal.actor_id,
+                    new_rating=payload.rating,
+                    previous_rating=previous_rating,
+                    intent=_message_intent_for_quality(
+                        database, principal.tenant_id, conversation_id, payload.message_id
+                    ),
+                    prompt_version=_message_prompt_version_for_quality(
+                        database, principal.tenant_id, payload.message_id
+                    ),
+                    date_str=_message_date_for_quality(
+                        database, principal.tenant_id, payload.message_id
+                    )
+                    or feedback["updated_at"][:10],
+                )
+            except Exception:
+                logger.exception("failed to update quality aggregate for feedback")
+        return FeedbackOut(**feedback)
+
+    @app.get("/api/canned-responses", response_model=list[CannedResponseOut])
+    def list_canned_responses(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        search: Annotated[str | None, Query(max_length=120)] = None,
+        include_inactive: bool = False,
+    ) -> list[CannedResponseOut]:
+        if include_inactive and not principal.can("knowledge:write"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return [
+            canned_response_out(row)
+            for row in database.list_canned_responses(
+                principal.tenant_id,
+                include_inactive=include_inactive,
+                search=search,
+            )
+        ]
+
+    @app.post("/api/canned-responses", response_model=CannedResponseOut, status_code=201)
+    def create_canned_response(
+        payload: CannedResponseCreateRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> CannedResponseOut:
+        try:
+            row = database.create_canned_response(
+                principal.tenant_id,
+                title=payload.title,
+                body=payload.body,
+                shortcut=payload.shortcut,
+                tags=payload.tags,
+                actor_id=principal.actor_id,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Shortcut already exists") from exc
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "canned_response.created",
+            {"response_id": row["id"], "shortcut": row.get("shortcut")},
+        )
+        return canned_response_out(row)
+
+    @app.patch("/api/canned-responses/{response_id}", response_model=CannedResponseOut)
+    def update_canned_response(
+        response_id: str,
+        payload: CannedResponseUpdateRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> CannedResponseOut:
+        try:
+            row = database.update_canned_response(
+                principal.tenant_id,
+                response_id,
+                payload.model_dump(exclude_unset=True),
+                principal.actor_id,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Shortcut already exists") from exc
+        if not row:
+            raise LookupError("Canned response not found")
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "canned_response.updated",
+            {
+                "response_id": response_id,
+                "fields": sorted(payload.model_dump(exclude_unset=True)),
+            },
+        )
+        return canned_response_out(row)
+
+    @app.post("/api/canned-responses/{response_id}/use", response_model=CannedResponseOut)
+    def use_canned_response(
+        response_id: str,
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+    ) -> CannedResponseOut:
+        row = database.record_canned_response_usage(principal.tenant_id, response_id)
+        if not row:
+            raise LookupError("Canned response not found")
+        return canned_response_out(row)
+
+    @app.get("/api/audit-events", response_model=list[AuditEventOut])
+    def export_audit_events(
+        principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+        response: Response,
+        conversation_id: Annotated[str | None, Query(max_length=160)] = None,
+        event_type: Annotated[str | None, Query(max_length=80)] = None,
+        since: Annotated[str | None, Query(max_length=40)] = None,
+        until: Annotated[str | None, Query(max_length=40)] = None,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+        offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+    ) -> list[AuditEventOut]:
+        rows = database.export_audit_events(
+            principal.tenant_id,
+            conversation_id=conversation_id,
+            event_type=event_type,
+            since=since,
+            until=until,
+            limit=limit + 1,
+            offset=offset,
+        )
+        has_more = len(rows) > limit
+        visible = rows[:limit]
+        response.headers["X-Has-More"] = str(has_more).lower()
+        response.headers["X-Page-Limit"] = str(limit)
+        response.headers["X-Page-Offset"] = str(offset)
+        return [
+            AuditEventOut(
+                id=row["id"],
+                request_id=row.get("request_id"),
+                actor=row["actor"],
+                event_type=row["event_type"],
+                payload=row["payload"],
+                created_at=row["created_at"],
+            )
+            for row in visible
+        ]
+
+    @app.get("/api/knowledge", response_model=list[KnowledgeArticleOut])
+    def list_knowledge(
+        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
+        include_inactive: bool = False,
+    ) -> list[KnowledgeArticleOut]:
+        return [
+            knowledge_out(row)
+            for row in database.list_knowledge(principal.tenant_id, include_inactive)
+        ]
+
+    @app.post("/api/knowledge", response_model=KnowledgeArticleOut, status_code=201)
+    def create_knowledge(
+        payload: KnowledgeCreateRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> KnowledgeArticleOut:
+        article = database.create_knowledge(
+            principal.tenant_id,
+            payload.title,
+            payload.content,
+            payload.tags,
+            payload.category,
+            payload.source_url,
+        )
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "knowledge.created",
+            {"article_id": article["id"], "version": article["version"]},
+        )
+        return knowledge_out(article)
+
+    @app.patch("/api/knowledge/{article_id}", response_model=KnowledgeArticleOut)
+    def update_knowledge(
+        article_id: str,
+        payload: KnowledgeUpdateRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> KnowledgeArticleOut:
+        changes = payload.model_dump(exclude_unset=True)
+        article = database.update_knowledge(principal.tenant_id, article_id, changes)
+        if not article:
+            raise LookupError("Knowledge article not found")
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "knowledge.updated",
+            {
+                "article_id": article_id,
+                "version": article["version"],
+                "fields": sorted(changes),
+            },
+        )
+        return knowledge_out(article)
+
+    # ------------------------------------------------------------------
+    # Phase 21.3: knowledge lifecycle -- draft creation, approval, and
+    # negative-feedback-to-draft reflow.
+    # ------------------------------------------------------------------
+
+    @app.post(
+        "/api/knowledge/drafts",
+        response_model=KnowledgeArticleOut,
+        status_code=201,
+    )
+    def create_knowledge_draft(
+        payload: KnowledgeCreateRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> KnowledgeArticleOut:
+        """Create a knowledge article in ``draft`` status (Phase 21.3).
+
+        Drafts are invisible to retrieval until explicitly published through
+        the review endpoint, so an approval step is mandatory.
+        """
+        article = database.create_knowledge_draft(
+            principal.tenant_id,
+            payload.title,
+            payload.content,
+            payload.tags,
+            payload.category,
+            payload.source_url,
+            principal.actor_id,
+        )
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "knowledge.draft_created",
+            {"article_id": article["id"], "version": article["version"]},
+        )
+        return knowledge_out(article)
+
+    @app.post(
+        "/api/knowledge/{article_id}/review",
+        response_model=KnowledgeArticleOut,
+    )
+    def review_knowledge_article(
+        article_id: str,
+        payload: KnowledgeReviewRequest,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> KnowledgeArticleOut:
+        """Approve (publish) or reject (retire) a pending knowledge article.
+
+        The approval cannot be bypassed: only ``draft`` or ``pending_review``
+        articles can be published, so a reviewer must act before the article
+        becomes retrievable.
+        """
+        from app.orchestrator import InvalidTransitionError
+
+        try:
+            article = database.review_knowledge(
+                principal.tenant_id,
+                article_id,
+                payload.action,
+                principal.actor_id,
+            )
+        except InvalidTransitionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not article:
+            raise LookupError("Knowledge article not found")
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "knowledge.reviewed",
+            {
+                "article_id": article_id,
+                "action": payload.action,
+                "status": article["status"],
+                "notes": payload.notes,
+            },
+        )
+        return knowledge_out(article)
+
+    @app.post(
+        "/api/conversations/{conversation_id}/messages/{message_id}/knowledge-draft",
+        response_model=KnowledgeArticleOut,
+        status_code=201,
+    )
+    def create_knowledge_draft_from_feedback(
+        conversation_id: str,
+        message_id: str,
+        principal: Annotated[Principal, Depends(require_permission("knowledge:write"))],
+    ) -> KnowledgeArticleOut:
+        """Generate a draft knowledge article from a negatively-rated message.
+
+        Reflows negative feedback into the knowledge base (Phase 21.3): the
+        assistant message's content seeds a draft the reviewer can edit and
+        publish.  Returns 404 if the message or conversation does not exist.
+        """
+        message = database.get_message(principal.tenant_id, conversation_id, message_id)
+        if not message:
+            raise LookupError("Message not found")
+        conversation = database.get_conversation(principal.tenant_id, conversation_id)
+        if not conversation:
+            raise LookupError("Conversation not found")
+        intent = (conversation.get("intent") or "unknown")[:80]
+        title = f"Draft from feedback: {intent}"
+        content = message["content"]
+        article = database.create_knowledge_draft(
+            tenant_id=principal.tenant_id,
+            title=title,
+            content=content,
+            tags=[intent],
+            category="feedback_draft",
+            source_url=f"conversation:{conversation_id}",
+            actor_id=principal.actor_id,
+        )
+        database.audit(
+            principal.tenant_id,
+            conversation_id,
+            principal.actor_id,
+            "knowledge.draft_from_feedback",
+            {
+                "article_id": article["id"],
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        return knowledge_out(article)
+
+    @app.get("/api/supervisor/knowledge-gaps", tags=["quality"])
+    def list_knowledge_gaps(
+        principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Surface negative-feedback turns with no knowledge citations.
+
+        Used by the supervisor quality panel (Phase 21.2) to locate where the
+        knowledge base is failing customers and seed draft articles.
+        """
+        return database.list_knowledge_gaps(principal.tenant_id, limit=limit)
+
+    @app.get("/api/system/metrics")
+    def runtime_metrics(
+        _principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+    ) -> dict[str, Any]:
+        snapshot = services.metrics.snapshot()
+        snapshot["database"] = database.performance_stats()
+        snapshot["turn_jobs"] = database.turn_job_stats(_principal.tenant_id)
+        snapshot["turn_worker"] = turn_worker.snapshot()
+        snapshot["telemetry"] = telemetry_metrics.snapshot()
+        return snapshot
+
+    # ------------------------------------------------------------------
+    # Prompt version registry (Phase 19.1)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/prompts", response_model=list[PromptVersionOut])
+    def list_prompt_versions(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        name: str | None = None,
+    ) -> list[PromptVersionOut]:
+        from app.prompts import PromptRegistry
+
+        registry = PromptRegistry(database)
+        versions = registry.list_versions(principal.tenant_id, name)
+        return [
+            PromptVersionOut(
+                id=v.id,
+                tenant_id=v.tenant_id,
+                name=v.name,
+                version=v.version,
+                body=v.body,
+                model_ref=v.model_ref,
+                status=v.status,
+                created_by=v.created_by,
+                created_at=v.created_at,
+                updated_at=v.updated_at,
+                activated_at=v.activated_at,
+            )
+            for v in versions
+        ]
+
+    @app.post("/api/prompts", response_model=PromptVersionOut, status_code=201)
+    def create_prompt_version(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        request: PromptVersionCreateRequest,
+    ) -> PromptVersionOut:
+        from app.prompts import PromptRegistry
+
+        registry = PromptRegistry(database)
+        version = registry.create_version(
+            tenant_id=principal.tenant_id,
+            name=request.name,
+            version=request.version,
+            body=request.body,
+            model_ref=request.model_ref,
+            actor_id=principal.actor_id,
+        )
+        return PromptVersionOut(
+            id=version.id,
+            tenant_id=version.tenant_id,
+            name=version.name,
+            version=version.version,
+            body=version.body,
+            model_ref=version.model_ref,
+            status=version.status,
+            created_by=version.created_by,
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            activated_at=version.activated_at,
+        )
+
+    @app.post("/api/prompts/{version_id}/action", response_model=PromptVersionOut)
+    def prompt_version_action(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        version_id: str,
+        request: PromptVersionActionRequest,
+    ) -> PromptVersionOut:
+        from app.prompts import PromptRegistry
+
+        registry = PromptRegistry(database)
+
+        if request.action == "activate":
+            version = registry.activate(principal.tenant_id, version_id, principal.actor_id)
+        elif request.action == "canary":
+            try:
+                version = registry.set_canary(principal.tenant_id, version_id, principal.actor_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        elif request.action == "rollback":
+            # Get the version to find its name for rollback
+            target = registry.get_version(principal.tenant_id, version_id)
+            if not target:
+                raise HTTPException(status_code=404, detail="Prompt version not found")
+            version = registry.rollback(principal.tenant_id, target.name, principal.actor_id)
+            if not version:
+                raise HTTPException(
+                    status_code=404, detail="No retired version found to rollback to"
+                )
+        else:
+            raise HTTPException(status_code=400, detail="Invalid action")
+
+        return PromptVersionOut(
+            id=version.id,
+            tenant_id=version.tenant_id,
+            name=version.name,
+            version=version.version,
+            body=version.body,
+            model_ref=version.model_ref,
+            status=version.status,
+            created_by=version.created_by,
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            activated_at=version.activated_at,
+        )
+
+    # ------------------------------------------------------------------
+    # Tenant model policy and budget (Phase 19.4)
+    # ------------------------------------------------------------------
+
+    def _ensure_same_tenant(principal: Principal, tenant_id: str) -> None:
+        # A tenant admin can only manage its own model policy; cross-tenant
+        # access is refused even with admin:manage until Phase 22 introduces a
+        # system-administrator role.
+        if tenant_id != principal.tenant_id:
+            raise HTTPException(status_code=403, detail="Cannot manage another tenant's policy")
+
+    @app.get(
+        "/api/admin/tenants/{tenant_id}/model-policy",
+        response_model=TenantModelPolicyOut,
+    )
+    def get_tenant_model_policy_route(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        tenant_id: str,
+    ) -> TenantModelPolicyOut:
+        _ensure_same_tenant(principal, tenant_id)
+        policy = database.get_tenant_model_policy(tenant_id)
+        count = database.get_tenant_daily_usage(tenant_id, utc_now()[:10])
+        return TenantModelPolicyOut(
+            tenant_id=tenant_id,
+            allowed_models=policy["allowed_models"],
+            daily_turn_budget=policy["daily_turn_budget"],
+            daily_turn_count=count,
+        )
+
+    @app.put(
+        "/api/admin/tenants/{tenant_id}/model-policy",
+        response_model=TenantModelPolicyOut,
+    )
+    def set_tenant_model_policy_route(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        tenant_id: str,
+        request: TenantModelPolicyRequest,
+    ) -> TenantModelPolicyOut:
+        _ensure_same_tenant(principal, tenant_id)
+        database.set_tenant_model_policy(
+            tenant_id, request.allowed_models, request.daily_turn_budget
+        )
+        count = database.get_tenant_daily_usage(tenant_id, utc_now()[:10])
+        return TenantModelPolicyOut(
+            tenant_id=tenant_id,
+            allowed_models=request.allowed_models,
+            daily_turn_budget=request.daily_turn_budget,
+            daily_turn_count=count,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 22: tenant self-service, members, and metering.
+    # ------------------------------------------------------------------
+
+    @app.post(
+        "/api/admin/tenants",
+        response_model=TenantQuotaOut,
+        status_code=201,
+    )
+    def provision_tenant_route(
+        payload: TenantProvisionRequest,
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+    ) -> TenantQuotaOut:
+        """Idempotently provision a tenant with default policy (Phase 22.1).
+
+        Creating the same tenant id twice returns the tenant (idempotent);
+        quota fields given here are applied on both calls.
+        """
+        quota = database.provision_tenant(
+            payload.tenant_id,
+            payload.name,
+            principal.actor_id,
+            allowed_models=payload.allowed_models,
+            daily_turn_budget=payload.daily_turn_budget,
+            conversation_quota=payload.conversation_quota,
+            storage_quota_bytes=payload.storage_quota_bytes,
+        )
+        return TenantQuotaOut(**quota)
+
+    @app.get(
+        "/api/admin/tenants/{tenant_id}/quota",
+        response_model=TenantQuotaOut,
+    )
+    def get_tenant_quota_route(
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+        tenant_id: str,
+    ) -> TenantQuotaOut:
+        try:
+            return TenantQuotaOut(**database.get_tenant_quota(tenant_id))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.put(
+        "/api/admin/tenants/{tenant_id}/quota",
+        response_model=TenantQuotaOut,
+    )
+    def set_tenant_quota_route(
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+        tenant_id: str,
+        payload: dict[str, Any],
+    ) -> TenantQuotaOut:
+        try:
+            quota = database.set_tenant_quota(
+                tenant_id,
+                conversation_quota=payload.get("conversation_quota"),
+                storage_quota_bytes=payload.get("storage_quota_bytes"),
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return TenantQuotaOut(**quota)
+
+    @app.post(
+        "/api/admin/tenants/{tenant_id}/members",
+        response_model=TenantMemberOut,
+        status_code=201,
+    )
+    def invite_member_route(
+        tenant_id: str,
+        payload: MemberInviteRequest,
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+    ) -> TenantMemberOut:
+        """Invite a member to a tenant (Phase 22.2). Idempotent per member."""
+        try:
+            member = database.invite_member(
+                tenant_id, payload.actor_id, payload.role, principal.actor_id
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return TenantMemberOut(**member)
+
+    @app.get(
+        "/api/admin/tenants/{tenant_id}/members",
+        response_model=list[TenantMemberOut],
+    )
+    def list_members_route(
+        tenant_id: str,
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+    ) -> list[TenantMemberOut]:
+        return [TenantMemberOut(**m) for m in database.list_members(tenant_id)]
+
+    @app.patch(
+        "/api/admin/tenants/{tenant_id}/members/{actor_id}",
+        response_model=TenantMemberOut,
+    )
+    def update_member_role_route(
+        tenant_id: str,
+        actor_id: str,
+        payload: MemberRoleUpdateRequest,
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+    ) -> TenantMemberOut:
+        try:
+            member = database.update_member_role(
+                tenant_id, actor_id, payload.role, principal.actor_id
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return TenantMemberOut(**member)
+
+    @app.post(
+        "/api/admin/tenants/{tenant_id}/members/{actor_id}/deactivate",
+        response_model=TenantMemberOut,
+    )
+    def deactivate_member_route(
+        tenant_id: str,
+        actor_id: str,
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+    ) -> TenantMemberOut:
+        """Deactivate a member; history and audit events are retained (22.2)."""
+        try:
+            member = database.deactivate_member(tenant_id, actor_id, principal.actor_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return TenantMemberOut(**member)
+
+    @app.get(
+        "/api/admin/usage",
+        response_model=list[TenantUsageRowOut],
+    )
+    def export_tenant_usage_route(
+        principal: Annotated[Principal, Depends(require_permission("tenant:manage"))],
+        tenant_id: Annotated[str | None, Query()] = None,
+        since: Annotated[str | None, Query(max_length=10)] = None,
+        until: Annotated[str | None, Query(max_length=10)] = None,
+        limit: int = 100,
+    ) -> list[TenantUsageRowOut]:
+        """Raw daily usage for billing (Phase 22.4).
+
+        ``tenant_id`` defaults to the caller's tenant; a system admin may
+        pass any tenant id.
+        """
+        scope = tenant_id or principal.tenant_id
+        if scope != principal.tenant_id and not principal.can("tenant:manage"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return [
+            TenantUsageRowOut(**row)
+            for row in database.list_tenant_usage(scope, since=since, until=until, limit=limit)
+        ]
+
+    # ------------------------------------------------------------------
+    # Data governance: retention policies and data-subject requests
+    # ------------------------------------------------------------------
+
+    @app.get("/api/retention/policies")
+    def list_retention_policies(
+        principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+    ) -> list[dict[str, Any]]:
+        assert services.retention_service is not None
+        return services.retention_service.get_retention_policies(principal.tenant_id)
+
+    @app.put("/api/retention/policies/{data_type}", status_code=200)
+    def set_retention_policy(
+        principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+        data_type: str,
+        retention_days: int,
+    ) -> dict[str, Any]:
+        assert services.retention_service is not None
+        return services.retention_service.set_retention_policy(
+            principal.tenant_id, data_type, retention_days, principal.actor_id
+        )
+
+    @app.post("/api/retention/enforce")
+    def enforce_retention(
+        principal: Annotated[Principal, Depends(require_permission("metrics:read"))],
+    ) -> dict[str, int]:
+        assert services.retention_service is not None
+        return services.retention_service.enforce_all(principal.tenant_id)
+
+    @app.post("/api/data-subject-requests", status_code=201)
+    def create_data_subject_request(
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+        customer_ref: str,
+        request_type: str,
+    ) -> dict[str, Any]:
+        assert services.retention_service is not None
+        return services.retention_service.create_data_subject_request(
+            principal.tenant_id, customer_ref, request_type, principal.actor_id
+        )
+
+    @app.post("/api/data-subject-requests/{customer_ref}/execute")
+    def execute_data_subject_request(
+        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
+        customer_ref: str,
+        request_type: str,
+    ) -> dict[str, Any]:
+        assert services.retention_service is not None
+        if request_type == "deletion":
+            counts = services.retention_service.execute_data_subject_deletion(
+                principal.tenant_id, customer_ref
+            )
+            database.audit(
+                principal.tenant_id,
+                None,
+                principal.actor_id,
+                "data_subject.deletion_executed",
+                {"customer_ref": customer_ref, "counts": counts},
+            )
+            return {"customer_ref": customer_ref, "deleted": counts}
+        elif request_type == "export":
+            export = services.retention_service.execute_data_subject_export(
+                principal.tenant_id, customer_ref
+            )
+            return {"customer_ref": customer_ref, "export": redact_pii(export)}
+        raise HTTPException(status_code=400, detail="request_type must be 'deletion' or 'export'")
+
+    # ------------------------------------------------------------------
+    # Outbound webhooks (Phase 20.5): tenant endpoint registration and
+    # delivery history. Registration and removal are admin-only and audited;
+    # every call is tenant-bound so tenants cannot see or touch each other's
+    # endpoints or deliveries.
+    # ------------------------------------------------------------------
+
+    @app.post("/api/webhooks", response_model=WebhookOut, status_code=201)
+    def register_webhook(
+        payload: WebhookCreateRequest,
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+    ) -> WebhookOut:
+        assert services.webhooks is not None
+        try:
+            endpoint = services.webhooks.register_endpoint(
+                principal.tenant_id, payload.url, payload.events, payload.secret
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "webhook.registered",
+            {"endpoint_id": endpoint["id"], "url": payload.url, "events": payload.events},
+        )
+        return WebhookOut(**endpoint)
+
+    @app.get("/api/webhooks", response_model=list[WebhookOut])
+    def list_webhooks(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+    ) -> list[WebhookOut]:
+        assert services.webhooks is not None
+        return [
+            WebhookOut(**endpoint)
+            for endpoint in services.webhooks.list_endpoints(principal.tenant_id)
+        ]
+
+    @app.delete("/api/webhooks/{endpoint_id}", status_code=204)
+    def delete_webhook(
+        endpoint_id: str,
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+    ) -> None:
+        assert services.webhooks is not None
+        deleted = services.webhooks.delete_endpoint(principal.tenant_id, endpoint_id)
+        if not deleted:
+            raise LookupError("Webhook endpoint not found")
+        database.audit(
+            principal.tenant_id,
+            None,
+            principal.actor_id,
+            "webhook.deleted",
+            {"endpoint_id": endpoint_id},
+        )
+
+    @app.get("/api/webhooks/deliveries", response_model=list[WebhookDeliveryOut])
+    def list_webhook_deliveries(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        endpoint_id: Annotated[str | None, Query(max_length=64)] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> list[WebhookDeliveryOut]:
+        assert services.webhooks is not None
+        deliveries = services.webhooks.list_deliveries(
+            principal.tenant_id, endpoint_id, limit=limit
+        )
+        return [WebhookDeliveryOut(**delivery) for delivery in deliveries]
+
+    # ------------------------------------------------------------------
+    # OIDC / BFF session authentication
+    # ------------------------------------------------------------------
+
+    oidc_config = OIDCConfig.from_env() if settings.enable_session_auth else None
+    oidc_authenticator = OIDCAuthenticator(oidc_config) if oidc_config else None
+
+    @app.get("/auth/login")
+    async def auth_login(
+        tenant: str | None = None,
+    ) -> RedirectResponse:
+        if not oidc_authenticator:
+            raise HTTPException(status_code=501, detail="Session auth is not enabled")
+        state = generate_state()
+        # Encode state and optional tenant into the redirect for stateless callback
+        params = {"state": state}
+        if tenant:
+            params["tenant"] = tenant
+        url = oidc_authenticator.get_authorization_url(state)
+        return RedirectResponse(url=url, status_code=302)
+
+    @app.get("/auth/callback")
+    async def auth_callback(
+        request: Request,
+        code: str,
+        state: str,
+        tenant: str | None = None,
+    ) -> RedirectResponse:
+        if not oidc_authenticator or not oidc_config:
+            raise HTTPException(status_code=501, detail="Session auth is not enabled")
+        if not state:
+            raise HTTPException(status_code=400, detail="Missing OIDC state")
+        try:
+            tokens = await oidc_authenticator.exchange_code(code)
+        except Exception as exc:
+            logger.error("OIDC token exchange failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Token exchange failed") from exc
+
+        # Derive identity from the ID token claims when the provider supplies
+        # them (``helix_tenant``/``helix_role`` are the deployment's convention;
+        # the standard ``sub``/``preferred_username`` carry the user id).  Fall
+        # back to the requested tenant and defaults otherwise.
+        claims = decode_id_token(tokens.get("id_token", ""))
+        tenant_id = str(claims.get("helix_tenant") or tenant or "demo")
+        actor_id = str(
+            claims.get("preferred_username")
+            or claims.get("sub")
+            or tokens.get("user_id")
+            or "oidc-user"
+        )
+        role = str(claims.get("helix_role") or "admin")
+
+        principal, cookie = oidc_authenticator.create_session(tenant_id, actor_id, role)
+        response = RedirectResponse(url="/", status_code=302)
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=cookie,
+            httponly=True,
+            secure=settings.is_production,
+            samesite="lax",
+            max_age=oidc_config.session_ttl_minutes * 60,
+        )
+        return response
+
+    @app.post("/auth/logout")
+    async def auth_logout(response: Response) -> dict[str, str]:
+        response.delete_cookie(SESSION_COOKIE_NAME)
+        return {"status": "logged_out"}
+
+    @app.get("/auth/session")
+    def auth_session(request: Request) -> dict[str, Any]:
+        if not oidc_config:
+            return {"authenticated": False, "reason": "session_auth_disabled"}
+        cookie_value = request.cookies.get(SESSION_COOKIE_NAME, "")
+        principal = verify_session_cookie(cookie_value, oidc_config)
+        if principal is None:
+            return {"authenticated": False}
+        return {
+            "authenticated": True,
+            "tenant_id": principal.tenant_id,
+            "actor_id": principal.actor_id,
+            "role": principal.role,
+            "expires_at": principal.expires_at,
+        }
+
+    @app.post("/auth/refresh")
+    def auth_refresh(request: Request, response: Response) -> dict[str, Any]:
+        """Renew the session cookie (sliding expiry) for an active session.
+
+        The BFF holds no server-side session state, so renewal reissues the
+        cookie with a fresh ``expires_at`` for the same session id, up to the
+        configured absolute lifetime.  A missing, expired, or over-lifetime
+        session gets ``401`` and the client must run the login flow again.
+        """
+        if not oidc_config:
+            raise HTTPException(status_code=501, detail="Session auth is not enabled")
+        cookie_value = request.cookies.get(SESSION_COOKIE_NAME, "")
+        renewed = renew_session_cookie(cookie_value, oidc_config)
+        if renewed is None:
+            raise HTTPException(status_code=401, detail="Session expired or invalid")
+        principal, cookie = renewed
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=cookie,
+            httponly=True,
+            secure=settings.is_production,
+            samesite="lax",
+            max_age=oidc_config.session_ttl_minutes * 60,
+        )
+        return {
+            "authenticated": True,
+            "session_id": principal.session_id,
+            "tenant_id": principal.tenant_id,
+            "actor_id": principal.actor_id,
+            "role": principal.role,
+            "expires_at": principal.expires_at,
+        }
+
+    # Phase 21.1: mount the supervisor quality aggregator router. Mounted
+    # after all inline routes so its prefix does not shadow any path.
+    from app.quality_routes import router as quality_router
+
+    app.include_router(quality_router)
+
+    # Phase 23.1: mount the public Web Chat widget router (signed-token auth,
+    # no API key required for the customer browser).
+    from app.widget_routes import router as widget_router
+
+    app.include_router(widget_router)
+
+    # Phase 25.2: enrich the OpenAPI spec with per-endpoint summaries, tags,
+    # and RBAC notes before the snapshot gate reads it.
+    from app.openapi_meta import apply_openapi_metadata
+
+    app.openapi = apply_openapi_metadata(app)
+
+    return app
+
+
+app = create_app()

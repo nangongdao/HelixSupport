@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "title": "Model / Provider",
+  "tags": [
+    "slo",
+    "helix",
+    "42.6"
+  ],
+  "panels": [
+    {
+      "title": "Model call errors",
+      "description": "Provider 4xx/5xx and timeouts.",
+      "unit": "ops",
+      "targets": [
+        {
+          "expr": "helix_model_provider_errors_total"
+        }
+      ]
+    },
+    {
+      "title": "Turn duration (model-bound turns)",
+      "description": "End-to-end turn wall time; regressions here usually mean the provider.",
+      "unit": "ms",
+      "targets": [
+        {
+          "expr": "helix_turn_job_duration_ms"
+        }
+      ]
+    }
+  ]
+}

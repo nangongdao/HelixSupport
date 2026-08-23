@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "title": "Data-Subject Requests",
+  "tags": [
+    "slo",
+    "helix",
+    "42.6"
+  ],
+  "panels": [
+    {
+      "title": "Open DSRs",
+      "description": "DSR board backlog.",
+      "unit": "short",
+      "targets": [
+        {
+          "expr": "helix_dsr_open_count"
+        }
+      ]
+    },
+    {
+      "title": "DSR SLA breaches",
+      "description": "Requests past their statutory clock — page-worthy.",
+      "unit": "ops",
+      "targets": [
+        {
+          "expr": "helix_dsr_sla_breaches_total"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "title": "Archive & Object Store",
+  "tags": [
+    "slo",
+    "helix",
+    "42.6"
+  ],
+  "panels": [
+    {
+      "title": "Archive partitions",
+      "description": "Cold-tier growth (42.3 object store manifests).",
+      "unit": "short",
+      "targets": [
+        {
+          "expr": "helix_archive_partitions_total"
+        }
+      ]
+    },
+    {
+      "title": "Attachment objects",
+      "description": "Attachment bucket population (42.4).",
+      "unit": "short",
+      "targets": [
+        {
+          "expr": "helix_attachment_objects_total"
+        }
+      ]
+    },
+    {
+      "title": "Webhook delivery failures",
+      "description": "Outbound provider reachability.",
+      "unit": "ops",
+      "targets": [
+        {
+          "expr": "helix_webhook_delivery_failures_total"
+        }
+      ]
+    }
+  ]
+}

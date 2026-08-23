@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "title": "Queue Fairness",
+  "tags": [
+    "slo",
+    "helix",
+    "42.6"
+  ],
+  "panels": [
+    {
+      "title": "Queue depth",
+      "description": "Global queued backlog.",
+      "unit": "short",
+      "targets": [
+        {
+          "expr": "helix_queue_depth"
+        }
+      ]
+    },
+    {
+      "title": "Turn job duration p50/p95",
+      "description": "Fairness shows up as tail latency, not averages.",
+      "unit": "ms",
+      "targets": [
+        {
+          "expr": "helix_turn_job_duration_ms{quantile='0.5'}"
+        },
+        {
+          "expr": "helix_turn_job_duration_ms{quantile='0.95'}"
+        }
+      ]
+    },
+    {
+      "title": "Oldest queued job age",
+      "description": "Starvation detector: one tenant's flood must not strand another's job.",
+      "unit": "s",
+      "targets": [
+        {
+          "expr": "helix_queue_oldest_seconds"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+/* Helix Support — Design Tokens (Phase 26.2)
+   Color / spacing / type / radius / shadow / motion tokens.
+   Theme switching is driven by the `data-theme` attribute on <html>:
+     - default (no attribute) and `data-theme="dark"` use the dark palette;
+     - `data-theme="light"` overrides the color tokens with the light palette.
+   Structural tokens (spacing, type scale, radii, shadows, motion) are
+   theme-independent and live in :root. */
+
+:root {
+  /* ---- color: dark palette (default) ---- */
+  --color-bg-0: #070b0d;
+  --color-bg-1: #0b1114;
+  --color-bg-2: #10181c;
+  --color-bg-3: #151f24;
+  --color-surface: rgba(18, 27, 32, 0.86);
+  --color-surface-alt: rgba(255, 255, 255, 0.035);
+  --color-line: rgba(148, 190, 190, 0.12);
+  --color-line-strong: rgba(148, 190, 190, 0.24);
+  --color-ink: #e8f1f0;
+  --color-ink-soft: #b9c9c8;
+  --color-muted: #6f8482;
+  --color-accent: #2dd4bf;
+  --color-accent-dark: #14b8a6;
+  --color-accent-soft: rgba(45, 212, 191, 0.12);
+  --color-accent-glow: rgba(45, 212, 191, 0.35);
+  --color-blue: #6ab0ff;
+  --color-blue-soft: rgba(106, 176, 255, 0.13);
+  --color-amber: #f5b04a;
+  --color-amber-soft: rgba(245, 176, 74, 0.13);
+  --color-red: #ff6b7a;
+  --color-red-soft: rgba(255, 107, 122, 0.13);
+  --color-green: #5dd4a0;
+  --color-green-soft: rgba(93, 212, 160, 0.13);
+  --color-violet: #b49af5;
+  --color-violet-soft: rgba(180, 154, 245, 0.14);
+
+  /* ---- color: light palette (data-theme="light") ---- */
+  --color-light-bg-0: #f4f7f8;
+  --color-light-bg-1: #eef3f4;
+  --color-light-bg-2: #e6edef;
+  --color-light-bg-3: #dde7e9;
+  --color-light-surface: rgba(255, 255, 255, 0.9);
+  --color-light-surface-alt: rgba(0, 0, 0, 0.04);
+  --color-light-line: rgba(20, 60, 60, 0.14);
+  --color-light-line-strong: rgba(20, 60, 60, 0.26);
+  --color-light-ink: #14282b;
+  --color-light-ink-soft: #3d565a;
+  --color-light-muted: #6b8586;
+
+  /* ---- spacing scale ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---- type scale ---- */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* ---- radius ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  /* ---- shadows ---- */
+  --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px var(--color-accent-glow);
+
+  /* ---- layout & motion ---- */
+  --header-height: 62px;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-display: "Bahnschrift", "Segoe UI Variable Display", "Microsoft YaHei", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+/* Map the legacy names used by styles.css onto the token layer so the
+   existing stylesheet keeps working while the tokens are single-sourced. */
+:root {
+  --bg-0: var(--color-bg-0);
+  --bg-1: var(--color-bg-1);
+  --bg-2: var(--color-bg-2);
+  --bg-3: var(--color-bg-3);
+  --surface: var(--color-surface);
+  --surface-alt: var(--color-surface-alt);
+  --line: var(--color-line);
+  --line-strong: var(--color-line-strong);
+  --ink: var(--color-ink);
+  --ink-soft: var(--color-ink-soft);
+  --muted: var(--color-muted);
+  --teal: var(--color-accent);
+  --teal-dark: var(--color-accent-dark);
+  --teal-soft: var(--color-accent-soft);
+  --teal-glow: var(--color-accent-glow);
+  --blue: var(--color-blue);
+  --blue-soft: var(--color-blue-soft);
+  --amber: var(--color-amber);
+  --amber-soft: var(--color-amber-soft);
+  --red: var(--color-red);
+  --red-soft: var(--color-red-soft);
+  --green: var(--color-green);
+  --green-soft: var(--color-green-soft);
+  --violet: var(--color-violet);
+  --violet-soft: var(--color-violet-soft);
+  --shadow: var(--shadow-panel);
+  --glow: var(--shadow-glow);
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+}
+
+html[data-theme="light"] {
+  --bg-0: var(--color-light-bg-0);
+  --bg-1: var(--color-light-bg-1);
+  --bg-2: var(--color-light-bg-2);
+  --bg-3: var(--color-light-bg-3);
+  --surface: var(--color-light-surface);
+  --surface-alt: var(--color-light-surface-alt);
+  --line: var(--color-light-line);
+  --line-strong: var(--color-light-line-strong);
+  --ink: var(--color-light-ink);
+  --ink-soft: var(--color-light-ink-soft);
+  --muted: var(--color-light-muted);
+  --color-accent: #0b6b63;
+  --color-accent-dark: #08554f;
+  --color-blue: #1d4ed8;
+  --color-amber: #9a5b00;
+  --color-red: #b4232c;
+  --color-green: #0b6b3f;
+  --color-violet: #7048b8;
+  --color-light-muted: #4f686a;
+  color-scheme: light;
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "policy": "季度桌面演练（报告接收、依赖漏洞、密钥泄露、跨租户告警）与 Gate B 自动化演练（凭据轮换、审计恢复、补丁发布）统一台账；scripts/threat_model_gate.py --check-today 校验最近演练未过期（默认 90 天），automated_* 条目必须带 reference 指向可复查的运行台账。",
+  "drills": [
+    {
+      "drill_type": "automated_rotation",
+      "started_at": "2026-08-20T15:13:27+00:00",
+      "owner": "release-eng",
+      "scenario": "API key 轮换端到端：runtime issue → config promote → lifecycle.rotate（overlap 窗口内旧 key 仍 200）→ admin revoke → 旧 key 401、新 key 200、旁观 key 200",
+      "duration_minutes": 2,
+      "reference": "supplychain/rotation-drills.json"
+    },
+    {
+      "drill_type": "automated_restore",
+      "started_at": "2026-08-20T15:23:15+00:00",
+      "owner": "release-eng",
+      "scenario": "审计 anchor 恢复演练：scratch DB 高危事件 + 真实 anchors/WORM claims → backup.py → restore.py → verify_audit_chain intact → 篡改一行 → verify TAMPER",
+      "duration_minutes": 1,
+      "reference": "supplychain/restore-drills.json"
+    },
+    {
+      "drill_type": "automated_patch_release",
+      "started_at": "2026-08-20T15:33:26+00:00",
+      "owner": "release-eng",
+      "scenario": "安全补丁发布演练：release manifest 构建 + 签名绑定（模拟签名；--cosign-key 时真实签名）+ canary 会话 + 签名/篡改绑定断言 + release 后 diagnostics 监控",
+      "duration_minutes": 1,
+      "reference": "supplychain/patch-drills.json"
+    },
+    {
+      "drill_type": "automated_pitr",
+      "started_at": "2026-08-21T08:51:11.008098+00:00",
+      "owner": "release-eng",
+      "scenario": "PITR 恢复演练（42.2）：T0/T1 双备份 → 恢复到 T1 隔离环境 → 审计链+WORM anchors intact、窗口内数据零丢失（RPO）、post-T1 标记不回放、queued job/附件清单/tombstone 核对、启动期 tombstone 重放、RTO 计量入预算",
+      "duration_minutes": 1,
+      "reference": "supplychain/pitr-drills.json"
+    },
+    {
+      "drill_type": "automated_rls",
+      "started_at": "2026-08-22T14:35:22.518499+00:00",
+      "owner": "release-eng",
+      "scenario": "PostgreSQL 行级租户隔离演练（43.2 contract a）：scratch DB 双角色（migrator owner / app 无 BYPASSRLS）——无上下文 SELECT 零行且 INSERT WITH CHECK 拒绝、acme scope 只见本租户、显式他租户谓词零行、GUC 随事务提交消亡（连接池复用模拟）、无 WHERE DELETE 限本租户、跨租户 UPDATE 触零行、verify_rls 18/18 ENABLEd+policy",
+      "duration_minutes": 1,
+      "reference": "supplychain/rls-drills.json"
+    }
+  ]
+}

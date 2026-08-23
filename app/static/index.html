@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="zh-CN" data-tenant-id="demo">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#070b0d" />
+    <title>Helix Support | 客服控制台</title>
+    <link rel="icon" href="/static/favicon.svg?v=1.3.7" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css?v=1.3.7" />
+    <!-- ROADMAP §18.4 资源: modulepreload fetches the module graph (entry +
+         direct imports) in parallel with the stylesheet instead of waiting
+         for main.js to be fetched and parsed first. The entry URL matches the
+         script tag (versioned); import URLs match how the browser resolves
+         the static imports (query-less).
+         NOTE: critical CSS inline is intentionally NOT used — the CSP
+         ``style-src 'self'`` (app/main.py) forbids inline <style> blocks. -->
+    <link rel="modulepreload" href="/static/js/main.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/api.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/broadcast.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/commands.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/density.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/format.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/i18n.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/inspector.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/knowledge.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/nav.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/quality-charts.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/sse.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/state.js?v=1.3.7" />
+    <link rel="modulepreload" href="/static/js/vqueue.js?v=1.3.7" />
+    <!-- Phase 26: module entry (theme + i18n + modular helpers), loaded with
+         the legacy app.js below; both coexist, behaviour unchanged. -->
+    <script type="module" src="/static/js/main.js?v=1.3.7"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true">
+            <svg class="icon icon-lg"><use href="/static/icons.svg?v=1.3.7#hexagon" /></svg>
+          </div>
+          <div class="brand-copy">
+            <strong>Helix Support</strong>
+            <span>客服控制台</span>
+          </div>
+          <span class="environment-chip">CONTROL ROOM</span>
+        </div>
+        <div class="header-actions">
+          <span id="operatorIdentity" class="operator-identity">正在验证</span>
+          <button id="themeToggle" class="icon-button header-tool" type="button" title="切换深浅主题" aria-label="切换深浅主题" aria-pressed="false">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#moon" /></svg>
+          </button>
+          <button id="lowPerfToggle" class="icon-button header-tool" type="button" title="开启低配模式" aria-label="开启低配模式" aria-pressed="false">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg>
+          </button>
+          <button id="inspectorToggle" class="icon-button header-tool" type="button" title="折叠检查器" aria-label="折叠检查器" aria-pressed="false">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#book-open" /></svg>
+          </button>
+          <button id="refreshList" class="icon-button header-refresh" type="button" title="刷新队列" aria-label="刷新队列">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#refresh-cw" /></svg>
+          </button>
+          <button id="mobileQueue" class="icon-button mobile-only" type="button" title="打开会话队列" aria-label="打开会话队列" aria-expanded="false" aria-controls="queuePane">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#menu" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="app-body">
+        <nav id="appNav" class="app-nav" aria-label="全局导航">
+          <button class="nav-item is-active" type="button" data-view="workspace" title="工作台" aria-label="工作台">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#inbox" /></svg>
+          </button>
+          <button class="nav-item" type="button" data-view="quality" title="质量看板" aria-label="质量看板">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg>
+          </button>
+          <button class="nav-item" type="button" data-view="knowledge" title="知识库" aria-label="知识库">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#book-open" /></svg>
+          </button>
+          <button class="nav-item" type="button" data-view="admin" title="管理" aria-label="管理">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#shield-check" /></svg>
+          </button>
+          <button class="nav-item" type="button" data-view="settings" title="设置" aria-label="设置">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#hexagon" /></svg>
+          </button>
+        </nav>
+        <main class="app-main">
+      <div class="app-layout" id="workspaceView">
+        <aside id="queuePane" class="queue-pane" aria-label="会话队列">
+          <div class="queue-heading">
+            <div>
+              <div>
+                <span class="section-kicker">OPERATIONS</span>
+                <h1>会话队列</h1>
+              </div>
+              <button id="queueClose" class="icon-button queue-close mobile-only" type="button" title="关闭队列" aria-label="关闭队列">
+                <svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg>
+              </button>
+            </div>
+            <button id="newConversation" class="button button-primary" type="button">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#plus" /></svg>
+              <span>新建</span>
+            </button>
+          </div>
+          <div class="workspace-tabs" role="tablist" aria-label="工作区视图">
+            <button id="wsTabQueue" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" data-wstab="queue">队列</button>
+            <button id="wsTabTickets" class="workspace-tab" type="button" role="tab" aria-selected="false" data-wstab="tickets">工单</button>
+          </div>
+          <div id="metrics" class="metric-grid" aria-live="polite"></div>
+          <div class="queue-workspace-tools" aria-label="队列工作区工具">
+            <button id="focusWaiting" class="focus-preset" type="button" aria-pressed="false">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg><span>待响应</span>
+            </button>
+            <label class="saved-view-field">
+              <span class="sr-only">已保存视图</span>
+              <select id="savedViewSelect" aria-label="已保存视图"><option value="">保存的视图</option></select>
+            </label>
+            <button id="saveView" class="workspace-icon-button" type="button" title="保存当前视图" aria-label="保存当前视图">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#check" /></svg>
+            </button>
+            <button id="deleteView" class="workspace-icon-button" type="button" title="删除当前视图" aria-label="删除当前视图" disabled>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg>
+            </button>
+            <button id="densityToggle" class="workspace-icon-button" type="button" title="切换紧凑密度" aria-label="切换紧凑密度" aria-pressed="false">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#menu" /></svg>
+            </button>
+          </div>
+          <p id="perfHint" class="perf-hint" hidden>低配模式：更小队列页、更少后台请求、关闭动效</p>
+          <div class="queue-controls">
+            <label class="search-field">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#search" /></svg>
+              <span class="sr-only">搜索会话</span>
+              <input id="searchInput" type="search" placeholder="搜索客户、会话或消息" autocomplete="off" aria-label="搜索会话" />
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">筛选状态</span>
+              <select id="statusFilter" aria-label="筛选状态">
+                <option value="">全部状态</option>
+                <option value="open">自动处理中</option>
+                <option value="waiting_human">等待人工</option>
+                <option value="human_active">人工处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#chevron-down" /></svg>
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">筛选标签</span>
+              <select id="labelFilter" aria-label="筛选标签">
+                <option value="">全部标签</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#tag" /></svg>
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">筛选优先级</span>
+              <select id="priorityFilter" aria-label="筛选优先级">
+                <option value="">全部优先级</option>
+                <option value="high">高优先级</option>
+                <option value="normal">普通优先级</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg>
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">筛选归属</span>
+              <select id="ownershipFilter" aria-label="筛选归属">
+                <option value="">全部归属</option>
+                <option value="mine">我处理的</option>
+                <option value="unassigned">未分配人工</option>
+                <option value="unclaimed">未认领</option>
+                <option value="claimed_by_me">我认领的</option>
+                <option value="sla_breached">SLA 超时</option>
+                <option value="needs_response">待响应</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#user-round-check" /></svg>
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">筛选渠道</span>
+              <select id="channelFilter" aria-label="筛选渠道">
+                <option value="">全部渠道</option>
+                <option value="web">Web</option>
+                <option value="api">API</option>
+                <option value="messaging">Messaging</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#inbox" /></svg>
+            </label>
+            <label class="filter-field">
+              <span class="sr-only">排序方式</span>
+              <select id="sortFilter" aria-label="排序方式">
+                <option value="priority">优先级排序</option>
+                <option value="waiting">等待最久</option>
+                <option value="sla">SLA 最近</option>
+                <option value="updated">最近更新</option>
+              </select>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg>
+            </label>
+          </div>
+          <div id="bulkToolbar" class="bulk-toolbar" hidden>
+            <span id="bulkCount" class="bulk-count">已选 0 项</span>
+            <label class="bulk-action-field">
+              <span class="sr-only">批量操作</span>
+              <select id="bulkAction" aria-label="批量操作">
+                <option value="priority-high">设为高优先级</option>
+                <option value="priority-normal">设为普通优先级</option>
+                <option value="add-label">添加标签</option>
+                <option value="remove-label">移除标签</option>
+                <option value="claim">批量认领</option>
+                <option value="release">批量释放</option>
+              </select>
+            </label>
+            <label id="bulkLabelField" class="bulk-label-field" hidden>
+              <span class="sr-only">批量标签</span>
+              <input id="bulkLabelInput" type="text" maxlength="120" placeholder="VIP, 退款风险" aria-label="批量标签" />
+            </label>
+            <button id="applyBulk" class="bulk-icon-button is-primary" type="button" title="应用批量操作" aria-label="应用批量操作">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#check" /></svg>
+            </button>
+            <button id="clearBulk" class="bulk-icon-button" type="button" title="清除选择" aria-label="清除选择">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg>
+            </button>
+          </div>
+          <div id="conversationList" class="conversation-list" aria-live="polite" aria-busy="false"></div>
+          <div id="ticketPane" class="ticket-pane" hidden>
+            <div class="ticket-filters">
+              <label class="filter-field">
+                <span class="sr-only">筛选工单状态</span>
+                <select id="ticketStatusFilter" aria-label="筛选工单状态">
+                  <option value="">全部工单</option>
+                  <option value="open">待处理</option>
+                  <option value="in_progress">处理中</option>
+                  <option value="closed">已关闭</option>
+                </select>
+                <svg class="icon"><use href="/static/icons.svg?v=1.3.7#chevron-down" /></svg>
+              </label>
+            </div>
+            <div id="ticketList" class="ticket-list" aria-live="polite"></div>
+          </div>
+          <div class="queue-footer">
+            <span id="queueCount">0 个会话</span>
+            <button id="loadMore" class="queue-more" type="button" hidden>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#chevron-down" /></svg>
+              <span>加载更多</span>
+            </button>
+            <button id="mentionsBadge" class="mentions-badge" type="button" title="我的被提及" aria-label="我的被提及" hidden>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#at-sign" /></svg>
+              <span id="mentionsCount" class="mentions-count">0</span>
+            </button>
+            <span id="liveStatus" class="live-dot" title="队列同步状态">LIVE</span>
+          </div>
+          <div id="mentionsPanel" class="mentions-panel" role="dialog" aria-label="我的被提及" hidden></div>
+        </aside>
+
+        <main class="conversation-pane">
+          <section id="emptyState" class="empty-state" aria-label="未选择会话">
+            <div class="empty-icon"><svg class="icon icon-xl"><use href="/static/icons.svg?v=1.3.7#inbox" /></svg></div>
+            <h2>未打开会话</h2>
+            <p>队列待命</p>
+          </section>
+          <section id="conversationView" class="conversation-view" hidden>
+            <header class="conversation-header">
+              <button id="backToQueue" class="icon-button mobile-only" type="button" title="返回队列" aria-label="返回队列">
+                <svg class="icon"><use href="/static/icons.svg?v=1.3.7#arrow-left" /></svg>
+              </button>
+              <div id="customerAvatar" class="customer-avatar" aria-hidden="true">?</div>
+              <div class="conversation-heading">
+                <div class="title-line">
+                  <h2 id="conversationTitle">选择会话</h2>
+                  <span id="conversationStatus" class="status-pill">-</span>
+                  <span id="ticketBadge" class="ticket-badge" hidden></span>
+                </div>
+                <div class="subtitle-line">
+                  <p id="conversationSubtitle">-</p>
+                  <label class="language-picker" title="会话语言：手动覆盖自动检测，或选「自动」恢复">
+                    <span class="language-picker-label">语言</span>
+                    <select id="conversationLanguageSelect" aria-label="会话语言">
+                      <option value="">自动</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div class="conversation-actions">
+                <button id="claimBtn" class="button button-secondary" type="button">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#shield-check" /></svg>
+                  <span>认领</span>
+                </button>
+                <button id="releaseBtn" class="button button-secondary" type="button" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg>
+                  <span>释放</span>
+                </button>
+                <button id="assignBtn" class="button button-secondary" type="button" title="转派给自己">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#user-round-check" /></svg>
+                  <span>转派</span>
+                </button>
+                <button id="acceptBtn" class="button button-secondary" type="button">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#user-round-check" /></svg>
+                  <span>接入</span>
+                </button>
+                <button id="watchBtn" class="button button-secondary" type="button" title="旁观模式：只读实时查看" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#eye" /></svg>
+                  <span>旁观</span>
+                </button>
+                <button id="reopenBtn" class="button button-secondary" type="button" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#rotate-ccw" /></svg>
+                  <span>重开</span>
+                </button>
+                <button id="ticketBtn" class="button button-secondary" type="button" title="把该会话转为长周期工单" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#file-text" /></svg>
+                  <span>转工单</span>
+                </button>
+                <button id="resolveBtn" class="button button-dark" type="button">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#check" /></svg>
+                  <span>解决</span>
+                </button>
+              </div>
+            </header>
+              <div id="csatBanner" class="csat-banner" hidden>
+                <span class="csat-label">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#thumbs-up" /></svg>
+                  <span>满意度链接（解决后发给客户）</span>
+                </span>
+                <code id="csatUrl" class="csat-url"></code>
+                <button id="csatCopyBtn" class="button button-secondary" type="button">复制</button>
+              </div>
+              <div id="summaryBanner" class="summary-banner" hidden>
+                <span class="csat-label">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#file-text" /></svg>
+                  <span id="summaryTitle">会话摘要</span>
+                </span>
+                <div id="summaryText" class="summary-text"></div>
+              </div>
+              <div id="watchBanner" class="watch-banner" hidden>
+                <span class="csat-label">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#eye" /></svg>
+                  <span id="watchText">旁观中 · 实时只读</span>
+                </span>
+                <button id="watchToggle" class="button button-secondary" type="button">停止旁观</button>
+              </div>
+            <div class="conversation-grid">
+              <section class="thread-surface" aria-label="消息线程">
+                <div class="thread-toolbar">
+                  <div class="thread-context"><span class="context-dot"></span><span id="threadContext">等待消息</span></div>
+                  <span id="threadSla" class="sla-label">SLA -</span>
+                </div>
+                <div id="messages" class="messages" aria-live="polite"></div>
+                <div id="composerNotice" class="composer-notice" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#shield-check" /></svg>
+                  <span>人工已接管，新的客户消息会进入队列，不会触发机器人回复。</span>
+                </div>
+                <form id="customerForm" class="composer customer-composer">
+                  <label class="sr-only" for="customerInput">客户消息</label>
+                  <textarea id="customerInput" rows="2" maxlength="4000" placeholder="输入一条模拟客户消息…" required></textarea>
+                  <button class="send-button" type="submit" title="发送客户消息" aria-label="发送客户消息">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#send" /></svg>
+                  </button>
+                </form>
+                <div id="cannedBar" class="canned-bar" hidden>
+                  <span class="canned-label">快捷回复</span>
+                  <div id="cannedList" class="canned-list"></div>
+                </div>
+                <form id="operatorForm" class="composer operator-composer" hidden>
+                  <label class="sr-only" for="operatorInput">人工回复</label>
+                  <div class="composer-stack">
+                    <textarea id="operatorInput" rows="2" maxlength="4000" placeholder="输入人工回复… 输入 / 插入快捷回复，Ctrl+Enter 发送"></textarea>
+                    <div id="macroSuggest" class="macro-suggest" hidden role="listbox" aria-label="快捷回复建议"></div>
+                    <div id="copilotBar" class="copilot-bar" hidden>
+                      <div class="copilot-tools">
+                        <button id="copilotSuggestBtn" class="copilot-btn" type="button" title="根据对话生成建议回复">
+                          <svg class="icon"><use href="/static/icons.svg?v=1.3.7#bot" /></svg>智能建议
+                        </button>
+                        <select id="copilotTone" class="copilot-tone" aria-label="语气改写">
+                          <option value="">语气改写…</option>
+                          <option value="friendly">亲切</option>
+                          <option value="concise">简洁</option>
+                          <option value="professional">专业</option>
+                        </select>
+                        <span id="copilotStatus" class="copilot-status" hidden></span>
+                      </div>
+                      <div id="copilotSuggestions" class="copilot-suggestions" hidden></div>
+                      <div id="copilotKnowledge" class="copilot-knowledge" hidden></div>
+                    </div>
+                    <div id="attachmentBar" class="attachment-bar" hidden>
+                      <div id="pendingAttachments" class="pending-attachments"></div>
+                      <label class="attachment-upload" for="attachmentFile" title="上传附件（图片/PDF/文本）">
+                        <svg class="icon"><use href="/static/icons.svg?v=1.3.7#file-text" /></svg>
+                        <span>附件</span>
+                      </label>
+                      <input id="attachmentFile" type="file" hidden />
+                    </div>
+                  </div>
+                  <button class="send-button operator-send" type="submit" title="发送人工回复" aria-label="发送人工回复">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#send" /></svg>
+                  </button>
+                </form>
+              </section>
+              <aside class="inspector-surface" aria-label="会话检查器">
+                <nav class="inspector-tabs" role="tablist" aria-label="会话信息">
+                  <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-tab="overview">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg><span>概览</span>
+                  </button>
+                  <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-tab="evidence">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#book-open" /></svg><span>证据</span>
+                  </button>
+                  <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-tab="audit">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#shield-check" /></svg><span>审计</span>
+                  </button>
+                  <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-tab="quality">
+                    <svg class="icon"><use href="/static/icons.svg?v=1.3.7#activity" /></svg><span>质量</span>
+                  </button>
+                </nav>
+                <div id="inspectorOverview" class="inspector-panel" role="tabpanel"></div>
+                <div id="inspectorEvidence" class="inspector-panel" role="tabpanel" hidden></div>
+                <div id="inspectorAudit" class="inspector-panel" role="tabpanel" hidden></div>
+                <section id="qualityPanel" class="quality-panel inspector-panel" role="tabpanel" aria-label="质量看板" hidden>
+                  <header class="quality-heading">
+                    <span class="section-kicker">QUALITY</span>
+                    <h3>质量看板</h3>
+                    <button id="refreshQuality" class="icon-button" type="button" title="刷新质量看板" aria-label="刷新质量看板">
+                      <svg class="icon"><use href="/static/icons.svg?v=1.3.7#refresh-cw" /></svg>
+                    </button>
+                  </header>
+                  <div id="qualityBuckets" class="quality-buckets" aria-live="polite"></div>
+                  <div class="quality-gaps-block">
+                    <h4>知识缺口</h4>
+                    <div id="qualityGaps" class="quality-gaps" aria-live="polite"></div>
+                  </div>
+                </section>
+                <form id="noteForm" class="note-composer">
+                  <label for="noteInput">内部备注 <span>仅团队可见</span></label>
+                  <div class="note-input-row">
+                    <div id="mentionSuggest" class="macro-suggest" hidden role="listbox" aria-label="坐席提及候选"></div>
+                    <textarea id="noteInput" rows="2" maxlength="4000" placeholder="记录核对结果或交接信息，@ 提及同事" required></textarea>
+                    <button type="submit" title="添加内部备注" aria-label="添加内部备注">
+                      <svg class="icon"><use href="/static/icons.svg?v=1.3.7#send" /></svg>
+                    </button>
+                  </div>
+                </form>
+              </aside>
+            </div>
+          </section>
+          <section id="ticketDetailView" class="conversation-view ticket-detail-view" hidden aria-label="工单详情">
+            <header class="conversation-header">
+              <button id="ticketBack" class="icon-button" type="button" title="返回工单列表" aria-label="返回工单列表">
+                <svg class="icon"><use href="/static/icons.svg?v=1.3.7#arrow-left" /></svg>
+              </button>
+              <div class="conversation-heading">
+                <div class="title-line">
+                  <h2 id="ticketDetailTitle">工单详情</h2>
+                  <span id="ticketDetailStatus" class="status-pill">-</span>
+                  <span id="ticketDetailPriority" class="priority-pill" hidden></span>
+                </div>
+                <p id="ticketDetailSubtitle">-</p>
+              </div>
+              <div class="conversation-actions">
+                <button id="ticketLinkCurrent" class="button button-secondary" type="button" title="把当前打开的会话关联到本工单" hidden>
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#link" /></svg>
+                  <span>关联当前会话</span>
+                </button>
+                <div id="ticketTransitions" class="ticket-transitions"></div>
+              </div>
+            </header>
+            <div class="ticket-detail-body">
+              <div id="ticketDetailDescription" class="ticket-description" hidden></div>
+              <div id="ticketDetailConvs" class="ticket-convs"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <section id="qualityView" class="app-view" hidden aria-label="质量看板">
+        <header class="quality-heading">
+          <span class="section-kicker">QUALITY</span>
+          <h2>质量看板</h2>
+          <button id="refreshQualityView" class="icon-button" type="button" title="刷新质量看板" aria-label="刷新质量看板">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#refresh-cw" /></svg>
+          </button>
+        </header>
+        <div id="qualityViewBuckets" class="quality-buckets" aria-live="polite"></div>
+        <div class="quality-gaps-block">
+          <h4>知识缺口</h4>
+          <div id="qualityViewGaps" class="quality-gaps" aria-live="polite"></div>
+        </div>
+      </section>
+      <section id="knowledgeView" class="app-view" hidden aria-label="知识库">
+        <header class="knowledge-heading">
+          <div>
+            <span class="section-kicker">KNOWLEDGE OPERATIONS</span>
+            <h2>知识库</h2>
+          </div>
+          <div class="knowledge-heading-actions">
+            <button id="newKnowledgeDraft" class="button button-primary" type="button" hidden>
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#plus" /></svg>
+              <span>新建草稿</span>
+            </button>
+            <button id="refreshKnowledge" class="icon-button" type="button" title="刷新知识库" aria-label="刷新知识库">
+              <svg class="icon"><use href="/static/icons.svg?v=1.3.7#refresh-cw" /></svg>
+            </button>
+          </div>
+        </header>
+        <div id="knowledgeSummary" class="knowledge-summary" aria-live="polite"></div>
+        <div class="knowledge-toolbar" aria-label="知识文章筛选">
+          <label class="knowledge-search">
+            <svg class="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.3.7#search" /></svg>
+            <span class="sr-only">搜索知识文章</span>
+            <input id="knowledgeSearch" type="search" maxlength="160" autocomplete="off" placeholder="搜索标题、正文、标签或来源" />
+          </label>
+          <label class="knowledge-filter">
+            <span>状态</span>
+            <select id="knowledgeStatusFilter">
+              <option value="all">全部状态</option>
+              <option value="published">已发布</option>
+              <option value="draft">草稿</option>
+              <option value="pending_review">待审核</option>
+              <option value="retired">已停用</option>
+            </select>
+          </label>
+          <label class="knowledge-filter">
+            <span>语言</span>
+            <select id="knowledgeLanguageFilter">
+              <option value="">全部语言</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+              <option value="es">Español</option>
+              <option value="fr">Français</option>
+              <option value="de">Deutsch</option>
+              <option value="pt">Português</option>
+            </select>
+          </label>
+          <span id="knowledgeResultCount" class="knowledge-result-count"></span>
+        </div>
+        <p id="knowledgeReadOnly" class="knowledge-read-only" hidden>当前角色可检索已发布文章；草稿和审核操作仅对知识管理员开放。</p>
+        <div class="knowledge-layout">
+          <section class="knowledge-list-panel" aria-label="知识文章">
+            <div id="knowledgeListStatus" class="knowledge-list-status" role="status">正在加载文章…</div>
+            <div id="knowledgeList" class="knowledge-list" role="list"></div>
+          </section>
+          <aside id="knowledgeEditor" class="knowledge-editor" hidden aria-label="知识草稿编辑器">
+            <form id="knowledgeForm">
+              <header class="knowledge-editor-heading">
+                <div>
+                  <span class="section-kicker">EDITOR</span>
+                  <h3 id="knowledgeEditorTitle">新建知识草稿</h3>
+                </div>
+                <button id="cancelKnowledgeEdit" class="icon-button" type="button" title="关闭编辑器" aria-label="关闭编辑器">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg>
+                </button>
+              </header>
+              <label class="knowledge-field">标题
+                <input id="knowledgeTitle" type="text" minlength="2" maxlength="160" required />
+              </label>
+              <label class="knowledge-field">正文
+                <textarea id="knowledgeContent" rows="10" minlength="10" maxlength="12000" required></textarea>
+              </label>
+              <div class="knowledge-form-grid">
+                <label class="knowledge-field">标签
+                  <input id="knowledgeTags" type="text" maxlength="820" placeholder="shipping, refund" required />
+                </label>
+                <label class="knowledge-field">分类
+                  <input id="knowledgeCategory" type="text" minlength="2" maxlength="60" value="general" required />
+                </label>
+                <label class="knowledge-field">语言
+                  <select id="knowledgeLanguage">
+                    <option value="">不限语言</option>
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                    <option value="ja">日本語</option>
+                    <option value="ko">한국어</option>
+                    <option value="es">Español</option>
+                    <option value="fr">Français</option>
+                    <option value="de">Deutsch</option>
+                    <option value="pt">Português</option>
+                  </select>
+                </label>
+              </div>
+              <label class="knowledge-field">来源
+                <input id="knowledgeSource" type="text" minlength="1" maxlength="500" placeholder="https://… 或 internal:…" required />
+              </label>
+              <div class="knowledge-editor-actions">
+                <button id="resetKnowledgeForm" class="button button-secondary" type="button">重置</button>
+                <button class="button button-primary" type="submit">
+                  <svg class="icon"><use href="/static/icons.svg?v=1.3.7#check" /></svg>
+                  <span id="knowledgeSaveLabel">保存草稿</span>
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      </section>
+      <section id="adminView" class="app-view" hidden aria-label="管理">
+        <header class="admin-heading">
+          <span class="section-kicker">ADMIN</span>
+          <h2>管理</h2>
+          <button id="refreshAdmin" class="icon-button" type="button" title="刷新管理数据" aria-label="刷新管理数据">
+            <svg class="icon"><use href="/static/icons.svg?v=1.3.7#refresh-cw" /></svg>
+          </button>
+        </header>
+        <div id="adminDenied" class="admin-denied" hidden>当前角色无权限查看管理页。</div>
+        <div id="adminContent" class="admin-cards">
+          <section class="admin-card">
+            <h3>租户配额</h3>
+            <dl id="quotaReadout" class="admin-readout"></dl>
+            <form id="quotaForm" class="admin-form">
+              <label class="admin-field">会话配额
+                <input id="quotaConversations" type="number" min="1" max="10000000" placeholder="不修改留空" />
+              </label>
+              <label class="admin-field">存储配额（MB）
+                <input id="quotaStorageMb" type="number" min="1" placeholder="不修改留空" />
+              </label>
+              <button class="button button-primary" type="submit">保存配额</button>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>成员</h3>
+            <ul id="memberList" class="admin-list"></ul>
+            <form id="memberForm" class="admin-form">
+              <label class="admin-field">坐席标识
+                <input id="memberActorId" type="text" maxlength="80" pattern="[A-Za-z0-9._:@\-]{2,}" title="2–80 位，仅字母、数字、. _ : @ -" placeholder="例如 operator-2" required />
+              </label>
+              <label class="admin-field">角色
+                <select id="memberRole">
+                  <option value="operator">客服</option>
+                  <option value="supervisor">主管</option>
+                  <option value="admin">管理员</option>
+                  <option value="viewer">只读</option>
+                  <option value="auditor">审计员</option>
+                  <option value="channel">渠道</option>
+                </select>
+              </label>
+              <button class="button button-primary" type="submit">邀请成员</button>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>Webhook</h3>
+            <ul id="webhookList" class="admin-list"></ul>
+            <form id="webhookForm" class="admin-form">
+              <label class="admin-field">URL
+                <input id="webhookUrl" type="url" maxlength="500" autocomplete="url" placeholder="https://example.com/hook" />
+              </label>
+              <fieldset class="admin-events">
+                <legend>事件</legend>
+                <div id="webhookEvents" class="admin-events-grid"></div>
+              </fieldset>
+              <label class="admin-field">签名密钥
+                <input id="webhookSecret" type="password" minlength="8" maxlength="200" autocomplete="new-password" spellcheck="false" placeholder="至少 8 位" />
+              </label>
+              <button class="button button-primary" type="submit">注册 Webhook</button>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>报表订阅</h3>
+            <ul id="reportSubscriptionList" class="admin-list"></ul>
+            <form id="reportSubscriptionForm" class="admin-form">
+              <label class="admin-field">报表
+                <select id="reportType">
+                  <option value="quality">质量报表</option>
+                  <option value="usage">使用量报表</option>
+                </select>
+              </label>
+              <label class="admin-field">周期
+                <select id="reportSchedule">
+                  <option value="daily">每日</option>
+                  <option value="weekly">每周</option>
+                </select>
+              </label>
+              <label class="admin-field">窗口（天）
+                <input id="reportWindowDays" type="number" min="1" max="30" value="7" />
+              </label>
+              <label class="admin-field">Webhook 端点
+                <select id="reportWebhook"></select>
+              </label>
+              <button class="button button-primary" type="submit">创建订阅</button>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>报表导出</h3>
+            <form id="reportGenerateForm" class="admin-form">
+              <label class="admin-field">报表
+                <select id="reportGenerateType">
+                  <option value="quality">质量报表</option>
+                  <option value="usage">使用量报表</option>
+                </select>
+              </label>
+              <label class="admin-field">窗口（天）
+                <input id="reportGenerateWindow" type="number" min="1" max="30" value="7" />
+              </label>
+              <div class="admin-form-row">
+                <button class="button button-secondary" type="submit" name="mode" value="generate">生成预览</button>
+                <button class="button button-secondary" type="submit" name="mode" value="export">导出 CSV</button>
+              </div>
+              <pre id="reportPreview" class="report-preview" hidden></pre>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>CSAT 评分汇总</h3>
+            <dl id="csatReadout" class="admin-readout"></dl>
+            <ul id="csatTrend" class="admin-list"></ul>
+          </section>
+          <section class="admin-card">
+            <h3>SLA 策略</h3>
+            <ul id="slaPolicyList" class="admin-list"></ul>
+            <form id="slaPolicyForm" class="admin-form">
+              <label class="admin-field">适用级别
+                <select id="slaPriority">
+                  <option value="">默认（全局）</option>
+                  <option value="normal">普通</option>
+                  <option value="high">高优</option>
+                </select>
+              </label>
+              <label class="admin-field">渠道
+                <input id="slaChannel" type="text" maxlength="40" placeholder="留空表示全部" />
+              </label>
+              <label class="admin-field">首响时限（分钟）
+                <input id="slaFirstResponse" type="number" min="1" max="10080" value="15" />
+              </label>
+              <label class="admin-field">解决时限（分钟）
+                <input id="slaResolve" type="number" min="1" max="10080" value="1440" />
+              </label>
+              <button class="button button-primary" type="submit">保存策略</button>
+            </form>
+          </section>
+          <section class="admin-card">
+            <h3>自动路由规则</h3>
+            <ul id="routingRuleList" class="admin-list"></ul>
+            <form id="routingRuleForm" class="admin-form">
+              <label class="admin-field">意图
+                <input id="ruleIntent" type="text" maxlength="80" placeholder="可选" />
+              </label>
+              <label class="admin-field">标签
+                <input id="ruleLabel" type="text" maxlength="80" placeholder="可选" />
+              </label>
+              <label class="admin-field">渠道
+                <input id="ruleChannel" type="text" maxlength="40" placeholder="可选" />
+              </label>
+              <label class="admin-field">分配组
+                <select id="ruleGroup"></select>
+              </label>
+              <label class="admin-field">优先级
+                <input id="rulePriority" type="number" min="0" max="1000" value="0" />
+              </label>
+              <button class="button button-primary" type="submit">添加规则</button>
+            </form>
+          </section>
+        </div>
+      </section>
+      <section id="placeholderView" class="app-view" hidden aria-label="开发中视图">
+        <div class="view-placeholder">
+          <div class="empty-icon"><svg class="icon icon-xl"><use href="/static/icons.svg?v=1.3.7#hexagon" /></svg></div>
+          <h2 id="placeholderTitle">该视图由后续阶段提供</h2>
+          <p id="placeholderText">此处为全局导航挂载点：设置视图将在后续阶段展开。</p>
+        </div>
+      </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="newConversationDialog" class="dialog">
+      <form id="newConversationForm" method="dialog">
+        <div class="dialog-heading">
+          <div><span class="section-kicker">NEW CONTACT</span><h2>新建会话</h2></div>
+          <button id="closeDialog" class="icon-button" type="button" title="关闭" aria-label="关闭"><svg class="icon"><use href="/static/icons.svg?v=1.3.7#x" /></svg></button>
+        </div>
+        <label class="field-label" for="newCustomerName">客户名称</label>
+        <input id="newCustomerName" class="text-input" maxlength="80" required placeholder="例如：林嘉" />
+        <label class="field-label" for="newCustomerRef">客户身份标识 <span>可选</span></label>
+        <input id="newCustomerRef" class="text-input" maxlength="80" placeholder="例如：CUST-1001" />
+        <label class="field-label" for="newChannel">渠道</label>
+        <select id="newChannel" class="text-input"><option value="web">Web</option><option value="api">API</option><option value="messaging">Messaging</option></select>
+        <div class="dialog-actions">
+          <button id="cancelDialog" class="button button-secondary" type="button">取消</button>
+          <button class="button button-primary" type="submit"><svg class="icon"><use href="/static/icons.svg?v=1.3.7#plus" /></svg><span>创建会话</span></button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <dialog id="commandPalette" class="dialog command-palette" aria-label="命令面板">
+      <div class="command-palette-inner">
+        <div class="command-input-row">
+          <svg class="icon"><use href="/static/icons.svg?v=1.3.7#search" /></svg>
+          <input id="commandInput" class="command-input" type="text" placeholder="输入命令或会话… Ctrl+K" autocomplete="off" aria-label="命令搜索" />
+          <kbd class="command-kbd">ESC</kbd>
+        </div>
+        <div id="commandResults" class="command-results" role="listbox" aria-label="命令结果"></div>
+      </div>
+    </dialog>
+    <script src="/static/app.js?v=1.3.7" defer></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "policy": ".github/workflows 中的每个 actions 引用必须在 pins 登记且 ref 一致；未登记或 ref 漂移时 scripts/check_workflows.py 红灯。sha 为 null 表示该 action 尚未固定到 commit SHA——供应链摘要固定由受控更新机器人流程回填，禁止人工随意填写未经上游核实的 digest。",
+  "pins": {
+    "actions/checkout": { "ref": "v4", "sha": null, "approved": "2026-08-20" },
+    "actions/setup-python": { "ref": "v5", "sha": null, "approved": "2026-08-20" },
+    "actions/setup-node": { "ref": "v4", "sha": null, "approved": "2026-08-20" },
+    "actions/upload-artifact": { "ref": "v4", "sha": null, "approved": "2026-08-20" }
+  }
+}
