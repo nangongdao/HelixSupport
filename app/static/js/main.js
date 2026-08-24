@@ -20,6 +20,7 @@ import * as i18n from "./i18n.js?v=1.3.7";
 import * as inspector from "./inspector.js?v=1.3.7";
 import * as knowledge from "./knowledge.js?v=1.3.7";
 import * as nav from "./nav.js?v=1.3.7";
+import * as queueView from "./queue-view.js?v=1.3.7";
 import * as qualityCharts from "./quality-charts.js?v=1.3.7";
 import * as qualityPanel from "./quality-panel.js?v=1.3.7";
 import * as session from "./session.js?v=1.3.7";
@@ -108,6 +109,7 @@ export function initModules() {
     inspector,
     knowledge,
     nav,
+    queueView,
     qualityCharts,
     qualityPanel,
     session,

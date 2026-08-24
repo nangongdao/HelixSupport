@@ -334,6 +334,39 @@ _helixModules.ticketView?.configure?.({
 });
 _helixModules.qualityPanel?.configure?.({ state, els, api, showToast, escapeHtml });
 _helixModules.attachments?.configure?.({ state, els, api, showToast, escapeHtml, icon, canOperate });
+_helixModules.queueView?.configure?.({
+  state,
+  els,
+  canOperate,
+  escapeHtml,
+  statusLabel,
+  formatSla,
+  // vqueue/density helpers come straight from the module namespaces — the
+  // destructured locals are declared further down this file and would be
+  // TDZ-dead at configure time.
+  estimatedRowHeight: (density, lowPerf) =>
+    (_helixModules.vqueue || fallbackVqueueHelpers).estimatedRowHeight(density, lowPerf),
+  signatureOf: (c) => (_helixModules.vqueue || fallbackVqueueHelpers).signatureOf(c),
+  rowHeightFromElement: (el) =>
+    (_helixModules.vqueue || fallbackVqueueHelpers).rowHeightFromElement(el),
+  isCompactDensity: (level, lowPerf) =>
+    (_helixModules.density || fallbackDensityHelpers).isCompactDensity(level, lowPerf),
+  VIRTUAL_THRESHOLD: 200,
+});
+
+// Minimal fallbacks mirroring the legacy inline definitions so configure-time
+// references stay safe even if the module entry has not loaded yet.
+const fallbackVqueueHelpers = {
+  estimatedRowHeight: () => 118,
+  signatureOf: (c) => `${c.id}:${c.status}:${c.updated_at}:${c.version ?? 0}`,
+  rowHeightFromElement: () => 118,
+};
+const fallbackDensityHelpers = {
+  isCompactDensity: (level, lowPerf) => {
+    const effective = lowPerf ? "compact" : level;
+    return effective === "compact" || effective === "dense";
+  },
+};
 _helixModules.inspector?.configure?.({
   state,
   els,
@@ -908,184 +941,43 @@ function renderLabelFilter() {
 }
 
 function renderBulkToolbar() {
-  const count = state.bulkSelected.size;
-  els.bulkToolbar.hidden = !canOperate() || count === 0;
-  els.bulkCount.textContent = `已选 ${count} 项`;
-  const needsLabel = ["add-label", "remove-label"].includes(els.bulkAction.value);
-  els.bulkLabelField.hidden = !needsLabel;
-  els.applyBulk.disabled = count === 0;
+  return window.HelixModules?.['queueView']?.['renderBulkToolbar'](...arguments);
 }
 
-function renderLabelChips(labels, emptyText = "无标签") {
-  if (!labels?.length) return `<span class="label-empty">${escapeHtml(emptyText)}</span>`;
-  return labels
-    .map((label) => `<span class="label-chip">${escapeHtml(label)}</span>`)
-    .join("");
+// moved to js/queue-view.js (renderLabelChips)
+function renderLabelChips(labels, emptyText) {
+  return window.HelixModules?.['queueView']?.['renderLabelChips'](...arguments);
 }
 
 // ROADMAP §18.4: build one queue row (shared by full and windowed modes).
-function queueRowHtml(conversation, { showSelection, compactQueue }) {
-  const sla = formatSla(conversation);
-  const active = conversation.id === state.selectedId;
-  const route = conversation.assigned_agent || conversation.intent || "待路由";
-  const checked = state.bulkSelected.has(conversation.id);
-  const labels = conversation.labels || [];
-  const preview = compactQueue
-    ? ""
-    : `<span class="item-preview">${escapeHtml(conversation.preview || "尚无消息")}</span>`;
-  const labelRow = compactQueue
-    ? ""
-    : `<span class="item-labels">${renderLabelChips(labels.slice(0, 2), "未分类")}${labels.length > 2 ? `<span class="label-more">+${escapeHtml(labels.length - 2)}</span>` : ""}</span>`;
-  return `
-        <div class="conversation-row${showSelection ? " has-selection" : ""}${checked ? " is-selected" : ""}">
-          ${showSelection ? `<label class="conversation-select" title="选择 ${escapeHtml(conversation.customer_name)}">
-            <input class="conversation-checkbox" type="checkbox" data-select-id="${escapeHtml(conversation.id)}" aria-label="选择 ${escapeHtml(conversation.customer_name)}" ${checked ? "checked" : ""} />
-          </label>` : ""}
-          <button class="conversation-item${active ? " is-active" : ""}" type="button" data-id="${escapeHtml(conversation.id)}" aria-pressed="${active}">
-          <span class="item-top">
-            <span class="item-name">${escapeHtml(conversation.customer_name)}</span>
-            <span class="status-pill ${escapeHtml(conversation.status)}">${escapeHtml(statusLabel(conversation.status))}</span>
-          </span>
-          ${preview}
-          ${labelRow}
-          <span class="item-bottom">
-            <span class="item-route">${escapeHtml(route)}${conversation.claim_active ? ` · 认领 ${escapeHtml(conversation.claimed_by)}` : ""}</span>
-            <span class="item-sla${sla.breached ? " is-breached" : ""}">${escapeHtml(sla.text)}</span>
-          </span>
-          </button>
-        </div>`;
+function queueRowHtml(conversation, opts) {
+  return window.HelixModules?.['queueView']?.['queueRowHtml'](...arguments);
 }
 
-function renderFullQueue(opts) {
-  const parts = new Array(state.conversations.length);
-  for (let index = 0; index < state.conversations.length; index += 1) {
-    parts[index] = queueRowHtml(state.conversations[index], opts);
-  }
-  els.list.innerHTML = parts.join("");
-}
+// moved to js/queue-view.js (renderFullQueue)
 
 function windowedRowHeight() {
-  return state.queueRowHeight || estimatedRowHeight(state.density, state.lowPerf);
+  return window.HelixModules?.['queueView']?.['windowedRowHeight']();
 }
 
-function currentQueueWindow(rowHeight) {
-  return computeWindow({
-    total: state.conversations.length,
-    scrollTop: els.list.scrollTop,
-    viewport: els.list.clientHeight,
-    rowHeight,
-    overscan: 4,
-  });
-}
+// moved to js/queue-view.js (currentQueueWindow)
 
 function renderWindowedQueue(win, rowHeight, opts) {
-  const parts = [];
-  // CSP style-src 'self' blocks inline style attributes, so pad heights are
-  // applied through the CSSOM after the markup is in place.
-  if (win.topPad > 0) {
-    parts.push('<div class="vqueue-pad" data-pad="top" aria-hidden="true"></div>');
-  }
-  for (let index = win.first; index <= win.last; index += 1) {
-    parts.push(queueRowHtml(state.conversations[index], opts));
-  }
-  if (win.bottomPad > 0) {
-    parts.push('<div class="vqueue-pad" data-pad="bottom" aria-hidden="true"></div>');
-  }
-  els.list.innerHTML = parts.join("");
-  const topPad = els.list.querySelector('.vqueue-pad[data-pad="top"]');
-  const bottomPad = els.list.querySelector('.vqueue-pad[data-pad="bottom"]');
-  if (topPad) topPad.style.height = `${win.topPad}px`;
-  if (bottomPad) bottomPad.style.height = `${win.bottomPad}px`;
-  state.queueWindow = win;
-  // Measure the first live row exactly once, then align with a corrective
-  // re-render so the pads match real geometry instead of the estimate.
-  if (!state.queueRowHeight && !state.queueMeasuring) {
-    const firstRow = els.list.querySelector(".conversation-row");
-    const measured = firstRow ? rowHeightFromElement(firstRow) : null;
-    if (measured && measured !== rowHeight) {
-      state.queueMeasuring = true;
-      state.queueRowHeight = measured;
-      renderQueue();
-      state.queueMeasuring = false;
-      return;
-    }
-    state.queueRowHeight = measured || rowHeight;
-  }
+  return window.HelixModules?.['queueView']?.['renderWindowedQueue'](...arguments);
 }
 
 function renderQueue() {
-  els.queueCount.textContent = `${state.conversations.length}${state.queueHasMore ? "+" : ""} 个会话`;
-  els.loadMore.hidden = !state.queueHasMore;
-  els.loadMore.disabled = state.queueLoadingMore;
-  els.loadMore.setAttribute("aria-busy", String(state.queueLoadingMore));
-  els.list.setAttribute("aria-busy", "false");
-  if (!state.conversations.length) {
-    els.loadMore.hidden = true;
-    els.list.innerHTML = '<div class="queue-empty">当前筛选条件下没有会话</div>';
-    return;
-  }
-  const opts = {
-    showSelection: canOperate(),
-    compactQueue: isCompactDensity(state.density, state.lowPerf),
-  };
-  if (state.conversations.length > VIRTUAL_THRESHOLD) {
-    state.queueVirtual = true;
-    const rowHeight = windowedRowHeight();
-    renderWindowedQueue(currentQueueWindow(rowHeight), rowHeight, opts);
-  } else {
-    if (state.queueVirtual) {
-      state.queueVirtual = false;
-      state.queueWindow = null;
-      state.queueWindowSig = "";
-    }
-    renderFullQueue(opts);
-  }
-  renderBulkToolbar();
+  return window.HelixModules?.['queueView']?.['renderQueue'](...arguments);
 }
 
 function renderLoadingQueue() {
-  els.list.setAttribute("aria-busy", "true");
-  els.list.innerHTML = '<div class="queue-loading">正在同步会话队列</div>';
+  return window.HelixModules?.['queueView']?.['renderLoadingQueue'](...arguments);
 }
 
-// ROADMAP §18.4: refresh only when the visible band or its content signature
-// changed, throttled to one update per animation frame.
-function scheduleQueueWindowUpdate() {
-  if (!state.queueVirtual) return;
-  if (state.queueScrollRaf) return;
-  state.queueScrollRaf = window.requestAnimationFrame(() => {
-    state.queueScrollRaf = 0;
-    if (!state.queueVirtual || !state.conversations.length) return;
-    const rowHeight = windowedRowHeight();
-    const win = currentQueueWindow(rowHeight);
-    const sig = [];
-    for (let index = win.first; index <= win.last; index += 1) {
-      sig.push(signatureOf(state.conversations[index]));
-    }
-    const windowSig = sig.join("|");
-    if (
-      state.queueWindow &&
-      state.queueWindow.first === win.first &&
-      state.queueWindow.last === win.last &&
-      state.queueWindowSig === windowSig
-    ) {
-      return; // band and content unchanged — nothing to repaint
-    }
-    state.queueWindowSig = windowSig;
-    // Suppress the polite-live announcement while the window churns on scroll.
-    const previousLive = els.list.hasAttribute("aria-live") ? els.list.getAttribute("aria-live") : null;
-    els.list.setAttribute("aria-live", "off");
-    renderWindowedQueue(win, rowHeight, {
-      showSelection: canOperate(),
-      compactQueue: isCompactDensity(state.density, state.lowPerf),
-    });
-    if (previousLive) els.list.setAttribute("aria-live", previousLive);
-    else els.list.removeAttribute("aria-live");
-  });
-}
+// moved to js/queue-view.js (scheduleQueueWindowUpdate)
 
 function handleQueueScroll() {
-  scheduleQueueWindowUpdate();
+  return window.HelixModules?.['queueView']?.['handleQueueScroll'](...arguments);
 }
 
 function renderMessages(messages, { preserveAnchor = false } = {}) {
