@@ -750,7 +750,7 @@ function escapeHtml(value) {
 }
 
 function icon(name) {
-  return `<svg class="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.3.7#${name}"></use></svg>`;
+  return `<svg class="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.3.8#${name}"></use></svg>`;
 }
 
 function statusLabel(status) {

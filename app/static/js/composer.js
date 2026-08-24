@@ -8,7 +8,7 @@
  * (state/els/api/…) because this module binds no DOM at import time.
  */
 
-import { clearPendingAttachments, pendingIds } from "./attachment.js?v=1.3.7";
+import { clearPendingAttachments, pendingIds } from "./attachment.js?v=1.3.8";
 
 let ctx = null;
 

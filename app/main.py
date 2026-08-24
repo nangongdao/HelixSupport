@@ -824,7 +824,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
                     " ".join(settings.widget_frame_ancestors) if is_widget_document else "'none'"
                 )
                 response.headers["Content-Security-Policy"] = (
-                    "default-src 'self'; script-src 'self'; style-src 'self'; "
+                    "default-src 'self'; script-src 'self'; "
+                    "style-src 'self' https://fonts.googleapis.com; "
+                    "font-src https://fonts.gstatic.com; "
                     "img-src 'self' data:; connect-src 'self'; "
                     f"frame-ancestors {frame_ancestors}"
                 )

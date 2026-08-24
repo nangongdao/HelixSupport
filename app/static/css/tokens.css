@@ -1,51 +1,53 @@
-/* Helix Support — Design Tokens (Phase 26.2)
+/* Helix Support — Design Tokens (Phase 26.2, Art Deco reskin)
    Color / spacing / type / radius / shadow / motion tokens.
    Theme switching is driven by the `data-theme` attribute on <html>:
-     - default (no attribute) and `data-theme="dark"` use the dark palette;
-     - `data-theme="light"` overrides the color tokens with the light palette.
+     - default (no attribute) and `data-theme="dark"` use the obsidian
+       + metallic-gold Art Deco palette;
+     - `data-theme="light"` overrides the color tokens with the champagne
+       cream daytime palette (bronze accent, deep ink text).
    Structural tokens (spacing, type scale, radii, shadows, motion) are
    theme-independent and live in :root. */
 
 :root {
-  /* ---- color: dark palette (default) ---- */
-  --color-bg-0: #070b0d;
-  --color-bg-1: #0b1114;
-  --color-bg-2: #10181c;
-  --color-bg-3: #151f24;
-  --color-surface: rgba(18, 27, 32, 0.86);
-  --color-surface-alt: rgba(255, 255, 255, 0.035);
-  --color-line: rgba(148, 190, 190, 0.12);
-  --color-line-strong: rgba(148, 190, 190, 0.24);
-  --color-ink: #e8f1f0;
-  --color-ink-soft: #b9c9c8;
-  --color-muted: #6f8482;
-  --color-accent: #2dd4bf;
-  --color-accent-dark: #14b8a6;
-  --color-accent-soft: rgba(45, 212, 191, 0.12);
-  --color-accent-glow: rgba(45, 212, 191, 0.35);
-  --color-blue: #6ab0ff;
-  --color-blue-soft: rgba(106, 176, 255, 0.13);
-  --color-amber: #f5b04a;
-  --color-amber-soft: rgba(245, 176, 74, 0.13);
-  --color-red: #ff6b7a;
-  --color-red-soft: rgba(255, 107, 122, 0.13);
-  --color-green: #5dd4a0;
-  --color-green-soft: rgba(93, 212, 160, 0.13);
+  /* ---- color: obsidian + gold palette (default) ---- */
+  --color-bg-0: #0a0a0a;
+  --color-bg-1: #0e0e0e;
+  --color-bg-2: #141414;
+  --color-bg-3: #1b1b1b;
+  --color-surface: rgba(20, 20, 20, 0.88);
+  --color-surface-alt: rgba(212, 175, 55, 0.05);
+  --color-line: rgba(212, 175, 55, 0.22);
+  --color-line-strong: rgba(212, 175, 55, 0.45);
+  --color-ink: #f2f0e4;
+  --color-ink-soft: #cfcabb;
+  --color-muted: #8d897c;
+  --color-accent: #d4af37;
+  --color-accent-dark: #b8952c;
+  --color-accent-soft: rgba(212, 175, 55, 0.12);
+  --color-accent-glow: rgba(212, 175, 55, 0.35);
+  --color-blue: #7fa8c9;
+  --color-blue-soft: rgba(30, 61, 89, 0.35);
+  --color-amber: #e0b457;
+  --color-amber-soft: rgba(224, 180, 87, 0.13);
+  --color-red: #d9776b;
+  --color-red-soft: rgba(217, 119, 107, 0.14);
+  --color-green: #93b981;
+  --color-green-soft: rgba(147, 185, 129, 0.13);
   --color-violet: #b49af5;
   --color-violet-soft: rgba(180, 154, 245, 0.14);
 
-  /* ---- color: light palette (data-theme="light") ---- */
-  --color-light-bg-0: #f4f7f8;
-  --color-light-bg-1: #eef3f4;
-  --color-light-bg-2: #e6edef;
-  --color-light-bg-3: #dde7e9;
-  --color-light-surface: rgba(255, 255, 255, 0.9);
-  --color-light-surface-alt: rgba(0, 0, 0, 0.04);
-  --color-light-line: rgba(20, 60, 60, 0.14);
-  --color-light-line-strong: rgba(20, 60, 60, 0.26);
-  --color-light-ink: #14282b;
-  --color-light-ink-soft: #3d565a;
-  --color-light-muted: #6b8586;
+  /* ---- color: light palette (data-theme="light") — champagne paper ---- */
+  --color-light-bg-0: #f4f0e4;
+  --color-light-bg-1: #eee9db;
+  --color-light-bg-2: #e6e0cf;
+  --color-light-bg-3: #ddd5bf;
+  --color-light-surface: rgba(255, 252, 244, 0.92);
+  --color-light-surface-alt: rgba(90, 70, 20, 0.05);
+  --color-light-line: rgba(122, 96, 32, 0.28);
+  --color-light-line-strong: rgba(122, 96, 32, 0.48);
+  --color-light-ink: #262115;
+  --color-light-ink-soft: #4c4433;
+  --color-light-muted: #7a6f58;
 
   /* ---- spacing scale ---- */
   --space-1: 4px;
@@ -63,22 +65,22 @@
   --text-lg: 16px;
   --text-xl: 20px;
 
-  /* ---- radius ---- */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  /* ---- radius: Art Deco forbids soft corners ---- */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
   --radius-full: 999px;
 
-  /* ---- shadows ---- */
-  --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 24px var(--color-accent-glow);
+  /* ---- shadows: glow halos, never drop shadows ---- */
+  --shadow-panel: 0 0 24px rgba(212, 175, 55, 0.09), inset 0 0 0 1px rgba(212, 175, 55, 0.08);
+  --shadow-glow: 0 0 18px var(--color-accent-glow);
 
   /* ---- layout & motion ---- */
   --header-height: 62px;
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
-  --font-display: "Bahnschrift", "Segoe UI Variable Display", "Microsoft YaHei", sans-serif;
-  --font-mono: "Cascadia Mono", "Consolas", monospace;
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-display: "Marcellus", "Trajan Pro", "Cinzel", Georgia, "Times New Roman", serif;
+  --font-mono: "Josefin Sans", "Cascadia Mono", Consolas, monospace;
+  --font-ui: "Josefin Sans", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
 }
 
 /* Map the legacy names used by styles.css onto the token layer so the
@@ -128,13 +130,13 @@ html[data-theme="light"] {
   --ink: var(--color-light-ink);
   --ink-soft: var(--color-light-ink-soft);
   --muted: var(--color-light-muted);
-  --color-accent: #0b6b63;
-  --color-accent-dark: #08554f;
-  --color-blue: #1d4ed8;
-  --color-amber: #9a5b00;
-  --color-red: #b4232c;
-  --color-green: #0b6b3f;
-  --color-violet: #7048b8;
-  --color-light-muted: #4f686a;
+  --color-accent: #6b5210;
+  --color-accent-dark: #5c4810;
+  --color-blue: #1e3d59;
+  --color-amber: #8a6512;
+  --color-red: #a34036;
+  --color-green: #3d5628;
+  --color-violet: #5d3f9e;
+  --color-light-muted: #6b6049;
   color-scheme: light;
 }

@@ -14716,7 +14716,8 @@
               {
                 "type": "string",
                 "maxLength": 40,
-                "minLength": 1
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
               },
               {
                 "type": "null"

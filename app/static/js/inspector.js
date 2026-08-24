@@ -167,12 +167,12 @@ export function renderOverview(detail) {
       </dl>
       ${ctx.canOperate() ? `<form id="conversationLabelsForm" class="label-editor">
         <label class="label-editor-field">
-          <svg class="icon"><use href="/static/icons.svg?v=1.3.7#tag" /></svg>
+          <svg class="icon"><use href="/static/icons.svg?v=1.3.8#tag" /></svg>
           <span class="sr-only">会话标签</span>
           <input name="labels" type="text" maxlength="240" value="${ctx.escapeHtml(labels.join(", "))}" placeholder="VIP, 退款风险" />
         </label>
         <button type="submit" title="保存标签" aria-label="保存标签">
-          <svg class="icon"><use href="/static/icons.svg?v=1.3.7#check" /></svg>
+          <svg class="icon"><use href="/static/icons.svg?v=1.3.8#check" /></svg>
         </button>
       </form>` : ""}
     </section>
