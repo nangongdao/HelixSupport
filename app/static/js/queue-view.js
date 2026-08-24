@@ -19,7 +19,7 @@
  *                        for behavioural parity during migration.
  */
 
-import { computeWindow } from "./vqueue.js?v=1.3.8";
+import { computeWindow } from "./vqueue.js?v=1.3.9";
 
 let ctx = null;
 

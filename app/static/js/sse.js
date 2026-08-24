@@ -7,7 +7,7 @@
  * this module is the single source for tests and the migration target.
  */
 
-import { backoffDelay } from "./format.js?v=1.3.8";
+import { backoffDelay } from "./format.js?v=1.3.9";
 
 /**
  * Create an SSE connection manager.

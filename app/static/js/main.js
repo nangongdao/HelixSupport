@@ -8,26 +8,26 @@
  * legacy render functions, so the running UI behaviour is unchanged.
  */
 
-import * as adminReport from "./admin-report.js?v=1.3.8";
-import * as api from "./api.js?v=1.3.8";
-import * as attachments from "./attachment.js?v=1.3.8";
-import * as broadcast from "./broadcast.js?v=1.3.8";
-import * as commands from "./commands.js?v=1.3.8";
-import * as composer from "./composer.js?v=1.3.8";
-import * as density from "./density.js?v=1.3.8";
-import * as format from "./format.js?v=1.3.8";
-import * as i18n from "./i18n.js?v=1.3.8";
-import * as inspector from "./inspector.js?v=1.3.8";
-import * as knowledge from "./knowledge.js?v=1.3.8";
-import * as nav from "./nav.js?v=1.3.8";
-import * as queueView from "./queue-view.js?v=1.3.8";
-import * as qualityCharts from "./quality-charts.js?v=1.3.8";
-import * as qualityPanel from "./quality-panel.js?v=1.3.8";
-import * as session from "./session.js?v=1.3.8";
-import * as sse from "./sse.js?v=1.3.8";
-import * as state from "./state.js?v=1.3.8";
-import * as ticketView from "./ticket-view.js?v=1.3.8";
-import * as vqueue from "./vqueue.js?v=1.3.8";
+import * as adminReport from "./admin-report.js?v=1.3.9";
+import * as api from "./api.js?v=1.3.9";
+import * as attachments from "./attachment.js?v=1.3.9";
+import * as broadcast from "./broadcast.js?v=1.3.9";
+import * as commands from "./commands.js?v=1.3.9";
+import * as composer from "./composer.js?v=1.3.9";
+import * as density from "./density.js?v=1.3.9";
+import * as format from "./format.js?v=1.3.9";
+import * as i18n from "./i18n.js?v=1.3.9";
+import * as inspector from "./inspector.js?v=1.3.9";
+import * as knowledge from "./knowledge.js?v=1.3.9";
+import * as nav from "./nav.js?v=1.3.9";
+import * as queueView from "./queue-view.js?v=1.3.9";
+import * as qualityCharts from "./quality-charts.js?v=1.3.9";
+import * as qualityPanel from "./quality-panel.js?v=1.3.9";
+import * as session from "./session.js?v=1.3.9";
+import * as sse from "./sse.js?v=1.3.9";
+import * as state from "./state.js?v=1.3.9";
+import * as ticketView from "./ticket-view.js?v=1.3.9";
+import * as vqueue from "./vqueue.js?v=1.3.9";
 
 const THEME_STORAGE_KEY = "helix-theme";
 

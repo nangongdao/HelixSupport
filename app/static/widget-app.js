@@ -9,7 +9,7 @@ import {
   restoreSessionForLaunch,
   saveSession,
   sessionKey,
-} from "/static/js/widget-core.js?v=1.3.8";
+} from "/static/js/widget-core.js?v=1.3.9";
 
 const config = readWidgetConfig();
 const storage = globalThis.sessionStorage;
