@@ -1,0 +1,16 @@
+services:
+  helix-support:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /var/lib/helix/support.db
+    volumes:
+      - helix-data:/var/lib/helix
+    restart: unless-stopped
+
+volumes:
+  helix-data:

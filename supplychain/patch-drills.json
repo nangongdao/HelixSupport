@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "policy": "patch drill ledger (Gate B)",
+  "drills": [
+    {
+      "drill_type": "security_patch_release",
+      "ran_at": "2026-08-20T15:33:26.459974+00:00",
+      "passed": true,
+      "steps": [
+        {
+          "step": "manifest_build",
+          "ok": true,
+          "detail": "release_manifest: warning — base_image_digest 未固定（需真实 registry）\n"
+        },
+        {
+          "step": "simulate_sign",
+          "ok": true,
+          "detail": "simulated:80200ac6c6c6"
+        },
+        {
+          "step": "readiness",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "step": "canary_conversation",
+          "ok": true,
+          "detail": "{\"id\":\"conv_4d6d3c67f549\",\"tenant_id\":\"demo\",\"customer_name\":\"测试顾客\",\"customer_ref\":null,\"channel\":\"web\",\"status\":\"open\",\"intent\":null,\"assigned_agent\":null,\"priority\":\"normal\",\"handoff_reason\":null,\"s"
+        },
+        {
+          "step": "sign_binding",
+          "ok": true,
+          "detail": "signature must be deterministic for a given manifest"
+        },
+        {
+          "step": "sign_binding_tamper",
+          "ok": true,
+          "detail": "any manifest change must change the signature"
+        },
+        {
+          "step": "post_monitor",
+          "ok": true,
+          "detail": "{\"version\":\"1.3.0\",\"generated_at\":\"2026-08-20T15:33:26.454840+00:00\",\"config\":{\"app_env\":\"development\",\"deployment_profile\":\"single\",\"database_backend\":\"sqlite\",\"queue_backend\":\"sqlite\",\"queue_failure"
+        }
+      ],
+      "real_signing": false
+    },
+    {
+      "drill_type": "security_patch_release",
+      "ran_at": "2026-08-21T04:49:02.310080+00:00",
+      "passed": true,
+      "steps": [
+        {
+          "step": "manifest_build",
+          "ok": true,
+          "detail": "release_manifest: warning — base_image_digest 未固定（需真实 registry）\n"
+        },
+        {
+          "step": "simulate_sign",
+          "ok": true,
+          "detail": "simulated:57821da87742"
+        },
+        {
+          "step": "readiness",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "step": "canary_conversation",
+          "ok": true,
+          "detail": "{\"id\":\"conv_f13514b9ee7b\",\"tenant_id\":\"demo\",\"customer_name\":\"测试顾客\",\"customer_ref\":null,\"channel\":\"web\",\"status\":\"open\",\"intent\":null,\"assigned_agent\":null,\"priority\":\"normal\",\"handoff_reason\":null,\"s"
+        },
+        {
+          "step": "sign_binding",
+          "ok": true,
+          "detail": "signature must be deterministic for a given manifest"
+        },
+        {
+          "step": "sign_binding_tamper",
+          "ok": true,
+          "detail": "any manifest change must change the signature"
+        },
+        {
+          "step": "post_monitor",
+          "ok": true,
+          "detail": "{\"version\":\"1.3.0\",\"generated_at\":\"2026-08-21T04:49:02.280657+00:00\",\"config\":{\"app_env\":\"development\",\"deployment_profile\":\"single\",\"database_backend\":\"sqlite\",\"queue_backend\":\"sqlite\",\"queue_failure"
+        }
+      ],
+      "real_signing": false
+    },
+    {
+      "drill_type": "security_patch_release",
+      "ran_at": "2026-08-21T07:37:45.063270+00:00",
+      "passed": true,
+      "steps": [
+        {
+          "step": "manifest_build",
+          "ok": true,
+          "detail": "release_manifest: warning — base_image_digest 未固定（需真实 registry）\n"
+        },
+        {
+          "step": "simulate_sign",
+          "ok": true,
+          "detail": "simulated:2e717c299aaa"
+        },
+        {
+          "step": "readiness",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "step": "canary_conversation",
+          "ok": true,
+          "detail": "{\"id\":\"conv_ae80df597bf7\",\"tenant_id\":\"demo\",\"customer_name\":\"测试顾客\",\"customer_ref\":null,\"channel\":\"web\",\"status\":\"open\",\"intent\":null,\"assigned_agent\":null,\"priority\":\"normal\",\"handoff_reason\":null,\"s"
+        },
+        {
+          "step": "sign_binding",
+          "ok": true,
+          "detail": "signature must be deterministic for a given manifest"
+        },
+        {
+          "step": "sign_binding_tamper",
+          "ok": true,
+          "detail": "any manifest change must change the signature"
+        },
+        {
+          "step": "post_monitor",
+          "ok": true,
+          "detail": "{\"version\":\"1.3.0\",\"generated_at\":\"2026-08-21T07:37:45.051245+00:00\",\"config\":{\"app_env\":\"development\",\"deployment_profile\":\"single\",\"process_role\":\"all\",\"database_backend\":\"sqlite\",\"queue_backend\":\"s"
+        }
+      ],
+      "real_signing": false
+    },
+    {
+      "drill_type": "security_patch_release",
+      "ran_at": "2026-08-23T15:39:42.274953+00:00",
+      "passed": true,
+      "steps": [
+        {
+          "step": "manifest_build",
+          "ok": true,
+          "detail": "release_manifest: warning �� base_image_digest δ�̶�������ʵ registry��\n"
+        },
+        {
+          "step": "simulate_sign",
+          "ok": true,
+          "detail": "simulated:fc90a23753ed"
+        },
+        {
+          "step": "readiness",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "step": "canary_conversation",
+          "ok": true,
+          "detail": "{\"id\":\"conv_4736e59da8b5\",\"tenant_id\":\"demo\",\"customer_name\":\"测试顾客\",\"customer_ref\":null,\"channel\":\"web\",\"status\":\"open\",\"intent\":null,\"assigned_agent\":null,\"priority\":\"normal\",\"handoff_reason\":null,\"s"
+        },
+        {
+          "step": "sign_binding",
+          "ok": true,
+          "detail": "signature must be deterministic for a given manifest"
+        },
+        {
+          "step": "sign_binding_tamper",
+          "ok": true,
+          "detail": "any manifest change must change the signature"
+        },
+        {
+          "step": "post_monitor",
+          "ok": true,
+          "detail": "{\"version\":\"1.3.0\",\"generated_at\":\"2026-08-23T15:39:42.249022+00:00\",\"config\":{\"app_env\":\"development\",\"deployment_profile\":\"single\",\"process_role\":\"all\",\"database_backend\":\"sqlite\",\"queue_backend\":\"s"
+        }
+      ],
+      "real_signing": false
+    }
+  ]
+}

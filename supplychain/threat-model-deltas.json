@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "policy": "每个 release 提交 threat-model delta：新增入口/资产/信任边界、已关闭/新增风险、控制与验证证据；owner 与 approved_by 必须是具名人员（禁止 placeholder）；scripts/threat_model_gate.py --release <version> 校验缺失 delta 与未来日期。",
+  "deltas": [
+    {
+      "release": "1.4.0",
+      "date": "2026-08-20",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "SEC-003 供应链五 gate（secret scan / license / vuln 例外 / pin 一致性 / release manifest）合入 CI supply-chain job",
+        "SEC-004 credential registry 状态机 + 有界轮换 overlap + 并发轮换/跨实例吊销测试",
+        "SEC-005 审计链外部锚定（audit_anchors frontier tips + Ed25519 WORM claims + verify_audit_chain 三证据校验）",
+        "SEC-008 threat-model delta / owner / 演练台账 release gate（scripts/threat_model_gate.py）",
+        "Gate B 自动化演练：凭据轮换、审计恢复、补丁发布脚本 + 台账（rotation/restore/patch-drills.json）",
+        "AI 安全基线：对抗集 24/24 + golden 27/27 + EvalReportStore 不可变报告 + decide_promotion 五条件晋级 gate",
+        "M0 加固运行面：OIDC 授权码全验证（SEC-001）、DSR maker-checker（SEC-002）、multi-profile 队列 fail-closed（REL-001）"
+      ],
+      "verification_evidence": [
+        "python scripts/threat_model_gate.py --check-today 绿（automated_rotation/restore/patch_release 台账，2026-08-20）",
+        "python scripts/threat_model_gate.py --release 1.4.0 绿（本条 delta）",
+        "python scripts/run_rotation_drill.py PASSED → supplychain/rotation-drills.json",
+        "python scripts/run_restore_drill.py PASSED → supplychain/restore-drills.json",
+        "python scripts/run_patch_drill.py PASSED → supplychain/patch-drills.json",
+        "pytest 全量（889 passed）含 credentials/audit_anchor/eval_reports/turn_stages 覆盖",
+        "migration 链 v1–v32 连续校验通过（verify_migration_registry.py）"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "base_image": "python:3.11-slim",
+  "digest": null,
+  "note": "digest 由 CI 在真实 registry 上执行 docker manifest inspect 后经受控流程回填；本机离线环境禁止伪造 digest。release_manifest.py --verify 在 digest 为 null 时记录 warning 而非失败。"
+}

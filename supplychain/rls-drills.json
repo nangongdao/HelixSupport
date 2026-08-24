@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "policy": "RLS drill ledger (43.2 contract a): PostgreSQL row-level tenant isolation proven against live PostgreSQL with least-privilege roles",
+  "drills": [
+    {
+      "drill_type": "rls_isolation",
+      "ran_at": "2026-08-22T12:10:04.901574+00:00",
+      "passed": true,
+      "steps_passed": 10,
+      "steps_failed": 0,
+      "details": "scratch DB + helix_rls_migrator(owner)/helix_rls_app(no BYPASSRLS): no-context select=0/insert WITH CHECK rejected; acme scope sees own rows only, explicit other-tenant predicate yields 0; GUC dies at commit (pool-reuse analogue); where-less DELETE confined to scope (globex survivor); cross-tenant UPDATE touches 0; verify_rls 18/18 ENABLEd+policy"
+    },
+    {
+      "drill_type": "rls_isolation",
+      "ran_at": "2026-08-22T12:46:14.300700+00:00",
+      "passed": true,
+      "steps_passed": 10,
+      "steps_failed": 0,
+      "details": "同上契约复跑（verify_rls pg_get_expr 规范化匹配修复 + drill DSN/权限修复后）：no-context select=0 / insert WITH CHECK 拒绝；acme scope 仅见本租户、显式他租户谓词零行；GUC 随事务提交消亡（连接池复用模拟）；无 WHERE DELETE 限本租户（globex 幸存）；跨租户 UPDATE 触零行；verify_rls 18/18 ENABLEd+policy"
+    },
+    {
+      "drill_type": "rls_isolation",
+      "ran_at": "2026-08-22T14:35:22.518499+00:00",
+      "passed": true,
+      "steps_passed": 10,
+      "steps_failed": 0,
+      "details": "全量回归后复跑确认：10/10 PASSED（no-context fail-closed/scope 隔离/GUC 事务消亡/where-less DELETE 限租户/跨租户 UPDATE 零行/18-18 ENABLEd+policy），ruff/pyright/tests 全绿"
+    }
+  ]
+}

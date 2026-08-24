@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "policy": "PITR drill ledger (42.2): point-in-time restore with RPO/RTO evidence",
+  "drills": [
+    {
+      "drill_type": "pitr_restore",
+      "ran_at": "2026-08-21T08:50:42.604546+00:00",
+      "passed": true,
+      "rto_seconds": 0.766,
+      "rto_budget_seconds": 1800,
+      "rpo_budget_seconds": 900,
+      "details": "T0/T1 backups → restore-to-T1 → anchors intact, window data complete, post-T1 excluded, job/attachments/tombstone verified"
+    },
+    {
+      "drill_type": "pitr_restore",
+      "ran_at": "2026-08-21T08:54:59.358777+00:00",
+      "passed": true,
+      "rto_seconds": 0.766,
+      "rto_budget_seconds": 1800,
+      "rpo_budget_seconds": 900,
+      "details": "T0/T1 backups → restore-to-T1 → anchors intact, window data complete, post-T1 excluded, job/attachments/tombstone verified"
+    },
+    {
+      "drill_type": "pitr_restore",
+      "ran_at": "2026-08-23T15:44:18.396480+00:00",
+      "passed": true,
+      "rto_seconds": 1.109,
+      "rto_budget_seconds": 1800,
+      "rpo_budget_seconds": 900,
+      "details": "T0/T1 backups → restore-to-T1 → anchors intact, window data complete, post-T1 excluded, job/attachments/tombstone verified"
+    }
+  ]
+}

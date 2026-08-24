@@ -1,0 +1,162 @@
+/* Helix Support — Design Tokens (v1.3.9 professional SaaS reskin)
+   Color / spacing / type / radius / shadow / motion tokens.
+   Theme switching is driven by the `data-theme` attribute on <html>:
+     - default (no attribute) and `data-theme="dark"` use the neutral
+       slate-dark palette with a single restrained indigo accent;
+     - `data-theme="light"` overrides the color tokens with a paper
+       daylight palette (same accent family, deep ink text).
+   Structural tokens (spacing, type scale, radii, shadows, motion) are
+   theme-independent and live in :root. */
+
+:root {
+  /* ---- color: neutral slate-dark palette (default) ----
+     Lower-luminance near-black backgrounds (no warm grey wash), solid
+     surfaces instead of translucent wash, a single restrained indigo
+     accent. Text contrast tuned for >= 4.5:1 on both themes. */
+  --color-bg-0: #0a0d12;
+  --color-bg-1: #0f1319;
+  --color-bg-2: #161b22;
+  --color-bg-3: #1e242e;
+  --color-surface: #12161d;
+  --color-surface-alt: #0d1117;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
+  --color-ink: #e6edf3;
+  --color-ink-soft: #aeb6c2;
+  --color-muted: #8b95a3;
+  --color-accent: #3b6bf0;
+  --color-accent-dark: #2d54c7;
+  --color-accent-bright: #7da3ff;
+  --color-accent-soft: rgba(59, 107, 240, 0.16);
+  --color-accent-glow: rgba(59, 107, 240, 0.26);
+  --color-blue: #6cb6ff;
+  --color-blue-soft: rgba(108, 182, 255, 0.14);
+  --color-amber: #e0a83a;
+  --color-amber-soft: rgba(224, 168, 58, 0.14);
+  --color-red: #e5736b;
+  --color-red-soft: rgba(229, 115, 107, 0.14);
+  --color-green: #7fb981;
+  --color-green-soft: rgba(127, 185, 129, 0.14);
+  --color-violet: #b49af5;
+  --color-violet-soft: rgba(180, 154, 245, 0.14);
+
+  /* ---- color: light palette (data-theme="light") — paper ---- */
+  --color-light-bg-0: #f5f7fa;
+  --color-light-bg-1: #ffffff;
+  --color-light-bg-2: #eef2f7;
+  --color-light-bg-3: #e3e8ef;
+  --color-light-surface: #ffffff;
+  --color-light-surface-alt: #f1f4f9;
+  --color-light-line: rgba(31, 41, 55, 0.12);
+  --color-light-line-strong: rgba(31, 41, 55, 0.22);
+  --color-light-ink: #1a2027;
+  --color-light-ink-soft: #3d4754;
+  --color-light-muted: #5d6675;
+
+  /* ---- spacing scale ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---- type scale ---- */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* ---- radius: soft, professional corners (no Deco 0px) ---- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+
+  /* ---- shadows: restrained elevation, no glow halos ---- */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.24), 0 4px 14px rgba(0, 0, 0, 0.2);
+  --shadow-glow: none;
+
+  /* ---- layout & motion ---- */
+  --header-height: 56px;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-display: var(--font-ui);
+  --font-mono: "SFMono-Regular", "Cascadia Mono", Consolas, "Courier New", monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+/* Map the legacy names used by styles.css onto the token layer so the
+   existing stylesheet keeps working while the tokens are single-sourced.
+   --text/--border are made explicit so legacy var(--text)/var(--border)
+   references resolve deterministically instead of falling back to
+   inherited color. */
+:root {
+  --bg-0: var(--color-bg-0);
+  --bg-1: var(--color-bg-1);
+  --bg-2: var(--color-bg-2);
+  --bg-3: var(--color-bg-3);
+  --surface: var(--color-surface);
+  --surface-alt: var(--color-surface-alt);
+  --line: var(--color-line);
+  --line-strong: var(--color-line-strong);
+  --ink: var(--color-ink);
+  --ink-soft: var(--color-ink-soft);
+  --muted: var(--color-muted);
+  --text: var(--color-ink);
+  --border: var(--color-line);
+  --teal: var(--color-accent);
+  --teal-dark: var(--color-accent-dark);
+  --teal-bright: var(--color-accent-bright);
+  --teal-soft: var(--color-accent-soft);
+  --teal-glow: var(--color-accent-glow);
+  --blue: var(--color-blue);
+  --blue-soft: var(--color-blue-soft);
+  --amber: var(--color-amber);
+  --amber-soft: var(--color-amber-soft);
+  --red: var(--color-red);
+  --red-soft: var(--color-red-soft);
+  --green: var(--color-green);
+  --green-soft: var(--color-green-soft);
+  --violet: var(--color-violet);
+  --violet-soft: var(--color-violet-soft);
+  --shadow: var(--shadow-panel);
+  --glow: var(--shadow-glow);
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+}
+
+html[data-theme="light"] {
+  --bg-0: var(--color-light-bg-0);
+  --bg-1: var(--color-light-bg-1);
+  --bg-2: var(--color-light-bg-2);
+  --bg-3: var(--color-light-bg-3);
+  --surface: var(--color-light-surface);
+  --surface-alt: var(--color-light-surface-alt);
+  --line: var(--color-light-line);
+  --line-strong: var(--color-light-line-strong);
+  --ink: var(--color-light-ink);
+  --ink-soft: var(--color-light-ink-soft);
+  --muted: var(--color-light-muted);
+  --text: var(--color-light-ink);
+  --border: var(--color-light-line);
+  --color-accent: #2347c4;
+  --color-accent-dark: #1a3a9c;
+  --color-accent-bright: #1f4fd0;
+  --color-accent-soft: rgba(35, 71, 196, 0.1);
+  --color-accent-glow: rgba(35, 71, 196, 0.16);
+  --color-blue: #1e5fa8;
+  --color-blue-soft: rgba(30, 95, 168, 0.1);
+  --color-amber: #8a6512;
+  --color-amber-soft: rgba(138, 101, 18, 0.1);
+  --color-red: #a34036;
+  --color-red-soft: rgba(163, 64, 54, 0.1);
+  --color-green: #3d5628;
+  --color-green-soft: rgba(61, 86, 40, 0.1);
+  --color-violet: #5d3f9e;
+  --color-violet-soft: rgba(93, 63, 158, 0.1);
+  color-scheme: light;
+}

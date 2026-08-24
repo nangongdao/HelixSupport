@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "policy": "monthly game day rotation: db/redis/model/connector/objectstore/webhook",
+  "game_days": [
+    {
+      "ran_at": "2026-08-21T13:44:20.302122+00:00",
+      "focus": "objectstore",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "objectstore",
+          "exercise": "archive-store-integrity",
+          "passed": true
+        },
+        {
+          "focus": "objectstore",
+          "exercise": "attachment-isolation",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
+    }
+  ]
+}

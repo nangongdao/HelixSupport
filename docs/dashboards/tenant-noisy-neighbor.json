@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "title": "Tenant Noisy Neighbor",
+  "tags": [
+    "slo",
+    "helix",
+    "42.6"
+  ],
+  "panels": [
+    {
+      "title": "Requests by tenant",
+      "description": "Who is driving traffic — the first place to look when a shared resource saturates.",
+      "unit": "reqps",
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (helix_request_duration_ms_count)"
+        }
+      ]
+    },
+    {
+      "title": "Turn jobs by tenant",
+      "description": "Async work share per tenant.",
+      "unit": "ops",
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (helix_turn_jobs_processed_total)"
+        }
+      ]
+    },
+    {
+      "title": "Failed turn jobs by tenant",
+      "description": "Failure concentration by tenant.",
+      "unit": "ops",
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (helix_turn_jobs_failed_total)"
+        }
+      ]
+    }
+  ]
+}

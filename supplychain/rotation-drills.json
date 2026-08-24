@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "policy": "rotation drill ledger (Gate B)",
+  "drills": [
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-20T15:07:11.553260+00:00",
+      "passed": false,
+      "details": "1 run, 0 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-20T15:08:08.132898+00:00",
+      "passed": false,
+      "details": "1 run, 1 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-20T15:11:32.738362+00:00",
+      "passed": false,
+      "details": "1 run, 1 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-20T15:13:27.108381+00:00",
+      "passed": true,
+      "details": "1 run, 0 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-21T04:49:05.507304+00:00",
+      "passed": true,
+      "details": "1 run, 0 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-21T07:37:41.060982+00:00",
+      "passed": true,
+      "details": "1 run, 0 failures"
+    },
+    {
+      "drill_type": "credential_rotation",
+      "ran_at": "2026-08-23T15:37:13.200026+00:00",
+      "passed": true,
+      "details": "1 run, 0 failures"
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+[project]
+name = "helix-support"
+version = "1.3.0"
+description = "Tenant-aware, auditable multi-agent customer service platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "click>=8.3.3,<9",
+  "fastapi>=0.139.2,<0.140",
+  "httpx>=0.28.1,<1",
+  "idna>=3.15,<4",
+  "pydantic>=2.11,<3",
+  "python-dotenv>=1.2.2,<2",
+  "python-multipart>=0.0.31,<0.1",
+  "starlette>=1.3.1,<2",
+  "uvicorn[standard]>=0.51,<0.52",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "coverage[toml]>=7.6,<8",
+  "httpx2>=2.7,<3",
+  "pip-audit>=2.7,<3",
+  "playwright>=1.50,<2",
+  "pyright>=1.1.390,<2",
+  "ruff>=0.9,<1",
+]
+# Production tracing: install ``pip install -e '.[otel]'`` and set
+# ``OTEL_EXPORTER_OTLP_ENDPOINT`` to forward spans to an OTLP collector.
+otel = [
+  "opentelemetry-api>=1.24,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
+  "opentelemetry-sdk>=1.24,<2",
+]
+# PostgreSQL backend + HA/PITR/RLS drills: ``pip install -e '.[postgres]'``.
+postgres = [
+  "psycopg2-binary>=2.9,<3",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/*", "static/css/*", "static/js/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+exclude = ["**/build/**", "**/node_modules/**", "**/artifacts/**"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+# The PostgreSQL backend's connection handling can only be exercised against a
+# live server; its query methods are inherited from (and covered via) the
+# SQLite backend, and the dialect layer is covered directly.  Run the
+# integration suite with HELIX_PG_INTEGRATION=1 to cover the rest.
+omit = ["app/postgres_db.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
