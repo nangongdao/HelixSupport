@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>v1.3.0</code>&nbsp;
+  <code>v1.3.9</code>&nbsp;
   <code>Python 3.11+</code>&nbsp;
   <code>FastAPI</code>&nbsp;
   <code>SQLite / PostgreSQL</code>&nbsp;
@@ -20,7 +20,7 @@
 
 ![Helix Support 坐席工作台](docs/assets/screenshots/operator-workspace.png)
 
-Helix Support 把客户消息接入、策略检查、意图识别、知识/订单处理、质量复核、人工接管和运营审计闭合在一个可部署系统中。没有模型密钥时使用确定性路径安全运行；接入兼容模型后可增加语义路由、翻译、摘要和坐席 Copilot，同时保留规则回退。
+Helix Support 把客户消息接入、策略检查、意图识别、知识/订单处理、质量复核、人工接管和运营审计闭合在一个可部署系统中。没有模型密钥时使用确定性路径安全运行；接入兼容模型后可增加语义路由、翻译、摘要和坐席 Copilot，同时保留规则回退。操作台与可嵌入 Web Chat 采用中性板岩深色 + 单一靛蓝强调色的专业 SaaS 视觉体系，支持深/浅双主题、密度档位与低配模式。
 
 [快速启动](#快速启动) · [界面预览](#界面预览) · [系统架构](#系统架构) · [验证与质量](#验证与质量) · [部署档位](#部署档位) · [未来路线图](#未来路线图) · [文档导航](#文档导航)
 
@@ -39,6 +39,8 @@ Helix Support 把客户消息接入、策略检查、意图识别、知识/订�
 | 生产导向基础 | SQLite/PG 双后端、Redis durable queue、本地审计哈希链/冷热归档、保留/DSR、SLO/DR、SBOM 与发布门禁 |
 
 ## 界面预览
+
+> 截图为 v1.3.9 专业 SaaS 主题（中性板岩深色 + 靛蓝强调色）。操作台支持深/浅双主题切换，下方均为深色主题。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获。
 
 ### 人工接管与质量洞察
 
@@ -235,7 +237,7 @@ python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 验证与质量
 
-当前完整验证基线（2026-08-19，证据：[`IMPLEMENTATION_REPORT_PHASE_38.md`](IMPLEMENTATION_REPORT_PHASE_38.md)；当前工作区无 `.git` 元数据，因此无法附 commit/tag）：
+当前完整验证基线（2026-08-24，含 v1.3.9 专业 SaaS 视觉重做后的全门禁复验；证据：[`IMPLEMENTATION_REPORT_PHASE_38.md`](IMPLEMENTATION_REPORT_PHASE_38.md) 与 [`CHANGELOG.md`](CHANGELOG.md)）：
 
 | Gate | 最近证据 |
 | --- | ---: |
@@ -243,10 +245,14 @@ python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | Branch coverage | 85% |
 | PostgreSQL integration | 73 passed + 3 subtests |
 | Redis integration | 9 passed |
-| Frontend Node tests | 139 passed |
+| Frontend Node tests | 155 passed |
 | Golden Set | 27 / 27 |
-| Browser | 操作台、管理、知识、Web Chat、移动与 axe 全绿 |
-| Supply chain | project/lock pip-audit、npm audit 0 漏洞；SBOM、wheel/sdist 通过 |
+| Browser acceptance | 操作台、管理、知识、Web Chat、移动与 axe 全绿 |
+| 视觉回归 | 四基线 clean DB 重引导，0.00% 像素漂移（±12 容差、0.5% 上限） |
+| 前端性能预算 | CSS 84 KB（预算 105 KB）、LCP 356 ms、CLS 0.0019、10k 队列渲染 10 ms |
+| 供应链 | project/lock pip-audit、npm audit 0 漏洞；SBOM、wheel/sdist 通过 |
+
+v1.3.9 视觉重做推翻了此前的 Art Deco 黑金主题，重建中性板岩深色 + 单一靛蓝强调色的专业 SaaS 体系：去金色装饰与仿金属光晕、恢复标准圆角与实色投影、系统字体栈替代 Google Fonts 依赖（CSP 同步收紧）、控件现代化与空状态引导感改造。accent 色分离 `--teal`（按钮实色，白字 ≥4.5:1）与 `--teal-bright`（文字/图标，深底 ≥4.5:1）双 token，双主题 axe 对比度全绿。视觉四基线随重做重新引导。
 
 开发时常用门禁：
 
@@ -302,6 +308,7 @@ npm audit --audit-level=high
 | 容量与性能 | [`docs/CAPACITY.md`](docs/CAPACITY.md) · [`docs/PERF_NOTES.md`](docs/PERF_NOTES.md) |
 | 坐席与租户手册 | [`docs/guides/operator-manual.md`](docs/guides/operator-manual.md) · [`docs/guides/tenant-admin-manual.md`](docs/guides/tenant-admin-manual.md) |
 | 交付证据 | [`IMPLEMENTATION_REPORT_PHASE_38.md`](IMPLEMENTATION_REPORT_PHASE_38.md) · [`CHANGELOG.md`](CHANGELOG.md) |
+| README 截图重捕获 | `HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py`（对 clean-DB 服务，覆盖 `docs/assets/screenshots/`） |
 
 ## 安全与生产边界
 
