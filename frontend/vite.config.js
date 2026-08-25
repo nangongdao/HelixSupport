@@ -1,0 +1,59 @@
+/**
+ * Helix Support — Vite build configuration (D2 island scaffold)
+ *
+ * Source: frontend/src/  →  Output: app/static/dist/
+ *
+ * The operator console keeps its zero-build legacy modules (app.js + js/*.js)
+ * as the host page. Vite produces a per-island entry that mounts a
+ * createRoot into an existing <div> in index.html, so the six gates
+ * (ui_smoke / axe / visual / performance / OpenAPI / frontend) stay green
+ * during the dual-track migration. See DESKTOP_TAURI_PLAN.md §3.
+ */
+
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
+
+export default defineConfig({
+  plugins: [react()],
+  // The operator UI is served by the Python backend at /static/; the dist
+  // artifacts land at app/static/dist/ and are referenced as /static/dist/.
+  base: "/static/dist/",
+  build: {
+    outDir: resolve(__dirname, "../app/static/dist"),
+    emptyOutDir: false,
+    sourcemap: true,
+    // Generate manifest.json so the island loader can resolve content-hashed
+    // chunk filenames without hardcoding them.
+    manifest: "manifest.json",
+    // React 19 + ReactDOM ≈ 140KB raw; per-island chunks keep the first
+    // paint under the §6.3 180KB raw budget.
+    rollupOptions: {
+      input: {
+        quality: resolve(__dirname, "src/islands/quality-island.jsx"),
+        knowledge: resolve(__dirname, "src/islands/knowledge-island.jsx"),
+        ticket: resolve(__dirname, "src/islands/ticket-island.jsx"),
+        queue: resolve(__dirname, "src/islands/queue-island.jsx"),
+        inspector: resolve(__dirname, "src/islands/inspector-island.jsx"),
+        composer: resolve(__dirname, "src/islands/composer-island.jsx"),
+        "command-palette": resolve(__dirname, "src/islands/command-palette-island.jsx"),
+        "session-shell": resolve(__dirname, "src/islands/session-shell-island.jsx"),
+        terminal: resolve(__dirname, "src/islands/terminal-island.jsx"),
+      },
+      output: {
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
+        manualChunks: {
+          "react-vendor": ["react", "react-dom"],
+          "query-vendor": ["@tanstack/react-query"],
+        },
+      },
+    },
+  },
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "src"),
+    },
+  },
+});

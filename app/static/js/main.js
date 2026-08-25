@@ -8,26 +8,27 @@
  * legacy render functions, so the running UI behaviour is unchanged.
  */
 
-import * as adminReport from "./admin-report.js?v=1.3.9";
-import * as api from "./api.js?v=1.3.9";
-import * as attachments from "./attachment.js?v=1.3.9";
-import * as broadcast from "./broadcast.js?v=1.3.9";
-import * as commands from "./commands.js?v=1.3.9";
-import * as composer from "./composer.js?v=1.3.9";
-import * as density from "./density.js?v=1.3.9";
-import * as format from "./format.js?v=1.3.9";
-import * as i18n from "./i18n.js?v=1.3.9";
-import * as inspector from "./inspector.js?v=1.3.9";
-import * as knowledge from "./knowledge.js?v=1.3.9";
-import * as nav from "./nav.js?v=1.3.9";
-import * as queueView from "./queue-view.js?v=1.3.9";
-import * as qualityCharts from "./quality-charts.js?v=1.3.9";
-import * as qualityPanel from "./quality-panel.js?v=1.3.9";
-import * as session from "./session.js?v=1.3.9";
-import * as sse from "./sse.js?v=1.3.9";
-import * as state from "./state.js?v=1.3.9";
-import * as ticketView from "./ticket-view.js?v=1.3.9";
-import * as vqueue from "./vqueue.js?v=1.3.9";
+import * as adminReport from "./admin-report.js?v=1.4.0";
+import * as api from "./api.js?v=1.4.0";
+import * as attachments from "./attachment.js?v=1.4.0";
+import * as broadcast from "./broadcast.js?v=1.4.0";
+import * as commands from "./commands.js?v=1.4.0";
+import * as composer from "./composer.js?v=1.4.0";
+import * as density from "./density.js?v=1.4.0";
+import * as desktopInfo from "./desktop-info.js?v=1.4.0";
+import * as format from "./format.js?v=1.4.0";
+import * as i18n from "./i18n.js?v=1.4.0";
+import * as inspector from "./inspector.js?v=1.4.0";
+import * as knowledge from "./knowledge.js?v=1.4.0";
+import * as nav from "./nav.js?v=1.4.0";
+import * as queueView from "./queue-view.js?v=1.4.0";
+import * as qualityCharts from "./quality-charts.js?v=1.4.0";
+import * as qualityPanel from "./quality-panel.js?v=1.4.0";
+import * as session from "./session.js?v=1.4.0";
+import * as sse from "./sse.js?v=1.4.0";
+import * as state from "./state.js?v=1.4.0";
+import * as ticketView from "./ticket-view.js?v=1.4.0";
+import * as vqueue from "./vqueue.js?v=1.4.0";
 
 const THEME_STORAGE_KEY = "helix-theme";
 
@@ -104,6 +105,7 @@ export function initModules() {
     commands,
     composer,
     density,
+    desktopInfo,
     format,
     i18n,
     inspector,
@@ -130,5 +132,81 @@ export function initModules() {
 if (typeof window !== "undefined") {
   initModules();
 }
+
+/* ── Desktop shell integration (D1) ───────────────────────────────────
+ * In the Tauri desktop shell the Rust supervisor spawns the Python
+ * sidecar in the background and dispatches a `helix-backend-ready` event
+ * once /health/ready responds. We show a splash overlay until then so the
+ * window paints instantly instead of flashing an empty console.
+ * In a normal browser tab the backend is already up (the page itself was
+ * served by it), so the splash stays hidden and the behaviour is unchanged. */
+function isDesktopShell() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function initDesktopSplash() {
+  if (typeof document === "undefined") return;
+  const splash = document.getElementById("desktopSplash");
+  if (!splash) return;
+  const statusEl = document.getElementById("desktopSplashStatus");
+  if (isDesktopShell()) {
+    splash.hidden = false;
+    document.documentElement.classList.add("desktop-booting");
+  }
+  window.addEventListener("helix-backend-ready", () => {
+    splash.hidden = true;
+    document.documentElement.classList.remove("desktop-booting");
+    const backend = window.__HELIX_BACKEND__;
+    if (backend && backend.error && statusEl) {
+      statusEl.textContent = `后端启动失败：${backend.error}`;
+      splash.hidden = false;
+    }
+    // Notify the Rust side that the UI is interactive (startup telemetry).
+    if (isDesktopShell() && window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+      window.__TAURI_INTERNALS__.invoke("ui_ready").catch(() => {});
+    }
+  });
+}
+
+if (typeof window !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initDesktopSplash, { once: true });
+  } else {
+    initDesktopSplash();
+  }
+}
+
+/* ── React island bootstrap (D2) ──────────────────────────────────────
+ * The island loader is a zero-build ESM module that dynamically imports
+ * the Vite-produced chunk for each island. In dev the import resolves to
+ * the Vite dev server; in the bundled desktop build it resolves to the
+ * content-hashed file in /static/dist/. The loader is a no-op when the
+ * mount <div> is not present on the current page. */
+async function initIslands() {
+  if (typeof document === "undefined") return;
+  try {
+    // The loader module is part of the Vite build; in the legacy zero-build
+    // host we import it from the dist output (production) or the frontend
+    // dev server (development). We use a dynamic import so the legacy
+    // page never hard-fails if the React bundle is absent.
+    const { loadIslands } = await import(
+      /* @vite-ignore */ "/static/dist/island-loader.js"
+    ).catch(() => ({ loadIslands: null }));
+    if (loadIslands) {
+      await loadIslands();
+    }
+  } catch (err) {
+    console.warn("[islands] loader unavailable:", err);
+  }
+}
+
+if (typeof window !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initIslands, { once: true });
+  } else {
+    initIslands();
+  }
+}
+
 
 export default { initModules, resolveInitialTheme, applyTheme, toggleTheme, bindThemeToggle };

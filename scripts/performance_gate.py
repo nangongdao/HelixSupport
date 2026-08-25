@@ -38,10 +38,15 @@ BASELINE = ROOT / "artifacts" / "performance-baseline.json"
 # (operator JS 277 KB / CSS 86 KB, widget JS 20 KB at §43.6 delivery) so
 # normal feature work lands without churn, but a runaway dependency or an
 # unminified vendored blob fails the gate.
+#
+# D2 (DESKTOP_TAURI_PLAN.md §6.3): the budgets are widened to include the
+# Vite-produced React runtime under app/static/dist/assets/. React 19 +
+# ReactDOM ≈ 140 KB raw; TanStack Query + Zustand + per-island chunks keep
+# the operator JS total under the new ceiling.
 BUDGETS = {
-    "operator_js_bytes": 345_000,  # app.js + js/*.js (operator console modules)
-    "operator_css_bytes": 105_000,  # styles.css + css/tokens.css
-    "widget_js_bytes": 25_000,  # widget-app.js + js/widget-core.js
+    "operator_js_bytes": 700_000,  # app.js + js/*.js + dist/assets/*.js (React runtime)
+    "operator_css_bytes": 125_000,  # styles.css + css/tokens.css
+    "widget_js_bytes": 25_000,  # widget-app.js + js/widget-core.js (zero-build, unchanged)
 }
 
 # Browser budgets (§43.6: LCP/INP/CLS、长任务、内存和 10k 队列渲染).
@@ -59,8 +64,25 @@ def _static_payload() -> dict[str, int]:
     static_dir = ROOT / "app" / "static"
     operator_js = sum(path.stat().st_size for path in sorted(static_dir.glob("js/*.js")))
     operator_js += (static_dir / "app.js").stat().st_size
+    # D2 (§6.3): include the Vite-produced React runtime + island chunks
+    # that are part of the first-paint payload. The terminal island chunk
+    # (xterm.js, ~400KB) is lazily loaded only when the user opens the
+    # diagnostic drawer (Ctrl+`), so it is excluded from the first-paint
+    # budget — it is on-demand, not initial render.
+    dist_assets = static_dir / "dist" / "assets"
+    if dist_assets.is_dir():
+        for path in sorted(dist_assets.glob("*.js")):
+            if path.stem.startswith("terminal"):
+                continue
+            operator_js += path.stat().st_size
     operator_css = (static_dir / "styles.css").stat().st_size
     operator_css += (static_dir / "css" / "tokens.css").stat().st_size
+    # Terminal island ships its own CSS chunk from Vite (on-demand).
+    if dist_assets.is_dir():
+        for path in sorted(dist_assets.glob("*.css")):
+            if path.stem.startswith("terminal"):
+                continue
+            operator_css += path.stat().st_size
     widget_js = (static_dir / "widget-app.js").stat().st_size
     widget_js += (static_dir / "js" / "widget-core.js").stat().st_size
     return {

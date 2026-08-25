@@ -1,0 +1,6 @@
+# Rust build artifacts
+/target
+/gen/schemas
+# PyInstaller-packaged sidecar (built by desktop/helix-server.spec before
+# `cargo tauri build`; never commit the bundled Python runtime).
+/resources/server/

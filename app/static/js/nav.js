@@ -11,7 +11,7 @@
 export const NAV_VIEWS = ["workspace", "quality", "knowledge", "admin", "settings"];
 
 /** Views that render the "under construction" placeholder mount point. */
-export const NAV_PLACEHOLDER_VIEWS = ["settings"];
+export const NAV_PLACEHOLDER_VIEWS = [];
 
 /** True when `value` is a selectable nav view. */
 export function isNavView(value) {
