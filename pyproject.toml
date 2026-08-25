@@ -69,3 +69,11 @@ omit = ["app/postgres_db.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+
+[tool.pytest.ini_options]
+# Limit collection to tests/ and app/ — scripts/ holds standalone harnesses
+# (e.g. rolling_restart_test.py) that import live-DB deps (psycopg) at module
+# top level and would otherwise crash collection.
+addopts = "-q"
+testpaths = ["tests", "app"]
+norecursedirs = ["artifacts", "node_modules", "frontend", "src-tauri"]

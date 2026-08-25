@@ -27,7 +27,6 @@ from app.domain import ConversationStatus
 from app.main import create_app
 from app.migrations import all_migrations, migration_schema_version
 
-
 SECRET = "phase38-channel-secret-with-at-least-32-bytes"
 OTHER_SECRET = "phase38-other-secret-with-at-least-32-bytes"
 
@@ -211,8 +210,8 @@ class ChannelPersistenceTests(unittest.TestCase):
             columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(turn_jobs)").fetchall()
             }
-            self.assertEqual(migration_schema_version(connection), 40)
-            self.assertEqual(max(migration.version for migration in all_migrations()), 40)
+            self.assertEqual(migration_schema_version(connection), 41)
+            self.assertEqual(max(migration.version for migration in all_migrations()), 41)
         self.assertIn("channel_threads", tables)
         self.assertIn("channel_webhook_receipts", tables)
         self.assertIn("channel_message_id", columns)

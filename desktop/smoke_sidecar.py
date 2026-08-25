@@ -11,13 +11,14 @@ Usage (from repo root):
 from __future__ import annotations
 
 import argparse
-import httpx
 import os
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 
