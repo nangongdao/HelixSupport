@@ -178,7 +178,10 @@ function KnowledgeArticle({ article, canWrite, onAction }) {
 
 function KnowledgeIsland() {
   const [state, dispatch] = useReducer(reduceKnowledge, undefined, createKnowledgeState);
-  const [canWrite] = useState(true); // TODO: wire to /api/me role check
+  // knowledge:write maps to admin/platform (matches app.js canWriteKnowledge +
+  // backend ROLE_PERMISSIONS); the desktop shell exposes the role globally.
+  const role = (typeof window !== "undefined" && window.__HELIX_ROLE__) || "guest";
+  const canWrite = ["admin", "platform"].includes(role);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["knowledge-articles"],

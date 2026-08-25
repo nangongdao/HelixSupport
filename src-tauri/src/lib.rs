@@ -90,7 +90,7 @@ pub fn run() {
                 match start_backend(&app_state.supervisor, Some(&h), boot) {
                     Ok(port) => {
                         if let Some(win) = h.get_webview_window("main") {
-                            let _ = win.eval(&format!(
+                            let _ = win.eval(format!(
                                 "window.__HELIX_BACKEND__ = {{ port: {port}, readyAt: performance.now() }};\
                                  window.dispatchEvent(new Event('helix-backend-ready'));"
                             ));
@@ -99,7 +99,7 @@ pub fn run() {
                     Err(e) => {
                         eprintln!("[desktop] backend failed: {e}");
                         if let Some(win) = h.get_webview_window("main") {
-                            let _ = win.eval(&format!(
+                            let _ = win.eval(format!(
                                 "window.__HELIX_BACKEND__ = {{ error: {:?} }};\
                                  window.dispatchEvent(new Event('helix-backend-ready'));",
                                 e

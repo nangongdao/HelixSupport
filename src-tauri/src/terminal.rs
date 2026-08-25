@@ -150,11 +150,11 @@ pub fn spawn_pty(
     #[cfg(not(debug_assertions))]
     {
         let _ = (session_id, on_data, state);
-        return Err(
+        Err(
             "interactive PTY is disabled in release builds \
              (whitelist diagnostic mode only)"
                 .into(),
-        );
+        )
     }
     #[cfg(debug_assertions)]
     {
