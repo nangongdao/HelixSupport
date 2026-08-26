@@ -6,12 +6,11 @@
  * (content-hashed by Vite) that calls createRoot on a reserved <div>.
  *
  * The manifest is generated at build time by Vite's `manifest` option
- * (see vite.config.js) so the host page can resolve chunk paths without
- * hardcoding hashes. In dev mode the loader falls back to the Vite dev
- * server URL.
+ * (see vite.config.js) and fetched at runtime so the host page can resolve
+ * chunk paths without hardcoding hashes. Without a manifest (dist not
+ * built) every island is skipped — the legacy zero-build host stays the
+ * only renderer and no cross-origin script load is attempted.
  */
-
-const DEV_ORIGIN = "http://127.0.0.1:5173";
 
 /**
  * @typedef {{ name: string, mountId: string }} IslandConfig
@@ -32,37 +31,58 @@ export const ISLANDS = [
 ];
 
 /**
- * Resolve the URL for an island chunk, using the Vite manifest in prod
- * or the dev server in dev.
+ * Resolve the URL for an island chunk from the Vite manifest. Returns null
+ * when the manifest has no entry for the island — the caller then skips it
+ * instead of falling back to a dev-server origin that the production CSP
+ * (script-src 'self') would block with a console error.
  * @param {string} name - island chunk name
- * @param {Record<string, string>} [manifest] - Vite manifest entries
- * @returns {string} resolved URL
+ * @param {Record<string, object>} [manifest] - Vite manifest entries
+ * @returns {string|null} resolved URL or null when unavailable
  */
 export function resolveIslandUrl(name, manifest) {
-  if (manifest && manifest[`${name}.js`]) {
-    return `/static/dist/${manifest[`${name}.js`].file}`;
+  // Vite's manifest keys entries by their source path (see vite.config.js
+  // rollupOptions.input); the `name` here is the input key's basename.
+  const entry = manifest && manifest[`src/islands/${name}-island.jsx`];
+  if (entry && entry.file) {
+    return `/static/dist/${entry.file}`;
   }
-  // Dev server (no manifest): /static/dist/ is proxied by the backend in dev
-  // or served directly by Vite at DEV_ORIGIN.
-  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    return `/static/dist/${name}.js`;
+  return null;
+}
+
+/**
+ * Fetch the Vite manifest so island chunks resolve to their content-hashed
+ * filenames. Missing manifest (dist not built) resolves to null and every
+ * island is skipped — the legacy host page stays fully functional.
+ * @returns {Promise<Record<string, object>|null>}
+ */
+export async function fetchManifest() {
+  try {
+    const res = await fetch("/static/dist/manifest.json");
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
   }
-  return `${DEV_ORIGIN}/src/islands/${name}-island.jsx`;
 }
 
 /**
  * Load and mount all registered islands. Called once after the host page
  * is interactive. Safe to call in a browser tab (islands are no-ops if
- * their mount element doesn't exist).
- * @param {Record<string, string>} [manifest] - Vite manifest
+ * their mount element doesn't exist or no built manifest is available).
+ * @param {Record<string, object>} [manifest] - Vite manifest
  */
 export async function loadIslands(manifest) {
   const results = [];
+  if (!manifest) return results; // dist not built — legacy-only mode
   for (const island of ISLANDS) {
     const mount = document.getElementById(island.mountId);
-    if (!mount) continue; // mount point not on this page
+    // A hidden mount means the legacy renderer is still the primary surface
+    // for this domain (dual-track migration); mounting a parallel React
+    // tree there would duplicate interactive DOM for selectors and axe.
+    if (!mount || mount.hidden) continue;
+    const url = resolveIslandUrl(island.name, manifest);
+    if (!url) continue; // no manifest entry — skip silently
     try {
-      const url = resolveIslandUrl(island.name, manifest);
       const mod = await import(/* @vite-ignore */ url);
       if (typeof mod.mount === "function") {
         mod.mount(mount);
@@ -76,4 +96,4 @@ export async function loadIslands(manifest) {
   return results;
 }
 
-export default { ISLANDS, resolveIslandUrl, loadIslands };
+export default { ISLANDS, resolveIslandUrl, fetchManifest, loadIslands };

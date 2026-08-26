@@ -13,10 +13,28 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
+import { copyFileSync } from "node:fs";
+
+/**
+ * Copy the zero-build island loader into dist/ on every build. The loader
+ * is plain ESM (no JSX/imports), so it is not a Vite input — but the host
+ * page imports it from /static/dist/island-loader.js, so each build must
+ * refresh the copy to stay in sync with frontend/src/.
+ */
+function copyIslandLoader() {
+  return {
+    name: "copy-island-loader",
+    closeBundle() {
+      copyFileSync(
+        resolve(__dirname, "src/island-loader.js"),
+        resolve(__dirname, "../app/static/dist/island-loader.js"),
+      );
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
-  // The operator UI is served by the Python backend at /static/; the dist
+  plugins: [react(), copyIslandLoader()],
   // artifacts land at app/static/dist/ and are referenced as /static/dist/.
   base: "/static/dist/",
   build: {
@@ -26,9 +44,13 @@ export default defineConfig({
     // Generate manifest.json so the island loader can resolve content-hashed
     // chunk filenames without hardcoding them.
     manifest: "manifest.json",
-    // React 19 + ReactDOM ≈ 140KB raw; per-island chunks keep the first
-    // paint under the §6.3 180KB raw budget.
+    // Each island entry only exports mount(); Rollup treats unused exports
+    // of an entry as tree-shakeable and emits a chunk with the React runtime
+    // but no island code (Vite sets preserveEntrySignatures:false for MPA
+    // builds). "strict" keeps every entry's own exports — and therefore the
+    // island bodies — in the emitted chunk.
     rollupOptions: {
+      preserveEntrySignatures: "strict",
       input: {
         quality: resolve(__dirname, "src/islands/quality-island.jsx"),
         knowledge: resolve(__dirname, "src/islands/knowledge-island.jsx"),

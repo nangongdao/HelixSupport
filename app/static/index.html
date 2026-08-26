@@ -234,7 +234,7 @@
                island renders into this parallel container with the same
                row class names so ui_smoke #queuePane class assertions stay
                green. #queuePane itself is not touched. -->
-          <div id="queueReactIsland" class="queue-react-island" aria-label="会话队列（React 岛）" hidden></div>
+          <div id="queueReactIsland" class="queue-react-island" hidden></div>
           <div id="ticketPane" class="ticket-pane" hidden>
             <div class="ticket-filters">
               <label class="filter-field">
@@ -253,7 +253,7 @@
           <!-- D3 React island mount (ticket domain). The legacy #ticketList
                above stays during dual-track; the React island renders into
                this separate container and takes over ticket list rendering. -->
-          <div id="ticketReactIsland" class="ticket-react-island" aria-label="工单列表（React 岛）" hidden></div>
+          <div id="ticketReactIsland" class="ticket-react-island" hidden></div>
           <div class="queue-footer">
             <span id="queueCount">0 个会话</span>
             <button id="loadMore" class="queue-more" type="button" hidden>
@@ -413,7 +413,7 @@
                 <!-- D3 React island mount (composer domain). The legacy
                      #customerForm/#operatorForm above stay during dual-track;
                      the React island renders into this parallel container. -->
-                <div id="composerReactIsland" class="composer-react-island" aria-label="消息编辑器（React 岛）" hidden></div>
+                <div id="composerReactIsland" class="composer-react-island" hidden></div>
               </section>
               <aside class="inspector-surface" aria-label="会话检查器">
                 <nav class="inspector-tabs" role="tablist" aria-label="会话信息">
@@ -436,7 +436,7 @@
                 <!-- D3 React island mount (inspector domain). The legacy
                      inspector tabs/panels above stay during dual-track;
                      the React island renders into this parallel container. -->
-                <div id="inspectorReactIsland" class="inspector-react-island" aria-label="检查器（React 岛）" hidden></div>
+                <div id="inspectorReactIsland" class="inspector-react-island" hidden></div>
                 <section id="qualityPanel" class="quality-panel inspector-panel" role="tabpanel" aria-label="质量看板" hidden>
                   <header class="quality-heading">
                     <span class="section-kicker">QUALITY</span>
@@ -505,7 +505,7 @@
         <!-- D2 React island mount point (quality-charts). The legacy
              #qualityViewBuckets above stays during the dual-track period;
              the React island renders into this separate container. -->
-        <div id="qualityReactIsland" class="quality-react-island" aria-label="质量看板（React 岛）"></div>
+        <div id="qualityReactIsland" class="quality-react-island"></div>
         <div class="quality-gaps-block">
           <h4>知识缺口</h4>
           <div id="qualityViewGaps" class="quality-gaps" aria-live="polite"></div>
@@ -532,7 +532,7 @@
              #knowledgeList / #knowledgeSummary above stay during the
              dual-track period; the React island renders into this
              separate container and takes over article list rendering. -->
-        <div id="knowledgeReactIsland" class="knowledge-react-island" aria-label="知识库（React 岛）"></div>
+        <div id="knowledgeReactIsland" class="knowledge-react-island"></div>
         <div class="knowledge-toolbar" aria-label="知识文章筛选">
           <label class="knowledge-search">
             <svg class="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.4.0#search" /></svg>
@@ -837,10 +837,10 @@
     <!-- D3 React island mounts (command palette + session shell). These
          are top-level overlays that render outside the app-shell. The
          legacy #commandPalette dialog above stays during dual-track. -->
-    <div id="commandPaletteReactIsland" aria-label="命令面板（React 岛）"></div>
-    <div id="sessionShellReactIsland" class="session-shell-react-island" aria-label="外壳（React 岛）" hidden></div>
+    <div id="commandPaletteReactIsland"></div>
+    <div id="sessionShellReactIsland" class="session-shell-react-island" hidden></div>
     <!-- D4 React island mount (xterm.js terminal). Bottom drawer, Ctrl+` toggle. -->
-    <div id="terminalReactIsland" class="terminal-react-island" aria-label="诊断终端（React 岛）"></div>
+    <div id="terminalReactIsland" class="terminal-react-island"></div>
     <script src="/static/app.js?v=1.4.0" defer></script>
   </body>
 </html>

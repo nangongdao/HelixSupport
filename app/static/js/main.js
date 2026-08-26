@@ -178,23 +178,24 @@ if (typeof window !== "undefined") {
 
 /* ── React island bootstrap (D2) ──────────────────────────────────────
  * The island loader is a zero-build ESM module that dynamically imports
- * the Vite-produced chunk for each island. In dev the import resolves to
- * the Vite dev server; in the bundled desktop build it resolves to the
- * content-hashed file in /static/dist/. The loader is a no-op when the
- * mount <div> is not present on the current page. */
+ * the Vite-produced chunk for each island. Chunk URLs come from the
+ * content-hashed Vite manifest (/static/dist/manifest.json), fetched at
+ * runtime. Without a built dist (or when the loader is absent) the page
+ * stays in legacy-only mode: no island import is attempted, so the strict
+ * CSP (script-src 'self') can never log a violation from a dev-origin URL. */
 async function initIslands() {
   if (typeof document === "undefined") return;
   try {
-    // The loader module is part of the Vite build; in the legacy zero-build
-    // host we import it from the dist output (production) or the frontend
-    // dev server (development). We use a dynamic import so the legacy
-    // page never hard-fails if the React bundle is absent.
-    const { loadIslands } = await import(
+    const loader = await import(
       /* @vite-ignore */ "/static/dist/island-loader.js"
-    ).catch(() => ({ loadIslands: null }));
-    if (loadIslands) {
-      await loadIslands();
+    ).catch(() => null);
+    const { loadIslands } = loader || {};
+    if (typeof loadIslands !== "function") return; // dist not built — legacy-only
+    let manifest = null;
+    if (typeof loader.fetchManifest === "function") {
+      manifest = await loader.fetchManifest();
     }
+    await loadIslands(manifest);
   } catch (err) {
     console.warn("[islands] loader unavailable:", err);
   }

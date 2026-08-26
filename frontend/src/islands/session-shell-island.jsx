@@ -52,7 +52,7 @@ function SessionShellIsland() {
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">
             <svg className="icon icon-lg">
-              <use href="/static/icons.svg?v=1.3.9#hexagon" />
+              <use href="/static/icons.svg?v=1.4.0#hexagon" />
             </svg>
           </div>
           <div className="brand-copy">
@@ -71,7 +71,7 @@ function SessionShellIsland() {
             onClick={toggleTheme}
           >
             <svg className="icon">
-              <use href={`/static/icons.svg?v=1.3.9#${theme === "dark" ? "moon" : "sun"}`} />
+              <use href={`/static/icons.svg?v=1.4.0#${theme === "dark" ? "moon" : "sun"}`} />
             </svg>
           </button>
         </div>
@@ -88,7 +88,7 @@ function SessionShellIsland() {
             onClick={() => handleNav(item.id)}
           >
             <svg className="icon">
-              <use href={`/static/icons.svg?v=1.3.9#${item.icon}`} />
+              <use href={`/static/icons.svg?v=1.4.0#${item.icon}`} />
             </svg>
           </button>
         ))}
