@@ -2,6 +2,34 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
+
+### Added
+
+- **桌面原生壳**(`src-tauri/`,基于 Tauri 2.x):`SidecarSupervisor`(动态端口 bind 127.0.0.1:0 → 回读 → 注入 WebView、指数退避就绪探测 200ms→2s 上限 20s、TERM→5s 超时 kill 树优雅停机、崩溃自愈 ≤3 次/分钟超出弹窗、单实例锁二次启动唤起)、`terminal.rs`(portable-pty 白名单诊断终端,xterm.js + fit/webgl/search 三 addon,仅 `admin`/`platform` 角色可见,DEBUG 构建才启用完整交互式 PTY,空闲 10 分钟回收、输出环形缓冲 5MB 上限)、启动三时间戳遥测写入 `%APPDATA%/HelixSupport/telemetry/startup.json`、Splash 屏、设置页显示版本/DB 路径/端口。
+- **Python sidecar 打包**(`desktop/helix-server.spec`,PyInstaller `--onedir`):`DATABASE_PATH` env 注入 `app_data_dir`,后端零改动;冒烟脚本 `desktop/smoke_sidecar.py`(spawn→/health/ready→sample API→graceful kill)实测 2.2s 就绪。
+- **React 19 岛渐进迁移**(`frontend/src/islands/`):9 个岛(quality/knowledge/ticket/queue/composer/inspector/command-palette/session-shell/terminal);queue 与 inspector 直通 §43.6 reducer 三元组作 `useReducer` 入参,纯函数测试零改写;Zustand v5 客户端全局状态 + TanStack Query v5 服务端状态;`frontend/src/island-loader.js` 运行时 fetch `/static/dist/manifest.json` 解析内容哈希 chunk,无 manifest 时静默跳过所有岛(CSP `script-src 'self'` 下不再报 dev-origin 违反)。
+- **tokens.css 三层 @layer**(`@layer tokens.primitive/semantic/component`)+ styles.css `@layer reset, tokens, base, components, utilities` 层叠顺序;motion tokens(`--duration-fast/base/slow` + `--ease-entry/exit/emphasized`);View Transitions API 列表→详情过渡、骨架屏、按钮按压/抽屉/tab indicator 微交互(reduced-motion gate 复验)。
+- **ADR-018**(`docs/adr/0018-break-zero-build-vite-react.md`):记录打破零构建原则引入 Vite + React 构建链的动机与边界(operator console 引入构建链;widget 永久保持零构建;双轨期 `createRoot` 挂载到预留 `<div>`,未迁移区由 app.js + js/*.js 驱动;预算口径切换 operator JS ≤700KB raw/≤210KB gzip、CSS ≤125KB)。
+- **D5 交互打磨**:`tauri-plugin-updater` 自动更新、NSIS 安装器;冷启动 SLO `startup.json` 验证 `t_backend_ready_ms=2465ms` < 3s。
+- **DEPLOYMENT_DESKTOP.md**:桌面包构建与发布流程文档。
+
+### Changed
+
+- `app/assets.py` `STATIC_ASSET_VERSION` 1.3.9→1.4.0;index.html/widget.html/icons 引用 `?v=1.4.0` 同步;`frontend/package.json` version 1.4.0;`src-tauri/tauri.conf.json` + `Cargo.toml` version 1.4.0。
+- `app/static/index.html` 新增 9 个 React 岛挂载 `<div>`(queueReactIsland/ticketReactIsland/composerReactIsland/inspectorReactIsland/qualityReactIsland/knowledgeReactIsland/commandPaletteReactIsland/sessionShellReactIsland/terminalReactIsland),双轨期与 legacy 容器并存;新增 `#desktopSplash` 覆盖层(Tauri 环境显示,浏览器 hidden)。
+- `frontend/vite.config.js`:`preserveEntrySignatures:"strict"` 防 Rollup 树摇岛入口自身导出;`copyIslandLoader` 插件每构建把零构建 `island-loader.js` 同步到 `dist/`。
+- 视觉基线四面(workspace-dark/workspace-light/knowledge-view/mobile-queue)在 clean DB 上重引导以反映 v1.4.0 tokens + splash 的新视觉。
+- `tests/ui_admin.py`/`tests/ui_knowledge.py`:app.js 版本断言从硬编码 `1.3.7` 改为引用 `app.assets.STATIC_ASSET_VERSION`。
+
+### Web 回退双轨修正(2026-08-26,commit cbb2825)
+
+- 68d0c33 把 `app.js` 从 3,258 行 legacy 裁成 481 行胶水版(依赖 React 岛渲染),但 web 浏览器(无 `dist/`)下岛不渲染、胶水版无 legacy 渲染能力导致 web 空白。恢复完整 3,279 行 legacy `app.js` 作 web 双轨主渲染器;桌面壳分支仍用 481 行胶水版 + 岛渲染。**双轨架构现状**:web 浏览器 = legacy app.js 主渲染(岛全部跳过);Tauri 桌面壳 = dist 构建后岛渲染(481 行胶水版激活)。
+
+### Gates
+
+- frontend gate 155 tests(含 7 vitest);performance gate 静态 JS 552KB/700KB + CSS 91KB/125KB;pytest 全量绿;cargo check + clippy clean;sidecar smoke 2.56s;Vite build 1.48s;visual gate 四面 0% drift(clean DB 基线重引导);ui_smoke + ui_accessibility 旅程绿。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added
