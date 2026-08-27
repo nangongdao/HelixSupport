@@ -13,6 +13,7 @@
 - **ADR-018**(`docs/adr/0018-break-zero-build-vite-react.md`):记录打破零构建原则引入 Vite + React 构建链的动机与边界(operator console 引入构建链;widget 永久保持零构建;双轨期 `createRoot` 挂载到预留 `<div>`,未迁移区由 app.js + js/*.js 驱动;预算口径切换 operator JS ≤700KB raw/≤210KB gzip、CSS ≤125KB)。
 - **D5 交互打磨**:`tauri-plugin-updater` 自动更新、NSIS 安装器;冷启动 SLO `startup.json` 验证 `t_backend_ready_ms=2465ms` < 3s。
 - **DEPLOYMENT_DESKTOP.md**:桌面包构建与发布流程文档。
+- **完整桌面构建验证（2026-08-27）**：本机成功执行 `cargo tauri build` 产出 `Helix Support_1.4.0_x64-setup.exe`（24MB NSIS 安装器）与 `helix-desktop.exe`（~13.5MB）；`cargo build` + `cargo clippy` 全绿；Vite dist（含最新 island-loader + 全部 9 岛 chunk + manifest.json）重建通过。
 
 ### Changed
 
