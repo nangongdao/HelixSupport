@@ -2516,6 +2516,10 @@ async function runRefresh({ silent = false, refreshDetail = true, background = f
     const queueChanged = signature !== state.lastQueueSignature;
     const firstMe = !state.me;
     state.me = me;
+    // Expose the operator role so the desktop React islands (knowledge
+    // canWrite gate, terminal §4.1 RBAC) can read it without re-fetching
+    // /api/me. In a browser tab the islands never mount and this is inert.
+    if (typeof window !== "undefined") window.__HELIX_ROLE__ = me?.role || "guest";
     if (firstMe) pruneExpiredDrafts();
     if (firstMe) scheduleIdle(() => loadMentions());
     // roster 节流刷新:首次失败下个周期重试,成功后在后台周期更新,
@@ -3234,6 +3238,18 @@ if (els.knowledgeList) {
     else void reviewKnowledgeArticle(articleId, button.dataset.action);
   });
 }
+// D3 bridge: the React knowledge island dispatches "helix-knowledge-action"
+// for its own edit/publish/retire buttons (the legacy list above is yielded
+// and hidden in the desktop shell). Bridge those events back to the legacy
+// editor/form handlers so the article lifecycle stays in one place until
+// the editor itself is migrated to a later D3 slice.
+window.addEventListener("helix-knowledge-action", (event) => {
+  const { action, articleId } = event.detail || {};
+  if (!articleId || !action) return;
+  if (action === "edit") editKnowledgeArticle(articleId);
+  else if (action === "publish" || action === "retire")
+    void reviewKnowledgeArticle(articleId, action);
+});
 // UI 升级 §17.3: 管理页 — forms, member actions, webhook delete, refresh.
 renderWebhookEventCheckboxes();
 if (els.quotaForm) els.quotaForm.addEventListener("submit", (event) => void saveQuota(event));
