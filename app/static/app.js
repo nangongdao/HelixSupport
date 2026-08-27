@@ -3250,6 +3250,15 @@ window.addEventListener("helix-knowledge-action", (event) => {
   else if (action === "publish" || action === "retire")
     void reviewKnowledgeArticle(articleId, action);
 });
+// D3 bridge: the React ticket island dispatches "helix-ticket-open" when a
+// row is clicked (the legacy #ticketList is yielded and hidden in the
+// desktop shell). Bridge it to the legacy detail opener so the ticket detail
+// view stays in ticket-view.js until a later D3 slice migrates it.
+window.addEventListener("helix-ticket-open", (event) => {
+  const { ticketId } = event.detail || {};
+  if (!ticketId) return;
+  void window.HelixModules?.ticketView?.openTicketDetail?.(ticketId);
+});
 // UI 升级 §17.3: 管理页 — forms, member actions, webhook delete, refresh.
 renderWebhookEventCheckboxes();
 if (els.quotaForm) els.quotaForm.addEventListener("submit", (event) => void saveQuota(event));

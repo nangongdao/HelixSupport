@@ -44,7 +44,9 @@ export const ISLANDS = [
       "knowledgeListStatus",
     ],
   },
-  { name: "ticket", mountId: "ticketReactIsland" },
+  // The ticket island owns the status filter + list; the legacy detail view
+  // (#ticketDetailView) stays legacy until a later D3 slice migrates it.
+  { name: "ticket", mountId: "ticketReactIsland", yieldsLegacy: ["ticketStatusFilter", "ticketList"] },
   { name: "queue", mountId: "queueReactIsland" },
   { name: "inspector", mountId: "inspectorReactIsland" },
   { name: "composer", mountId: "composerReactIsland" },

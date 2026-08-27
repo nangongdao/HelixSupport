@@ -94,6 +94,11 @@ export function closeTicketDetail() {
 }
 
 export async function loadTickets() {
+  // D3 take-over: in the desktop shell the React ticket island owns the list
+  // (#ticketList is yielded and hidden by the island loader). Rendering into a
+  // hidden container would still duplicate .ticket-row nodes in the DOM and
+  // fire a redundant fetch, so yield here instead.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) return;
   const status = ctx.els.ticketStatusFilter?.value || "";
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   try {

@@ -74,6 +74,9 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   assert.ok(!byName.knowledge.yieldsLegacy.includes("knowledgeEditor"));
   // command palette owns the Ctrl+K dialog.
   assert.deepEqual(byName["command-palette"].yieldsLegacy, ["commandPalette"]);
+  // ticket owns the status filter + list; the detail view stays legacy.
+  assert.deepEqual(byName.ticket.yieldsLegacy, ["ticketStatusFilter", "ticketList"]);
+  assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
   // terminal has no legacy sibling.
   assert.equal(byName.terminal.yieldsLegacy, undefined);
 });

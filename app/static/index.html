@@ -252,8 +252,10 @@
           </div>
           <!-- D3 React island mount (ticket domain). The legacy #ticketList
                above stays during dual-track; the React island renders into
-               this separate container and takes over ticket list rendering. -->
-          <div id="ticketReactIsland" class="ticket-react-island" hidden></div>
+               this separate container and takes over ticket list rendering.
+               #ticketPane itself is not touched (it holds the workspace
+               drawer layout). -->
+          <div id="ticketReactIsland" class="ticket-react-island"></div>
           <div class="queue-footer">
             <span id="queueCount">0 个会话</span>
             <button id="loadMore" class="queue-more" type="button" hidden>
