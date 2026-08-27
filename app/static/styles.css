@@ -1425,14 +1425,19 @@ a.knowledge-source:hover {
   border-color: var(--line-strong);
 }
 
+/* The background is --ink (the theme's strongest foreground), so the label
+   must use the opposing surface token rather than a hardcoded white: --ink
+   flips per theme (#e6edf3 dark / #1a2027 light), and white-on-light gave a
+   1.24:1 contrast in the dark theme. --bg-0 flips the other way, keeping the
+   pair well above 4.5:1 on both themes. */
 .button-dark {
-  color: #ffffff;
+  color: var(--bg-0);
   background: var(--ink);
   border-color: var(--ink);
 }
 
 .button-dark:hover:not(:disabled) {
-  color: #ffffff;
+  color: var(--bg-0);
   background: var(--ink-soft);
   border-color: var(--ink-soft);
 }
