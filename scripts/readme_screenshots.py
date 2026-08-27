@@ -1,9 +1,10 @@
-"""Capture the six README screenshots against the v1.3.9 professional SaaS skin.
+"""Capture the six README screenshots against the v1.4.0 professional SaaS skin.
 
 Mirrors the interaction paths in tests/ui_smoke.py (conversation + handoff)
 and scripts/visual_gate.py (knowledge view, mobile queue, widget), but pins
 each capture to docs/assets/screenshots/ at a stable viewport so the README
-images reflect the current design rather than the retired Art Deco palette.
+images reflect the current design (3-tier @layer tokens + motion + desktop
+splash overlay) rather than the retired Art Deco palette.
 
 Usage: HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py
 """

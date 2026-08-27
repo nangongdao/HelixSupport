@@ -67,7 +67,7 @@ cd ../src-tauri && cargo tauri build
 
 ## 界面预览
 
-> 截图为 v1.3.9 专业 SaaS 主题（中性板岩深色 + 靛蓝强调色）。操作台支持深/浅双主题切换，下方均为深色主题。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获。
+> 截图为 v1.4.0 专业 SaaS 主题（三层 @layer 设计令牌 + 动效令牌 + 桌面 splash 叠层；中性板岩深色 + 靛蓝强调色）。操作台支持深/浅双主题切换，下方均为深色主题。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获。
 
 ### 人工接管与质量洞察
 
