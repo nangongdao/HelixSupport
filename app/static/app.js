@@ -3148,8 +3148,13 @@ if (els.cannedList) {
 window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.composer?.bindComposer?.();
 // UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
+// D3 take-over: in the desktop shell the React command-palette island owns
+// Ctrl+K (window.__HELIX_ISLAND_MODE__ is set by main.js). Yield here so the
+// legacy <dialog> never opens on top of the island overlay. In a browser
+// tab the flag is never set and the legacy palette stays the handler.
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    if (window.__HELIX_ISLAND_MODE__) return; // island owns the palette
     event.preventDefault();
     void openCommandPalette();
     return;
