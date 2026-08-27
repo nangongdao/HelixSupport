@@ -150,10 +150,21 @@ def main() -> int:
     results: list[tuple[bool, str]] = []
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
-        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        # Pin the color scheme so resolveInitialTheme() (main.js) picks a
+        # deterministic default instead of inheriting the runner's OS theme.
+        # The gate captures "workspace-dark" before any explicit applyTheme()
+        # call, so without this the baseline depends on prefers-color-scheme.
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900},
+            color_scheme="dark",
+        )
         page = context.new_page()
 
         wait_for_operator(page)
+        # Force dark explicitly — localStorage from a prior run in the same
+        # context could otherwise leak a light preference.
+        page.evaluate("() => window.HelixModules.applyTheme('dark')")
+        page.wait_for_timeout(300)
         results.append(compare("workspace-dark", capture(page, "workspace-dark")))
 
         page.evaluate("() => window.HelixModules.applyTheme('light')")
@@ -161,6 +172,7 @@ def main() -> int:
         results.append(compare("workspace-light", capture(page, "workspace-light")))
 
         page.evaluate("() => window.HelixModules.applyTheme('dark')")
+        page.wait_for_timeout(300)
 
         page.locator('.nav-item[data-view="knowledge"]').click()
         page.wait_for_selector("#knowledgeList[aria-busy='false']", timeout=15000)
@@ -169,6 +181,10 @@ def main() -> int:
         mobile = context.new_page()
         mobile.set_viewport_size({"width": 390, "height": 844})
         wait_for_operator(mobile)
+        # Same context shares localStorage, so the theme above (dark) carries
+        # over; pin it explicitly so mobile-queue is deterministic too.
+        mobile.evaluate("() => window.HelixModules.applyTheme('dark')")
+        mobile.wait_for_timeout(300)
         mobile.locator("#mobileQueue").click()
         mobile.wait_for_timeout(300)
         results.append(compare("mobile-queue", capture(mobile, "mobile-queue")))
