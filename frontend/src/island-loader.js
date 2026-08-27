@@ -13,22 +13,67 @@
  */
 
 /**
- * @typedef {{ name: string, mountId: string }} IslandConfig
+ * @typedef {{ name: string, mountId: string, yieldsLegacy?: string[] }} IslandConfig
  * @type {IslandConfig[]}
  * Each entry maps an island name (chunk filename) to the DOM element id
  * it mounts into. The mount element must already exist in index.html.
+ *
+ * `yieldsLegacy` lists the legacy element ids the island takes over from.
+ * Once the island mounts (desktop shell only), those legacy containers are
+ * hidden so the domain renders exactly once — the React island — instead of
+ * a parallel legacy tree duplicating it. In a plain browser tab the islands
+ * never mount, so the legacy containers stay visible and own the surface.
+ * Omit `yieldsLegacy` for islands with no legacy sibling (e.g. terminal).
  */
 export const ISLANDS = [
-  { name: "quality", mountId: "qualityReactIsland" },
-  { name: "knowledge", mountId: "knowledgeReactIsland" },
+  { name: "quality", mountId: "qualityReactIsland", yieldsLegacy: ["qualityViewBuckets"] },
+  {
+    name: "knowledge",
+    mountId: "knowledgeReactIsland",
+    // The knowledge island owns the summary + filter toolbar + article list;
+    // the legacy editor/form (#knowledgeEditor/#knowledgeForm) stays legacy
+    // until a later D3 slice migrates it.
+    yieldsLegacy: [
+      "knowledgeSummary",
+      "knowledgeSearch",
+      "knowledgeStatusFilter",
+      "knowledgeLanguageFilter",
+      "knowledgeResultCount",
+      "knowledgeReadOnly",
+      "knowledgeList",
+      "knowledgeListStatus",
+    ],
+  },
   { name: "ticket", mountId: "ticketReactIsland" },
   { name: "queue", mountId: "queueReactIsland" },
   { name: "inspector", mountId: "inspectorReactIsland" },
   { name: "composer", mountId: "composerReactIsland" },
-  { name: "command-palette", mountId: "commandPaletteReactIsland" },
+  // The command-palette island owns the Ctrl+K palette; the legacy
+  // #commandPalette dialog would otherwise double-handle the shortcut.
+  { name: "command-palette", mountId: "commandPaletteReactIsland", yieldsLegacy: ["commandPalette"] },
   { name: "session-shell", mountId: "sessionShellReactIsland" },
   { name: "terminal", mountId: "terminalReactIsland" },
 ];
+
+/**
+ * Hide the legacy containers an island takes over from. Pure DOM mutation,
+ * exported for unit testing. Returns the ids that were actually hidden (the
+ * element existed and was not already hidden).
+ * @param {string[]} ids - legacy element ids to yield
+ * @param {Document} [doc] - document (injectable for tests)
+ * @returns {string[]}
+ */
+export function yieldLegacyContainers(ids, doc = document) {
+  const hidden = [];
+  for (const id of ids || []) {
+    const el = doc.getElementById(id);
+    if (el && !el.hidden) {
+      el.hidden = true;
+      hidden.push(id);
+    }
+  }
+  return hidden;
+}
 
 /**
  * Resolve the URL for an island chunk from the Vite manifest. Returns null
@@ -94,6 +139,11 @@ export async function loadIslands(manifest) {
       const mod = await import(/* @vite-ignore */ url);
       if (typeof mod.mount === "function") {
         mod.mount(mount);
+        // Now that the React island owns this surface, hide the legacy
+        // containers it takes over from so the domain renders once.
+        if (island.yieldsLegacy) {
+          yieldLegacyContainers(island.yieldsLegacy);
+        }
         results.push({ name: island.name, ok: true });
       }
     } catch (err) {
@@ -104,4 +154,10 @@ export async function loadIslands(manifest) {
   return results;
 }
 
-export default { ISLANDS, resolveIslandUrl, fetchManifest, loadIslands };
+export default {
+  ISLANDS,
+  resolveIslandUrl,
+  fetchManifest,
+  loadIslands,
+  yieldLegacyContainers,
+};
