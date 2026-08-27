@@ -74,6 +74,14 @@ export async function fetchManifest() {
 export async function loadIslands(manifest) {
   const results = [];
   if (!manifest) return results; // dist not built — legacy-only mode
+  // Islands are the desktop-shell renderer. In a plain browser tab the
+  // legacy app.js owns every surface; mounting a parallel React tree on
+  // the non-hidden mount points would duplicate quality/knowledge/command
+  // palette/terminal. The desktop shell (main.js) opts in by setting
+  // __HELIX_ISLAND_MODE__ before calling loadIslands.
+  if (typeof window === "undefined" || !window.__HELIX_ISLAND_MODE__) {
+    return results;
+  }
   for (const island of ISLANDS) {
     const mount = document.getElementById(island.mountId);
     // A hidden mount means the legacy renderer is still the primary surface

@@ -180,11 +180,23 @@ if (typeof window !== "undefined") {
  * The island loader is a zero-build ESM module that dynamically imports
  * the Vite-produced chunk for each island. Chunk URLs come from the
  * content-hashed Vite manifest (/static/dist/manifest.json), fetched at
- * runtime. Without a built dist (or when the loader is absent) the page
- * stays in legacy-only mode: no island import is attempted, so the strict
- * CSP (script-src 'self') can never log a violation from a dev-origin URL. */
+ * runtime.
+ *
+ * Mounting is gated on the Tauri desktop shell: in a plain browser tab
+ * the legacy app.js is the sole renderer, so islands must NOT mount —
+ * even when a built dist/ happens to be present on disk (local dev who
+ * ran `vite build`, or a shared static dir). Without this gate the
+ * non-hidden island mount points (quality/knowledge/command-palette/
+ * terminal) would render a parallel React tree on top of the legacy
+ * DOM, duplicating those surfaces. The desktop shell sets
+ * `__HELIX_ISLAND_MODE__` so islands know the legacy renderer has yielded;
+ * here we only ensure the loader runs at all in desktop mode. */
 async function initIslands() {
   if (typeof document === "undefined") return;
+  if (!isDesktopShell()) return; // browser tab — legacy app.js owns all surfaces
+  // Opt the desktop shell into island mode so loadIslands mounts the
+  // React islands (legacy app.js yields the migrated domains in desktop).
+  window.__HELIX_ISLAND_MODE__ = true;
   try {
     const loader = await import(
       /* @vite-ignore */ "/static/dist/island-loader.js"
