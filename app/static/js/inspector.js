@@ -118,13 +118,10 @@ export async function updateLabels(event) {
   }
 }
 
-export async function updatePriority(button) {
-  if (!ctx.state.selectedId || button.getAttribute("aria-pressed") === "true") return;
-  const conversationId = ctx.state.selectedId;
-  const priority = button.dataset.priority;
-  ctx.els.inspectorOverview.querySelectorAll(".priority-option").forEach((option) => {
-    option.disabled = true;
-  });
+/** Set a conversation's priority via API (legacy form button and the React
+ *  island bridge share this; the island never touches legacy panel DOM). */
+export async function setConversationPriority(conversationId, priority) {
+  if (!conversationId || !priority) return;
   try {
     await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}`, {
       method: "PATCH",
@@ -137,6 +134,16 @@ export async function updatePriority(button) {
     ctx.showToast(error.message, true);
     if (ctx.state.selectedId === conversationId) await ctx.loadDetail(conversationId);
   }
+}
+
+export async function updatePriority(button) {
+  if (!ctx.state.selectedId || button.getAttribute("aria-pressed") === "true") return;
+  const conversationId = ctx.state.selectedId;
+  const priority = button.dataset.priority;
+  ctx.els.inspectorOverview.querySelectorAll(".priority-option").forEach((option) => {
+    option.disabled = true;
+  });
+  await setConversationPriority(conversationId, priority);
 }
 
 export function renderOverview(detail) {
@@ -308,11 +315,8 @@ function bindIslandBridge() {
   });
   window.addEventListener("helix-inspector-priority", (event) => {
     const { priority } = event.detail || {};
-    if (!priority) return;
-    const button = ctx.els.inspectorOverview?.querySelector?.(
-      `.priority-option[data-priority="${priority}"]`,
-    );
-    if (button) void updatePriority(button);
+    if (!priority || !ctx.state.selectedId) return;
+    void setConversationPriority(ctx.state.selectedId, priority);
   });
   window.addEventListener("helix-inspector-labels", (event) => {
     const { labels } = event.detail || {};
@@ -352,6 +356,7 @@ export default {
   configure,
   updateLabels,
   updatePriority,
+  setConversationPriority,
   renderOverview,
   renderEvidence,
   renderAudit,
