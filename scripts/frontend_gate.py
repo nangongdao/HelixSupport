@@ -101,22 +101,43 @@ def check_asset_versions() -> list[str]:
     return problems
 
 
+# Node's test runner picks its reporter from the environment: the spec
+# reporter when stdout is a TTY (interactive), the TAP reporter otherwise
+# (captured pipes, CI). The summary lines differ between the two —
+#   spec: "ℹ pass 165" / "ℹ fail 2"
+#   tap:  "# pass 165" / "# fail 2"
+# — so both shapes are matched rather than pinning --test-reporter (which
+# would cost the human-readable output during local interactive runs).
+_SUMMARY_RE = re.compile(r"^[#ℹ]\s+(pass|fail|tests)\s+(\d+)$")
+
+
+def _parse_summary(stdout: str) -> dict[str, int]:
+    """Extract the trailing {pass, fail, tests} counters from runner output."""
+    summary: dict[str, int] = {}
+    for line in stdout.splitlines():
+        match = _SUMMARY_RE.match(line.strip())
+        if match:
+            summary[match.group(1)] = int(match.group(2))
+    return summary
+
+
 def run_tests() -> tuple[list[str], int]:
     """Run the Node test suite; return (problems, test_count)."""
     pattern = str(TEST_DIR / "*.test.js")
     result = _run(["node", "--test", pattern])
     if result.returncode != 0:
         return [f"frontend tests failed:\n{result.stdout.strip()}\n{result.stderr.strip()}"], 0
-    # Count "ok N" / "pass N" lines from the TAP-ish summary the runner prints.
-    count = 0
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("ℹ pass ") or stripped.startswith("pass "):
-            try:
-                count = int(stripped.split()[-1])
-            except ValueError:
-                continue
-    return [], count
+    summary = _parse_summary(result.stdout)
+    # A zero pass count means either a genuinely empty run or a summary shape
+    # we no longer recognise — both must fail the gate rather than silently
+    # reporting "0 tests", which is how the TAP/spec mismatch went unnoticed.
+    if not summary:
+        tail = result.stdout.strip()[-800:]
+        return [f"frontend tests: unparseable runner summary (0 tests counted)\n{tail}"], 0
+    failures = summary.get("fail", 0)
+    if failures:
+        return [f"frontend tests: {failures} failing\n{result.stdout.strip()[-2000:]}"], 0
+    return [], summary.get("pass", summary.get("tests", 0))
 
 
 FRONTEND_DIR = ROOT / "frontend"
