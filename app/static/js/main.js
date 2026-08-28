@@ -14,6 +14,7 @@ import * as attachments from "./attachment.js?v=1.4.0";
 import * as broadcast from "./broadcast.js?v=1.4.0";
 import * as commands from "./commands.js?v=1.4.0";
 import * as composer from "./composer.js?v=1.4.0";
+import * as composerIslandBridge from "./composer-island-bridge.js?v=1.4.0";
 import * as density from "./density.js?v=1.4.0";
 import * as desktopInfo from "./desktop-info.js?v=1.4.0";
 import * as format from "./format.js?v=1.4.0";
@@ -104,6 +105,7 @@ export function initModules() {
     broadcast,
     commands,
     composer,
+    composerIslandBridge,
     density,
     desktopInfo,
     format,

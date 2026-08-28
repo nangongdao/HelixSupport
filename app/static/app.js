@@ -309,6 +309,11 @@ _helixModules.composer?.configure?.({
   showToast,
   escapeHtml,
 });
+_helixModules.composerIslandBridge?.configure?.({
+  state,
+  els,
+});
+_helixModules.composerIslandBridge?.bindIslandBridge?.();
 _helixModules.session?.configure?.({
   state,
   els,
@@ -2698,12 +2703,11 @@ document.querySelectorAll(".inspector-tab").forEach((button) => {
   button.addEventListener("click", () => switchInspectorTab(button.dataset.tab));
 });
 
-els.customerForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function sendCustomerMessage(content) {
   if (!state.selectedId) return;
   const conversationId = state.selectedId;
-  const content = els.customerInput.value.trim();
-  if (!content) return;
+  const text = String(content || "").trim();
+  if (!text) return;
   setFormBusy(els.customerForm, true);
   try {
     const result = await api(
@@ -2711,7 +2715,7 @@ els.customerForm.addEventListener("submit", async (event) => {
       {
         method: "POST",
         headers: { "Idempotency-Key": newIdempotencyKey() },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content: text }),
       },
     );
     els.customerInput.value = "";
@@ -2723,6 +2727,18 @@ els.customerForm.addEventListener("submit", async (event) => {
   } finally {
     setFormBusy(els.customerForm, false);
   }
+}
+
+els.customerForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void sendCustomerMessage(els.customerInput.value);
+});
+// D3 bridge: the React composer island submits customer messages from the
+// desktop shell (legacy #customerForm is yielded + hidden) via this event.
+window.addEventListener("helix-composer-submit", (event) => {
+  const { kind, content } = event.detail || {};
+  if (!content || !kind) return;
+  if (kind === "customer") void sendCustomerMessage(content);
 });
 
 

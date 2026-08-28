@@ -411,10 +411,11 @@
                     <svg class="icon"><use href="/static/icons.svg?v=1.4.0#send" /></svg>
                   </button>
                 </form>
-                <!-- D3 React island mount (composer domain). The legacy
-                     #customerForm/#operatorForm above stay during dual-track;
-                     the React island renders into this parallel container. -->
-                <div id="composerReactIsland" class="composer-react-island" hidden></div>
+                <!-- D3 React island mount (composer domain). The island
+                     renders the mirrored composer forms in the desktop
+                     shell; legacy #customerForm/#operatorForm are yielded
+                     (hidden) and stay the surface in a plain browser tab. -->
+                <div id="composerReactIsland" class="composer-react-island"></div>
               </section>
               <aside class="inspector-surface" aria-label="会话检查器">
                 <nav class="inspector-tabs" role="tablist" aria-label="会话信息">

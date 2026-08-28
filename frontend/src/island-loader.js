@@ -51,7 +51,9 @@ export const ISLANDS = [
   // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
   { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },
   { name: "inspector", mountId: "inspectorReactIsland" },
-  { name: "composer", mountId: "composerReactIsland" },
+  // The composer island owns the message forms in the desktop shell; the
+  // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
+  { name: "composer", mountId: "composerReactIsland", yieldsLegacy: ["customerForm", "operatorForm"] },
   // The command-palette island owns the Ctrl+K palette; the legacy
   // #commandPalette dialog would otherwise double-handle the shortcut.
   { name: "command-palette", mountId: "commandPaletteReactIsland", yieldsLegacy: ["commandPalette"] },

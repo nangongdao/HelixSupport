@@ -2597,6 +2597,22 @@ body.is-inspector-collapsed .inspector-surface {
   border-top: 1px solid var(--line);
 }
 
+/* D3 composer island: the mirrored forms stack in place of the yielded
+   legacy forms, keeping the same fill-the-thread-bottom contract. */
+.composer-island {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
+
+.composer-island .composer {
+  flex: 0 0 auto;
+}
+
+.composer-react-island:empty {
+  display: none;
+}
+
 .operator-composer {
   background: var(--violet-soft);
   border-top-color: var(--line);

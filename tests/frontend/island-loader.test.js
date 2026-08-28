@@ -79,6 +79,8 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
   // queue owns the conversation list; strip controls and bulk toolbar stay legacy.
   assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList"]);
+  // composer owns the message forms; the send lifecycle stays legacy via bridges.
+  assert.deepEqual(byName.composer.yieldsLegacy, ["customerForm", "operatorForm"]);
   // terminal has no legacy sibling.
   assert.equal(byName.terminal.yieldsLegacy, undefined);
 });

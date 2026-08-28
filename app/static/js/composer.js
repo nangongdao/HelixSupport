@@ -313,6 +313,36 @@ export function renderCopilot(detail) {
   if (ctx.state.lastCopilotConv !== conversation.id) void loadCopilotKnowledge();
 }
 
+/** Send an operator message (shared by the legacy form and the React island
+ *  bridge). Reads nothing from the DOM — the caller passes the content. */
+export async function sendOperatorMessage(content) {
+  const conversationId = ctx.state.selectedId;
+  if (!conversationId) return;
+  const text = String(content || "").trim();
+  if (!text) return;
+  hideMacroSuggest();
+  ctx.setFormBusy(ctx.els.operatorForm, true);
+  try {
+    const body = { content: text };
+    // Backlog (语音/富媒体消息): include this conversation's pending uploads.
+    const pendingIds_ = pendingIds(conversationId);
+    if (pendingIds_.length) body.attachment_ids = [...pendingIds_];
+    await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}/operator-messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    clearPendingAttachments(conversationId);
+    ctx.els.operatorInput.value = "";
+    clearDraft(conversationId);
+    await ctx.loadDetail(conversationId);
+    void ctx.refreshAll({ silent: true, refreshDetail: false });
+  } catch (error) {
+    ctx.showToast(error.message, true);
+  } finally {
+    ctx.setFormBusy(ctx.els.operatorForm, false);
+  }
+}
+
 /**
  * Bind the composer DOM (exactly once, at app.js load): operator message
  * submit, copilot suggestion chips, tone rewrite and knowledge picks.
@@ -323,30 +353,9 @@ export function bindComposer() {
     ctx.els.operatorForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!ctx.state.selectedId) return;
-      const conversationId = ctx.state.selectedId;
       const content = ctx.els.operatorInput.value.trim();
       if (!content) return;
-      hideMacroSuggest();
-      ctx.setFormBusy(ctx.els.operatorForm, true);
-      try {
-        const body = { content };
-        // Backlog (语音/富媒体消息): include this conversation's pending uploads.
-        const pendingIds_ = pendingIds(conversationId);
-        if (pendingIds_.length) body.attachment_ids = [...pendingIds_];
-        await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}/operator-messages`, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        clearPendingAttachments(conversationId);
-        ctx.els.operatorInput.value = "";
-        clearDraft(conversationId);
-        await ctx.loadDetail(conversationId);
-        void ctx.refreshAll({ silent: true, refreshDetail: false });
-      } catch (error) {
-        ctx.showToast(error.message, true);
-      } finally {
-        ctx.setFormBusy(ctx.els.operatorForm, false);
-      }
+      await sendOperatorMessage(content);
     });
   }
   if (ctx.els.copilotSuggestBtn) {
