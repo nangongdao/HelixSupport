@@ -136,7 +136,7 @@ function QueueRow({ conversation, active, selected, canOperate, compact, onSelec
 
 /* ── queue island ──────────────────────────────────────────────────────── */
 
-function QueueIsland() {
+export function QueueIsland() {
   const [snapshot, setSnapshot] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [bulkSelected, setBulkSelected] = useState(() => new Set());

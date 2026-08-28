@@ -39,7 +39,7 @@ export function mount(element) {
   root.render(<ComposerIsland />);
 }
 
-function ComposerIsland() {
+export function ComposerIsland() {
   const [state, setState] = useState({
     resolved: false,
     human: false,
