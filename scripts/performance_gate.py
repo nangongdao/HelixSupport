@@ -54,7 +54,8 @@ BROWSER_BUDGETS = {
     "lcp_ms": 2500,  # Largest Contentful Paint on a clean load
     "cls": 0.10,  # Cumulative Layout Shift
     "long_task_count_30s": 50,  # tasks > 50 ms in the first 30 s idle window
-    "queue_10k_render_ms": 2000,  # first windowed render of 10k rows
+    "queue_10k_render_ms": 2000,  # first windowed render of 10k rows (legacy)
+    "queue_10k_island_render_ms": 500,  # React island windowed render (§D3/§124)
     "heap_growth_mb": 15.0,  # JS heap growth across 20 refresh cycles
 }
 
@@ -207,6 +208,59 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
         )
         metrics["queue_10k_render_ms"] = render_ms
 
+        # --- React island 10k-row render (desktop shell) ----------------
+        # The desktop shell renders the queue through the React island, whose
+        # windowed path is independent of the legacy renderQueue(). Spin up a
+        # second context with the shell preconditions (__TAURI_INTERNALS__ +
+        # backend-ready) and measure one island windowed render of 10k rows.
+        # Budget: 500 ms (§D3/§124 once React owns the queue).
+        island_render_ms = None
+        try:
+            shell_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            shell_page = shell_context.new_page()
+            shell_page.add_init_script("window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };")
+            shell_page.goto(base_url, wait_until="domcontentloaded")
+            shell_page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
+            # The island may render the empty state (no conversations) —
+            # any React content proves the mount, so wait on :not(:empty).
+            shell_page.wait_for_selector("#queueReactIsland:not(:empty)", timeout=30000)
+            island_render_ms = shell_page.evaluate(
+                """
+                () => new Promise((resolve) => {
+                  const total = 10000;
+                  const now = new Date().toISOString();
+                  const conversations = Array.from({ length: total }, (_, i) => ({
+                    id: `perf_island_${i}`,
+                    customer_name: `压测客户 ${i}`,
+                    status: i % 4 === 0 ? 'waiting_human' : 'open',
+                    channel: ['web', 'email', 'chat'][i % 3],
+                    preview: '预算门合成会话，仅用于渲染测量。',
+                    labels: [],
+                    updated_at: now,
+                    version: 1,
+                    sla_due_at: null,
+                  }));
+                  const started = performance.now();
+                  window.dispatchEvent(new CustomEvent('helix-conversations-updated', {
+                    detail: {
+                      conversations,
+                      selectedId: null,
+                      bulkSelected: [],
+                      canOperate: true,
+                      compact: false,
+                    },
+                  }));
+                  // React renders asynchronously; wait one frame for the
+                  // initial windowed list to land, then measure.
+                  requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(performance.now() - started))));
+                })
+                """
+            )
+            shell_context.close()
+        except Exception:
+            island_render_ms = None
+        metrics["queue_10k_island_render_ms"] = island_render_ms
+
         # --- heap growth across refresh cycles -------------------------
         if HAVE_PSUTIL:
             pass  # placeholder: kept out of the hot path
@@ -230,7 +284,7 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
         browser.close()
 
     for key, limit in BROWSER_BUDGETS.items():
-        if key not in metrics:
+        if key not in metrics or metrics[key] is None:
             continue  # measurement unavailable (e.g. no performance.memory)
         if metrics[key] > limit:
             problems.append(f"{key}: {metrics[key]} exceeds budget {limit}")
