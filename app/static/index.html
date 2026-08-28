@@ -418,7 +418,7 @@
                 <div id="composerReactIsland" class="composer-react-island"></div>
               </section>
               <aside class="inspector-surface" aria-label="会话检查器">
-                <nav class="inspector-tabs" role="tablist" aria-label="会话信息">
+                <nav id="inspectorTabs" class="inspector-tabs" role="tablist" aria-label="会话信息">
                   <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-tab="overview">
                     <svg class="icon"><use href="/static/icons.svg?v=1.4.0#activity" /></svg><span>概览</span>
                   </button>
@@ -435,10 +435,12 @@
                 <div id="inspectorOverview" class="inspector-panel" role="tabpanel"></div>
                 <div id="inspectorEvidence" class="inspector-panel" role="tabpanel" hidden></div>
                 <div id="inspectorAudit" class="inspector-panel" role="tabpanel" hidden></div>
-                <!-- D3 React island mount (inspector domain). The legacy
-                     inspector tabs/panels above stay during dual-track;
-                     the React island renders into this parallel container. -->
-                <div id="inspectorReactIsland" class="inspector-react-island" hidden></div>
+                <!-- D3 React island mount (inspector domain). The island renders the
+                     inspector tabs + panels in the desktop shell; legacy
+                     #inspectorTabs/#inspectorOverview/#inspectorEvidence/
+                     #inspectorAudit are yielded (hidden) and stay the
+                     surface in a plain browser tab. -->
+                <div id="inspectorReactIsland" class="inspector-react-island"></div>
                 <section id="qualityPanel" class="quality-panel inspector-panel" role="tabpanel" aria-label="质量看板" hidden>
                   <header class="quality-heading">
                     <span class="section-kicker">QUALITY</span>

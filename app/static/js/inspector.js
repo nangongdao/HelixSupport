@@ -24,6 +24,7 @@ let ctx = null;
 /** Inject the legacy app.js singletons (state/els/api/helpers). */
 export function configure(deps) {
   ctx = deps;
+  bindIslandBridge();
 }
 
 /** Tab mount points in display order. */
@@ -267,8 +268,61 @@ export function renderInspector(detail) {
     ctx.els.inspectorAudit.innerHTML = "";
     return;
   }
+  // D3 island mode: the React inspector island owns the tab + panel DOM.
+  // Publish the detail snapshot it mirrors and stop painting the legacy
+  // panels (kept hidden by the loader) — the tab state stays in legacy.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    publishInspectorState();
+    return;
+  }
   ensureInspectorTab(ctx.state.activeTab, detail);
   switchInspectorTab(ctx.state.activeTab);
+}
+
+/** Publish the current inspector state for the React island mirror. */
+function publishInspectorState() {
+  window.dispatchEvent(
+    new CustomEvent("helix-inspector-state", {
+      detail: {
+        detail: ctx.state.detail,
+        collapsed: ctx.state.inspectorCollapsed,
+        activeTab: ctx.state.activeTab,
+        canOperate: ctx.canOperate(),
+      },
+    }),
+  );
+}
+
+// D3 bridge: the React inspector island dispatches tab switches, priority
+// changes and label saves (the legacy tabs/panels are yielded + hidden in
+// the desktop shell). Route them back to this module's handlers.
+function bindIslandBridge() {
+  if (typeof window === "undefined") return;
+  window.addEventListener("helix-inspector-sync", () => publishInspectorState());
+  window.addEventListener("helix-inspector-tab", (event) => {
+    const { tab } = event.detail || {};
+    if (!tab || !INSPECTOR_TABS.includes(tab)) return;
+    ctx.state.activeTab = tab;
+    publishInspectorState();
+    if (tab === "quality") ctx.loadQualityPanel?.();
+  });
+  window.addEventListener("helix-inspector-priority", (event) => {
+    const { priority } = event.detail || {};
+    if (!priority) return;
+    const button = ctx.els.inspectorOverview?.querySelector?.(
+      `.priority-option[data-priority="${priority}"]`,
+    );
+    if (button) void updatePriority(button);
+  });
+  window.addEventListener("helix-inspector-labels", (event) => {
+    const { labels } = event.detail || {};
+    if (!Array.isArray(labels)) return;
+    const form = {
+      preventDefault: () => {},
+      elements: { labels: { value: labels.join(", ") } },
+    };
+    void updateLabels(form);
+  });
 }
 
 export function switchInspectorTab(tab) {

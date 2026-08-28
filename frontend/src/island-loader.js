@@ -50,7 +50,7 @@ export const ISLANDS = [
   // The queue island owns the conversation list; the legacy strip controls
   // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
   { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },
-  { name: "inspector", mountId: "inspectorReactIsland" },
+  { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
   { name: "composer", mountId: "composerReactIsland", yieldsLegacy: ["customerForm", "operatorForm"] },

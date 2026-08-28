@@ -81,6 +81,13 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList"]);
   // composer owns the message forms; the send lifecycle stays legacy via bridges.
   assert.deepEqual(byName.composer.yieldsLegacy, ["customerForm", "operatorForm"]);
+  // inspector owns the tabs + detail panels; the quality self-fetch stays legacy.
+  assert.deepEqual(byName.inspector.yieldsLegacy, [
+    "inspectorTabs",
+    "inspectorOverview",
+    "inspectorEvidence",
+    "inspectorAudit",
+  ]);
   // terminal has no legacy sibling.
   assert.equal(byName.terminal.yieldsLegacy, undefined);
 });
