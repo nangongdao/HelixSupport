@@ -7,8 +7,11 @@ Two layers, both fail-closed on budget breach:
    and the widget payload are measured against ``BUDGETS``. These run in the
    default pytest pass via :mod:`tests.test_performance_gate`.
 2. Real-browser budgets (Playwright + Chromium, same harness as
-   tests/ui_smoke.py) — a live server is measured for LCP / CLS / long tasks,
-   queue render time with 10k synthetic rows, and JS heap growth. Run via::
+   tests/ui_smoke.py) — a live server is measured twice: once as a plain web
+   load (LCP / CLS / long tasks, queue render time with 10k synthetic rows,
+   JS heap growth) and once with the Tauri shell preconditions set, which
+   gates the desktop bundle's own LCP / CLS / React-island 10k render at the
+   tighter §D5 budgets. Run via::
 
        python scripts/performance_gate.py --base-url http://127.0.0.1:8765
 
@@ -51,12 +54,17 @@ BUDGETS = {
 
 # Browser budgets (§43.6: LCP/INP/CLS、长任务、内存和 10k 队列渲染).
 BROWSER_BUDGETS = {
-    "lcp_ms": 2500,  # Largest Contentful Paint on a clean load
-    "cls": 0.10,  # Cumulative Layout Shift
+    "lcp_ms": 2500,  # Largest Contentful Paint on a clean load (web)
+    "cls": 0.10,  # Cumulative Layout Shift (web)
     "long_task_count_30s": 50,  # tasks > 50 ms in the first 30 s idle window
     "queue_10k_render_ms": 2000,  # first windowed render of 10k rows (legacy)
     "queue_10k_island_render_ms": 500,  # React island windowed render (§D3/§124)
     "heap_growth_mb": 15.0,  # JS heap growth across 20 refresh cycles
+    # Desktop (Tauri shell) budgets — §D5. Strictly tighter than the web
+    # numbers: assets come from the local bundle, so the only variable is
+    # our own render cost, not the network.
+    "lcp_desktop_ms": 1000,  # §D5: desktop LCP, 1000 ms vs the web's 2500 ms
+    "cls_desktop": 0.10,  # splash hand-off must not shift the workspace
 }
 
 
@@ -208,12 +216,17 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
         )
         metrics["queue_10k_render_ms"] = render_ms
 
-        # --- React island 10k-row render (desktop shell) ----------------
-        # The desktop shell renders the queue through the React island, whose
-        # windowed path is independent of the legacy renderQueue(). Spin up a
-        # second context with the shell preconditions (__TAURI_INTERNALS__ +
-        # backend-ready) and measure one island windowed render of 10k rows.
-        # Budget: 500 ms (§D3/§124 once React owns the queue).
+        # --- desktop shell (Tauri) measurements -------------------------
+        # The desktop shell mounts the React islands and skips the legacy
+        # renderers, so its paint path is a separate code path from the web
+        # measurement above — measuring only the web context would leave the
+        # shipped desktop experience ungated. Spin up a second context with
+        # the shell preconditions (__TAURI_INTERNALS__ + backend-ready).
+        #
+        # §D5 budgets are more aggressive than the web ones on purpose: the
+        # shell serves assets from the local bundle (no network round trip)
+        # and owns sidecar startup, so LCP is budgeted at 1000 ms against the
+        # web's 2500 ms.
         island_render_ms = None
         try:
             shell_context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -224,6 +237,14 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
             # The island may render the empty state (no conversations) —
             # any React content proves the mount, so wait on :not(:empty).
             shell_page.wait_for_selector("#queueReactIsland:not(:empty)", timeout=30000)
+            shell_page.wait_for_timeout(1500)
+            shell_paint = shell_page.evaluate(metrics_script)
+            metrics["lcp_desktop_ms"] = shell_paint["lcp_ms"]
+            metrics["cls_desktop"] = shell_paint["cls"]
+
+            # 10k-row island render: the queue's windowed path through React
+            # is independent of the legacy renderQueue() measured above.
+            # Budget: 500 ms (§D3/§124 once React owns the queue).
             island_render_ms = shell_page.evaluate(
                 """
                 () => new Promise((resolve) => {
