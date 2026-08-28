@@ -3259,6 +3259,25 @@ window.addEventListener("helix-ticket-open", (event) => {
   if (!ticketId) return;
   void window.HelixModules?.ticketView?.openTicketDetail?.(ticketId);
 });
+// D3 bridge: the React queue island dispatches "helix-queue-select" when a
+// row is clicked (the legacy #conversationList is yielded and hidden in the
+// desktop shell). Bridge it back to the legacy detail loader, which owns the
+// conversation thread view until a later D3 slice migrates it.
+window.addEventListener("helix-queue-select", (event) => {
+  const { id } = event.detail || {};
+  if (!id) return;
+  void selectConversation(id);
+});
+// D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
+// row checkbox toggles (the legacy list is yielded in the desktop shell).
+// Mirror the legacy change handler so the bulk toolbar stays in sync.
+window.addEventListener("helix-queue-bulk", (event) => {
+  const { id, on } = event.detail || {};
+  if (!id) return;
+  if (on) state.bulkSelected.add(id);
+  else state.bulkSelected.delete(id);
+  renderBulkToolbar();
+});
 // UI 升级 §17.3: 管理页 — forms, member actions, webhook delete, refresh.
 renderWebhookEventCheckboxes();
 if (els.quotaForm) els.quotaForm.addEventListener("submit", (event) => void saveQuota(event));

@@ -47,7 +47,9 @@ export const ISLANDS = [
   // The ticket island owns the status filter + list; the legacy detail view
   // (#ticketDetailView) stays legacy until a later D3 slice migrates it.
   { name: "ticket", mountId: "ticketReactIsland", yieldsLegacy: ["ticketStatusFilter", "ticketList"] },
-  { name: "queue", mountId: "queueReactIsland" },
+  // The queue island owns the conversation list; the legacy strip controls
+  // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
+  { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },
   { name: "inspector", mountId: "inspectorReactIsland" },
   { name: "composer", mountId: "composerReactIsland" },
   // The command-palette island owns the Ctrl+K palette; the legacy

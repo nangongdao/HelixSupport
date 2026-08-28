@@ -77,6 +77,8 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   // ticket owns the status filter + list; the detail view stays legacy.
   assert.deepEqual(byName.ticket.yieldsLegacy, ["ticketStatusFilter", "ticketList"]);
   assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
+  // queue owns the conversation list; strip controls and bulk toolbar stay legacy.
+  assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList"]);
   // terminal has no legacy sibling.
   assert.equal(byName.terminal.yieldsLegacy, undefined);
 });

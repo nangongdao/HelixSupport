@@ -1,61 +1,61 @@
 /**
- * Helix Support — queue view React island (D3)
+ * Helix Support — conversation queue React island (D3)
  *
- * Migrates the conversation queue rendering to React, using useReducer with
- * the existing createQueueViewState/reduceQueueView from js/queue-view.js
- * (§43.6 framework-agnostic reducer triplets). The row markup mirrors the
- * legacy queueRowHtml output so visual gates and the 10k render test stay
- * valid. Virtual scrolling (windowed rendering) is preserved via
- * useSyncExternalStore-style scroll tracking — the algorithm from vqueue.js
- * is kept as-is since it is faster and already validated.
+ * Renders the conversation queue list in the desktop shell. Data flows
+ * through the legacy app.js: it owns polling, SSE, filters, pagination and
+ * calls renderQueue(), which in island mode publishes HELIX_QUEUE_UPDATED
+ * {conversations, selectedId, canOperate, queueHasMore, compact} instead of
+ * painting #conversationList. This island listens, renders the same row
+ * classes as queueRowHtml (so visual/axe/perf gates stay valid), and bridges
+ * row/checkbox interactions back via the legacy events:
+ *   helix-queue-select  {id}       → legacy selectConversation(id)
+ *   helix-queue-bulk    {id,on}    → legacy bulk checkbox toggle
+ * Legacy keeps owning the stripped controls #queueCount/#loadMore and the
+ * bulk toolbar (#bulkToolbar), so ui_smoke queue assertions stay green.
  *
- * Mounts into #queueReactIsland. The legacy #conversationList stays during
- * the dual-track period; #queuePane class assertions in ui_smoke are
- * unaffected (the island never touches #queuePane's class attribute).
+ * Mounts into #queueReactIsland (unhidden only when the build is at
+ * STATIC_ASSET_VERSION=1.4.0). In a plain browser tab the mount stays hidden
+ * and the legacy list renders as before — the island never mounts.
  *
  * See DESKTOP_TAURI_PLAN.md §3.1 + §D3 + §6.2.
  */
 
-import React, { useReducer, useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 
-/* ── §43.6 reducer (verbatim from queue-view.js) ────────────────────── */
+export const QUEUE_EVENTS = Object.freeze({
+  UPDATED: "helix-conversations-updated",
+  SELECT: "helix-queue-select",
+  BULK: "helix-queue-bulk",
+});
 
-function createQueueViewState() {
-  return {
-    virtual: false,
-    window: null,
-    windowSig: "",
-    rowHeight: 0,
-    measuring: false,
-  };
-}
+const VIRTUAL_THRESHOLD = 200;
+const ESTIMATED_ROW_HEIGHT = 72;
 
-function reduceQueueView(state, action) {
-  switch (action.type) {
-    case "set-conversations": {
-      if (!action.virtual) {
-        if (!state.virtual && state.window === null && !action.resetWindow) return state;
-        return { ...state, virtual: false, window: null, windowSig: "" };
-      }
-      if (state.virtual) return state;
-      return { ...state, virtual: true };
-    }
-    case "window-rendered":
-      return { ...state, window: action.window, windowSig: action.windowSig ?? state.windowSig };
-    case "exit-virtual": {
-      if (!state.virtual && state.window === null) return state;
-      return { ...state, virtual: false, window: null, windowSig: "" };
-    }
-    case "measure-row":
-      return { ...state, rowHeight: action.rowHeight, measuring: Boolean(action.measuring) };
-    default:
-      return state;
+/* ── status labels (backend enum, mirror legacy statusLabel) ──────────── */
+
+const STATUS_LABELS = {
+  open: "自动处理中",
+  waiting_human: "等待人工",
+  human_active: "人工处理中",
+  resolved: "已解决",
+};
+
+/* ── SLA text (mirror legacy formatSla) ────────────────────────────────── */
+
+function formatSla(conversation) {
+  if (conversation.status === "resolved") return { text: "已完成", breached: false };
+  if (!conversation.sla_due_at) return { text: "SLA -", breached: false };
+  const milliseconds = new Date(conversation.sla_due_at).getTime() - Date.now();
+  const minutes = Math.ceil(Math.abs(milliseconds) / 60000);
+  if (milliseconds < 0 || conversation.sla_breached) {
+    return { text: `超时 ${minutes} 分钟`, breached: true };
   }
+  if (minutes < 60) return { text: `剩余 ${minutes} 分钟`, breached: false };
+  return { text: `剩余 ${Math.ceil(minutes / 60)} 小时`, breached: false };
 }
 
-/* ── windowing math (from vqueue.js) ──────────────────────────────────── */
+/* ── windowing math (from vqueue.js) ───────────────────────────────────── */
 
 function computeWindow({ total, scrollTop, viewport, rowHeight, overscan }) {
   if (total <= 0 || rowHeight <= 0) {
@@ -69,24 +69,12 @@ function computeWindow({ total, scrollTop, viewport, rowHeight, overscan }) {
   return { first, last, topPad, bottomPad };
 }
 
-const VIRTUAL_THRESHOLD = 200;
-const ESTIMATED_ROW_HEIGHT = 72;
-
-/* ── status labels ────────────────────────────────────────────────────── */
-
-const STATUS_LABELS = {
-  open: "待处理",
-  pending: "待响应",
-  active: "处理中",
-  resolved: "已解决",
-  closed: "已关闭",
-};
-
 /* ── row component (mirrors legacy queueRowHtml class names) ─────────── */
 
-function QueueRow({ conversation, active, selected, canOperate, compact, onSelect }) {
+function QueueRow({ conversation, active, selected, canOperate, compact, onSelect, onToggleBulk }) {
   const route = conversation.assigned_agent || conversation.intent || "待路由";
   const labels = conversation.labels || [];
+  const sla = formatSla(conversation);
   return (
     <div className={`conversation-row${canOperate ? " has-selection" : ""}${selected ? " is-selected" : ""}`}>
       {canOperate && (
@@ -98,6 +86,10 @@ function QueueRow({ conversation, active, selected, canOperate, compact, onSelec
             aria-label={`选择 ${conversation.customer_name}`}
             checked={selected}
             readOnly
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleBulk(conversation.id, e.currentTarget.checked);
+            }}
           />
         </label>
       )}
@@ -134,7 +126,7 @@ function QueueRow({ conversation, active, selected, canOperate, compact, onSelec
             {route}
             {conversation.claim_active ? ` · 认领 ${conversation.claimed_by}` : ""}
           </span>
-          <span className="item-sla">{conversation.sla_text || ""}</span>
+          <span className={`item-sla${sla.breached ? " is-breached" : ""}`}>{sla.text}</span>
         </span>
       </button>
     </div>
@@ -144,34 +136,34 @@ function QueueRow({ conversation, active, selected, canOperate, compact, onSelec
 /* ── queue island ──────────────────────────────────────────────────────── */
 
 function QueueIsland() {
-  const [queueState, dispatch] = useReducer(reduceQueueView, undefined, createQueueViewState);
+  const [snapshot, setSnapshot] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const listRef = useRef(null);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["conversations"],
-    queryFn: async () => {
-      const res = await fetch("/api/conversations", {
-        headers: { "X-Tenant-Id": "demo" },
-      });
-      if (!res.ok) throw new Error(`conversations API ${res.status}`);
-      return res.json();
-    },
-    staleTime: 5_000,
-  });
+  // The legacy app.js owns the queue data lifecycle (polling, SSE, filters,
+  // pagination) and publishes every renderQueue() as a plain DOM event.
+  // React state is deliberately NOT the authority — the island is a mirror.
+  useEffect(() => {
+    const onUpdate = (event) => {
+      setSnapshot(event.detail || null);
+      setSelectedId(event.detail?.selectedId ?? null);
+      setBulkSelected(
+        event.detail?.bulkSelected
+          ? new Set(event.detail.bulkSelected)
+          : new Set(),
+      );
+    };
+    window.addEventListener(QUEUE_EVENTS.UPDATED, onUpdate);
+    return () => window.removeEventListener(QUEUE_EVENTS.UPDATED, onUpdate);
+  }, []);
 
-  const conversations = Array.isArray(data) ? data : data?.items || [];
+  const conversations = snapshot?.conversations || [];
+  const canOperate = Boolean(snapshot?.canOperate);
+  const compact = Boolean(snapshot?.compact);
   const rowHeight = ESTIMATED_ROW_HEIGHT;
   const useVirtual = conversations.length > VIRTUAL_THRESHOLD;
-
-  // Dispatch set-conversations when the list changes.
-  useEffect(() => {
-    dispatch({ type: "set-conversations", virtual: useVirtual, resetWindow: true });
-  }, [useVirtual]);
-
-  // Compute the visible window for virtual scrolling.
   const viewport = listRef.current?.clientHeight || 600;
   const win = useVirtual
     ? computeWindow({ total: conversations.length, scrollTop, viewport, rowHeight, overscan: 4 })
@@ -183,24 +175,22 @@ function QueueIsland() {
 
   const handleSelect = useCallback((id) => {
     setSelectedId(id);
-    window.dispatchEvent(new CustomEvent("helix-queue-select", { detail: { id } }));
+    window.dispatchEvent(new CustomEvent(QUEUE_EVENTS.SELECT, { detail: { id } }));
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="queue-loading" role="status" aria-label="队列加载中">
-        正在同步会话队列
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="qc-error" role="alert">
-        队列加载失败：{String(error.message || error)}
-      </div>
-    );
-  }
+  const handleToggleBulk = useCallback((id, on) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      window.dispatchEvent(new CustomEvent(QUEUE_EVENTS.BULK, { detail: { id, on } }));
+      return next;
+    });
+  }, []);
 
+  if (!snapshot) {
+    return <div className="queue-loading" role="status" aria-label="队列加载中">正在同步会话队列</div>;
+  }
   if (!conversations.length) {
     return <div className="queue-empty">当前筛选条件下没有会话</div>;
   }
@@ -211,7 +201,6 @@ function QueueIsland() {
 
   return (
     <div className="queue-island">
-      <div className="queue-count">{conversations.length} 个会话</div>
       <div
         ref={listRef}
         className="conversation-list"
@@ -228,9 +217,10 @@ function QueueIsland() {
             conversation={conv}
             active={conv.id === selectedId}
             selected={bulkSelected.has(conv.id)}
-            canOperate={true}
-            compact={false}
+            canOperate={canOperate}
+            compact={compact}
             onSelect={handleSelect}
+            onToggleBulk={handleToggleBulk}
           />
         ))}
         {win && win.bottomPad > 0 && (
@@ -246,15 +236,8 @@ function QueueIsland() {
  * @param {HTMLElement} element - mount point
  */
 export function mount(element) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { refetchOnWindowFocus: false } },
-  });
   const root = createRoot(element);
-  root.render(
-    <QueryClientProvider client={queryClient}>
-      <QueueIsland />
-    </QueryClientProvider>,
-  );
+  root.render(<QueueIsland />);
 }
 
 export default { mount, QueueIsland };

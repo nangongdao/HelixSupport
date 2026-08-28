@@ -189,6 +189,24 @@ export function renderQueue() {
   els.loadMore.hidden = !state.queueHasMore;
   els.loadMore.disabled = state.queueLoadingMore;
   els.loadMore.setAttribute("aria-busy", String(state.queueLoadingMore));
+  // Island mode: the React queue island owns the list DOM. Publish the
+  // snapshot the island mirrors and stop painting #conversationList (kept
+  // hidden by the loader) — the strip controls remain legacy-owned above.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(
+      new CustomEvent("helix-conversations-updated", {
+        detail: {
+          conversations: state.conversations,
+          selectedId: state.selectedId,
+          bulkSelected: [...state.bulkSelected],
+          queueHasMore: state.queueHasMore,
+          canOperate: ctx.canOperate(),
+          compact: ctx.isCompactDensity(state.density, state.lowPerf),
+        },
+      }),
+    );
+    return;
+  }
   els.list.setAttribute("aria-busy", "false");
   if (!state.conversations.length) {
     els.loadMore.hidden = true;
@@ -216,6 +234,8 @@ export function renderQueue() {
 
 export function renderLoadingQueue() {
   const els = ctx.els;
+  // Island mode: the React queue island owns the list DOM (see renderQueue).
+  if (window.__HELIX_ISLAND_MODE__) return;
   els.list.setAttribute("aria-busy", "true");
   els.list.innerHTML = '<div class="queue-loading">正在同步会话队列</div>';
 }

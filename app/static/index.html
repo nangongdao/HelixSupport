@@ -229,12 +229,11 @@
             </button>
           </div>
           <div id="conversationList" class="conversation-list" aria-live="polite" aria-busy="false"></div>
-          <!-- D3 React island mount (queue-view domain). The legacy
-               #conversationList above stays during dual-track; the React
-               island renders into this parallel container with the same
-               row class names so ui_smoke #queuePane class assertions stay
-               green. #queuePane itself is not touched. -->
-          <div id="queueReactIsland" class="queue-react-island" hidden></div>
+          <!-- D3 React island mount (queue-view domain). The island takes
+               over the list rendering in the desktop shell; the legacy
+               #conversationList above is yielded (hidden) once the island
+               mounts, and stays the surface in a plain browser tab. -->
+          <div id="queueReactIsland" class="queue-react-island"></div>
           <div id="ticketPane" class="ticket-pane" hidden>
             <div class="ticket-filters">
               <label class="filter-field">

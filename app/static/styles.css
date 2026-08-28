@@ -253,10 +253,12 @@ button:active:not(:disabled) {
   to { opacity: 0; transform: translateY(100%); }
 }
 
-/* SLA breathing warning (transform/opacity only) */
+/* SLA breathing warning (transform/opacity only). The opacity floor stays
+   high (0.9) so the blended text color keeps ≥4.5:1 on both themes —
+   at 0.7 the light-theme --red dropped to 3.39:1 under axe sampling. */
 @keyframes sla-breathe {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(1.02); }
+  50% { opacity: 0.9; transform: scale(1.02); }
 }
 
 .item-sla.is-breached {
@@ -1738,6 +1740,36 @@ body.is-low-perf #perfHint {
   scrollbar-gutter: stable;
 }
 
+/* D3 queue island: same sizing contract as the legacy list it mirrors.
+   `:empty` keeps the unmounted mount point (plain browser tab) at zero
+   footprint — it only takes flex space once React paints into it. */
+.queue-react-island {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-react-island:empty {
+  display: none;
+}
+
+.queue-react-island > .queue-island {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-react-island .conversation-list {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .conversation-row {
   position: relative;
   margin-bottom: 8px;
@@ -3035,7 +3067,8 @@ body.is-inspector-collapsed .inspector-surface {
 .queue-pane[data-mode="tickets"] .queue-controls,
 .queue-pane[data-mode="tickets"] #bulkToolbar,
 .queue-pane[data-mode="tickets"] #conversationList,
-.queue-pane[data-mode="tickets"] .queue-footer {
+.queue-pane[data-mode="tickets"] .queue-footer,
+.queue-pane[data-mode="tickets"] .queue-react-island {
   display: none;
 }
 
