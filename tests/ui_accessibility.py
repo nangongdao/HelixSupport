@@ -222,6 +222,9 @@ def main() -> None:
 
         assert_desktop_focus_order(page)
         page.evaluate("() => window.HelixModules.applyTheme('dark')")
+        # Scan settled theme tokens, not the transient colors during the CSS
+        # transition (same settle window as the light scan below).
+        page.wait_for_timeout(300)
         assert_no_serious_axe_violations(page, "operator dark theme")
         theme_toggle = page.locator("#themeToggle")
         theme_toggle.focus()

@@ -3278,6 +3278,13 @@ window.addEventListener("helix-queue-bulk", (event) => {
   else state.bulkSelected.delete(id);
   renderBulkToolbar();
 });
+// D3 bridge: on mount the React queue island asks for the current queue
+// snapshot (helix-conversations-sync); re-render in island mode so the
+// freshly mounted island receives the latest list via renderQueue().
+window.addEventListener("helix-conversations-sync", () => {
+  if (!window.__HELIX_ISLAND_MODE__) return;
+  void window.HelixModules?.queueView?.renderQueue?.();
+});
 // UI 升级 §17.3: 管理页 — forms, member actions, webhook delete, refresh.
 renderWebhookEventCheckboxes();
 if (els.quotaForm) els.quotaForm.addEventListener("submit", (event) => void saveQuota(event));

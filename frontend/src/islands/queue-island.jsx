@@ -25,6 +25,7 @@ import { createRoot } from "react-dom/client";
 
 export const QUEUE_EVENTS = Object.freeze({
   UPDATED: "helix-conversations-updated",
+  SYNC: "helix-conversations-sync",
   SELECT: "helix-queue-select",
   BULK: "helix-queue-bulk",
 });
@@ -156,6 +157,10 @@ function QueueIsland() {
       );
     };
     window.addEventListener(QUEUE_EVENTS.UPDATED, onUpdate);
+    // The desktop shell mounts islands after the legacy first render, so a
+    // snapshot may have already been published without a listener. Ask the
+    // legacy side to re-publish the current state once on mount.
+    window.dispatchEvent(new CustomEvent(QUEUE_EVENTS.SYNC));
     return () => window.removeEventListener(QUEUE_EVENTS.UPDATED, onUpdate);
   }, []);
 
