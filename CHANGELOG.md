@@ -27,9 +27,20 @@
 
 - 68d0c33 把 `app.js` 从 3,258 行 legacy 裁成 481 行胶水版(依赖 React 岛渲染),但 web 浏览器(无 `dist/`)下岛不渲染、胶水版无 legacy 渲染能力导致 web 空白。恢复完整 3,279 行 legacy `app.js` 作 web 双轨主渲染器;桌面壳分支仍用 481 行胶水版 + 岛渲染。**双轨架构现状**:web 浏览器 = legacy app.js 主渲染(岛全部跳过);Tauri 桌面壳 = dist 构建后岛渲染(481 行胶水版激活)。
 
-### Gates
+### D5 门禁收口(2026-08-28)
 
-- frontend gate 155 tests(含 7 vitest);performance gate 静态 JS 552KB/700KB + CSS 91KB/125KB;pytest 全量绿;cargo check + clippy clean;sidecar smoke 2.56s;Vite build 1.48s;visual gate 四面 0% drift(clean DB 基线重引导);ui_smoke + ui_accessibility 旅程绿。
+- **桌面壳性能预算**(`scripts/performance_gate.py`,^45b87f5):新增 `lcp_desktop_ms`(≤1000ms,严于 web 的 2500ms——桌面资源来自本地包,唯一变量是自身渲染成本)与 `cls_desktop`(≤0.10,防止 splash 交班把工作区顶偏)两项浏览器层预算。此前浏览器层只测 web 加载,桌面这条路径处于无人看守状态;现在复用岛 10k 渲染已搭好的壳前置条件上下文(`__TAURI_INTERNALS__` + `helix-backend-ready`)一并测量。本机实测:桌面 LCP 356–480ms、CLS 0.0036、岛 10k 渲染 33ms(预算 500ms)、web LCP 404ms。基线 `artifacts/performance-baseline.json` 已按新口径重写。
+- **桌面壳无障碍验收**(`tests/ui_accessibility.py`,^4c21dc8):新增桌面壳 pass(`wait_for_desktop_shell` + `assert_desktop_shell_accessibility`),在 Tauri 前置条件下等岛挂载后跑 axe 明暗双主题 + reduced-motion。**D3 岛接管后桌面发货的 DOM 此前零覆盖**——原套件始终只扫 legacy 渲染、且队列恒为空。新 pass 经 `helix-conversations-updated` 事件注入四种状态的合成会话(与生产同通道、确定性,不依赖库里碰巧有什么数据),使扫描真正覆盖行标记而非空态。
+- **前端门测试计数修复**(`scripts/frontend_gate.py`,^893659d):Node 测试运行器按 stdout 是否 TTY 选择 reporter——交互式输出 `ℹ pass N`,管道输出(CI 及一切 `subprocess.run` 捕获)输出 `# pass N`。旧解析只认前一种,计数恒为 0,`MIN_TESTS=30` 断言失败,本地前端门一直是红的,且失败形态与「一个测试都没跑」无法区分。新增 `_parse_summary()` 兼容两种形态,解析不到摘要时显式报错而非静默报 0;`tests/test_frontend_gate.py` 补 3 例(TAP/spec/无法识别)。
+
+### Fixed
+
+- **亮色主题 amber 状态徽标对比度不足**(^d92236c):`.status-pill.waiting_human` 以 `--color-amber` 文字压在 `--color-amber-soft` 叠行底色上,实测 **3.99:1**,低于 11px 文字要求的 4.5:1。该缺陷在历次 axe 运行中全部存活——徽标只在队列有行时渲染,而旧扫描面对的永远是空队列。桌面壳 pass 注入数据后首轮即被抓出。`--color-amber` 亮色值 `#8a6512` → `#6f5010`(5.58:1),与同背景的兄弟状态色对齐(green 6.17:1 / violet 5.91:1 / blue 4.85:1),soft 色调同步重算保留琥珀倾向。
+
+### Gates(2026-08-28 复跑)
+
+- frontend gate **165** tests + vitest **19**;performance gate 静态 JS 599KB/700KB + CSS 97KB/125KB,浏览器层 web + 桌面壳双上下文全绿;visual gate 四面 **0.00% drift**(令牌改动未波及 clean DB 基线);ui_smoke + ui_accessibility(含新增桌面壳 pass)旅程绿;`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿。
+- 注:本机 ruff 0.16.5 默认规则集宽于项目开发期(CI 固定 `ruff>=0.9,<1`),全仓 372 项报告属版本差异,非本次改动引入;本次改动未新增告警(并顺带消掉 1 项 PIE810)。
 
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
