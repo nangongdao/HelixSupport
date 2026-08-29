@@ -102,6 +102,9 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
     "saveView",
     "deleteView",
   ]);
+  // mentions owns the badge (portal) and panel drawer; mark-read and jumps
+  // stay legacy via helix-mentions-mark-read/-open-jump/-changed.
+  assert.deepEqual(byName.mentions.yieldsLegacy, ["mentionsBadge", "mentionsPanel"]);
   // admin owns the whole card grid: quota/members/webhooks/reports/CSAT/
   // SLA/routing; the denial panel (#adminDenied) and header stay legacy.
   assert.deepEqual(byName.admin.yieldsLegacy, [

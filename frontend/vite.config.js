@@ -68,6 +68,7 @@ export default defineConfig({
         "conversation-dialog": resolve(__dirname, "src/islands/conversation-dialog-island.jsx"),
         "workspace-tabs": resolve(__dirname, "src/islands/workspace-tabs-island.jsx"),
         "saved-views": resolve(__dirname, "src/islands/saved-views-island.jsx"),
+        mentions: resolve(__dirname, "src/islands/mentions-island.jsx"),
         inspector: resolve(__dirname, "src/islands/inspector-island.jsx"),
         composer: resolve(__dirname, "src/islands/composer-island.jsx"),
         "command-palette": resolve(__dirname, "src/islands/command-palette-island.jsx"),

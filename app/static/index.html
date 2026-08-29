@@ -285,8 +285,16 @@
               <svg class="icon"><use href="/static/icons.svg?v=1.4.0#at-sign" /></svg>
               <span id="mentionsCount" class="mentions-count">0</span>
             </button>
+            <!-- D3 React island portal target (mentions badge). The island
+                 renders its badge here in island mode; the legacy badge
+                 above is yielded (hidden). -->
+            <div id="mentionsBadgeReactIsland" class="mentions-badge-react-island"></div>
             <span id="liveStatus" class="live-dot" title="队列同步状态">LIVE</span>
           </div>
+          <!-- D3 React island mount (mentions panel). The legacy panel
+               below stays during the dual-track period; the React island
+               renders into this container and takes over in island mode. -->
+          <div id="mentionsPanelReactIsland"></div>
           <div id="mentionsPanel" class="mentions-panel" role="dialog" aria-label="我的被提及" hidden></div>
         </aside>
 

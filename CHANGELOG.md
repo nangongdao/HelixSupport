@@ -108,6 +108,12 @@
 - **真机 CDP 抓住 mount 缺 Provider 缺陷**:岛的 `mount()` 忘了包 `QueryClientProvider` 而组件用 `useQueryClient`——真机启动 React 抛 "No QueryClient set",岛容器静默为空;组件测试各自包 provider 故测不出,只有桌面 boot 路径会踩中。修复 mount 并在注释记录该测试盲区。
 - **验证**:vitest **119** 例(+9:select 装载/类契约/apply 桥带完整 view/提示词保存桥/取消不发桥/changed 重选/删除清选/失败不动选择);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建后 `desktop/verify_saved_views_desktop.py` CDP 真机验证:legacy 让位、保存(POST 201 + 提示词 + 岛重选)、应用(改写 legacy 过滤输入 + 触发新队列请求)、删除(DELETE + 选择清空)全旅程绿。
 
+### D3 长尾:mentions 岛接管提及收件箱(2026-08-29)
+
+- **mentions 岛**(`frontend/src/islands/mentions-island.jsx`):提及徽标(经 React portal 渲染进 footer 的挂载点,与 legacy live dot 同排)与提及面板抽屉由 React 岛渲染,legacy `#mentionsBadge`/`#mentionsPanel` 经 yieldsLegacy 让位。镜像 legacy 语义:未读 0 且面板关闭时徽标隐藏、打开面板时拉取 `/api/mentions`、外点关闭(bindSession parity)、`conversation:read` 权限门经 helix-identity 广播。写生命周期留 legacy——标记已读(`POST /read` + toast)与跳转会话经 `helix-mentions-mark-read`/`-open-jump` 桥,完成派发 `-changed` 让岛 refetch。徽标 portal 容器缺失时内联回退,DOM 回归不会拖垮整岛。
+- **能力边界记录**:真实提及种子需要第二作者会话(后端跳过自我提及),CDP 旅程以空收件箱路径验证(徽标隐藏 parity/程序化开面板/真实 API 空态/外点关闭),jump 与 mark-read 桥由组件测试锁定派发契约。
+- **验证**:vitest **127** 例(+8:权限门/徽标可见性两态/面板行渲染/空态/跳转桥/已读桥 + changed refetch/外点关闭);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(mentions chunk 4.1KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_mentions_island_desktop.py` CDP 真机验证:legacy 让位、0 未读徽标隐藏、程序化开面板渲染真实空态、打开时徽标可见、外点关闭、真实 API 已请求。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

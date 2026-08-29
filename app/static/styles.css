@@ -1531,8 +1531,9 @@ a.knowledge-source:hover {
 /* D3: the React saved-views island mount dissolves into the tools grid —
    its children take the grid cells of the legacy controls while those are
    yielded (hidden → display:none drops them from the grid) in island
-   mode. */
-.saved-views-react-island {
+   mode. Same trick for the mentions badge mount inside the footer flex. */
+.saved-views-react-island,
+.mentions-badge-react-island {
   display: contents;
 }
 

@@ -3729,6 +3729,16 @@ window.addEventListener("helix-workspace-tab", (event) => {
   if (!["queue", "tickets"].includes(field)) return;
   window.HelixModules?.ticketView?.switchWorkspaceTab?.(field);
 });
+// D3 bridge (mentions island): the island owns the badge/panel; jumping to
+// a mentioned conversation and the mark-read POST+toast stay legacy.
+window.addEventListener("helix-mentions-open-jump", async (event) => {
+  const { conversationId } = event.detail || {};
+  if (conversationId) await selectConversation(conversationId);
+});
+window.addEventListener("helix-mentions-mark-read", async (event) => {
+  const { id } = event.detail || {};
+  if (id) await window.HelixModules?.session?.markMentionRead?.(id);
+});
 // D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
 // row checkbox toggles (the legacy list is yielded in the desktop shell).
 // Mirror the legacy change handler so the bulk toolbar stays in sync.

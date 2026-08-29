@@ -112,6 +112,14 @@ export const ISLANDS = [
     mountId: "savedViewsReactIsland",
     yieldsLegacy: ["savedViewField", "saveView", "deleteView"],
   },
+  // The mentions island owns the inbox badge (portal into the footer) and
+  // the panel drawer; mark-read and conversation jumps stay legacy via
+  // helix-mentions-mark-read/-open-jump/-changed.
+  {
+    name: "mentions",
+    mountId: "mentionsPanelReactIsland",
+    yieldsLegacy: ["mentionsBadge", "mentionsPanel"],
+  },
   { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
