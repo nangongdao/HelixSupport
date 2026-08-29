@@ -7,6 +7,39 @@ use supervisor::{shutdown, start_backend, ensure_alive, flush_telemetry,
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
+/// Navigate the webview to the sidecar's own origin.
+///
+/// The operator console's HTML references assets as ``/static/...`` and calls
+/// APIs at ``/api/...`` — both are served by the backend. Loading the
+/// frontendDist snapshot instead breaks every absolute URL under
+/// ``tauri://localhost`` (real-machine smoke caught the unstyled, never-
+/// initializing page), so the shell only uses the bundled snapshot as the
+/// splash frame and navigates to the live server once it is ready.
+fn navigate_to_backend(window: &tauri::WebviewWindow, port: u16) {
+    let url: tauri::Url = format!("http://127.0.0.1:{port}/").parse().expect("backend url");
+    if let Err(e) = window.navigate(url) {
+        eprintln!("[desktop] navigate failed: {e}");
+    }
+}
+
+/// Script injected into the server page once it finishes loading: exposes
+/// the backend port and fires the readiness event main.js waits on. The
+/// invoke bridge runs the ui_ready command so startup telemetry records
+/// t_ui_ready_ms (the IPC bridge works on the remote origin through the
+/// main-capability remote URLs entry).
+const PAGE_INJECT: &str = r#"
+window.__HELIX_BACKEND__ = window.__HELIX_BACKEND__ || { backendPort: location.port };
+window.__HELIX_SHELL_PAGE__ = true;
+window.dispatchEvent(new Event('helix-backend-ready'));
+// Record UI-ready straight from the injection (the event listener in
+// main.js also fires, but only one needs to reach the shell; keep the
+// direct call because on_page_load timing versus module execution has
+// proven fragile across navigations).
+try {
+  window.__TAURI_INTERNALS__.invoke('ui_ready').catch(() => {});
+} catch (_) {}
+"#;
+
 struct AppState {
     supervisor: SupervisorState,
     /// Process-origin timestamp (ms since unix epoch) for relative telemetry deltas.
@@ -82,7 +115,9 @@ pub fn run() {
             );
 
             // Spawn the backend in a background thread so the window paints
-            // immediately (splash-first cold start).
+            // immediately (splash-first cold start). Once the sidecar answers
+            // /health/ready, navigate the webview to the server origin — the
+            // bundled frontendDist page is only the splash frame.
             let boot = handle.state::<AppState>().boot_start_ms;
             let h = handle.clone();
             std::thread::spawn(move || {
@@ -90,10 +125,7 @@ pub fn run() {
                 match start_backend(&app_state.supervisor, Some(&h), boot) {
                     Ok(port) => {
                         if let Some(win) = h.get_webview_window("main") {
-                            let _ = win.eval(format!(
-                                "window.__HELIX_BACKEND__ = {{ port: {port}, readyAt: performance.now() }};\
-                                 window.dispatchEvent(new Event('helix-backend-ready'));"
-                            ));
+                            navigate_to_backend(&win, port);
                         }
                     }
                     Err(e) => {
@@ -122,17 +154,35 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 let app_state = watch_handle.state::<AppState>();
-                if let Err(msg) = ensure_alive(
+                let was_restarted = match ensure_alive(
                     &app_state.supervisor,
                     Some(&watch_handle),
                     app_state.boot_start_ms,
                 ) {
-                    // Budget exhausted — surface a dialog once.
-                    let h2 = watch_handle.clone();
-                    std::thread::spawn(move || {
-                        h2.dialog().message(&msg).show(|_| {});
-                    });
-                    break;
+                    Ok(restarted) => restarted,
+                    Err(msg) => {
+                        // Budget exhausted — surface a dialog once.
+                        let h2 = watch_handle.clone();
+                        std::thread::spawn(move || {
+                            h2.dialog().message(&msg).show(|_| {});
+                        });
+                        break;
+                    }
+                };
+                if was_restarted {
+                    // Auto-restart binds a fresh port; re-point the webview.
+                    if let Some(win) = watch_handle.get_webview_window("main") {
+                        let port = watch_handle
+                            .state::<AppState>()
+                            .supervisor
+                            .telemetry
+                            .lock()
+                            .unwrap()
+                            .backend_port;
+                        if let Some(port) = port {
+                            navigate_to_backend(&win, port);
+                        }
+                    }
                 }
             });
 
@@ -143,6 +193,16 @@ pub fn run() {
                 )
             );
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            // The server page has all assets/API same-origin; after it loads,
+            // fire the readiness event main.js waits on (and re-fire on the
+            // watchdog-driven re-navigations after a backend restart).
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && payload.url().as_str().starts_with("http://127.0.0.1:")
+            {
+                let _ = webview.eval(PAGE_INJECT);
+            }
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {

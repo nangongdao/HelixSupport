@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- **桌面壳资源路径断裂(真机 GUI 冒烟发现,2026-08-29)**:`frontendDist` 嵌入模式下 webview 直接加载 `index.html`,但页面所有资源是 `/static/...` 绝对路径(为 uvicorn StaticFiles 设计),`tauri://localhost` 下全部 404——真机窗口渲染裸 HTML 骨架(无 CSS/JS),UI 永不初始化,`t_ui_ready_ms` 恒 null。修复:壳只在启动帧显示内置 splash 页,后端就绪后 `WebviewWindow::navigate` 到 sidecar 自身 origin(`http://127.0.0.1:<port>/`),资源与 API 全部同源成立;watchdog 自动重启绑定新端口后重新导航。`on_page_load` 在服务端页面加载完成后注入 `__HELIX_BACKEND__` 并派发 `helix-backend-ready`、直调 `ui_ready`(on_page_load 与 module 执行时序跨导航已证不稳,直调兜底)。远程页面 IPC 需显式 ACL 授权:`build.rs` 用 `AppManifest::commands` 为 7 个自定义命令自动生成 `allow-*` 权限,`capabilities/main.json` 配 `remote.urls=["http://127.0.0.1:*"]` + 权限授予。真机复验:窗口渲染完整深色控制台,三时间戳 window 969ms / backend 3306ms / ui_ready 3872ms,API 200,关窗优雅停机无残留。
 - **亮色主题 amber 状态徽标对比度不足**(^d92236c):`.status-pill.waiting_human` 以 `--color-amber` 文字压在 `--color-amber-soft` 叠行底色上,实测 **3.99:1**,低于 11px 文字要求的 4.5:1。该缺陷在历次 axe 运行中全部存活——徽标只在队列有行时渲染,而旧扫描面对的永远是空队列。桌面壳 pass 注入数据后首轮即被抓出。`--color-amber` 亮色值 `#8a6512` → `#6f5010`(5.58:1),与同背景的兄弟状态色对齐(green 6.17:1 / violet 5.91:1 / blue 4.85:1),soft 色调同步重算保留琥珀倾向。
 
 ### Gates(2026-08-28 复跑)
