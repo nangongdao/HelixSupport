@@ -48,6 +48,25 @@ export const ISLANDS = [
   // The ticket island owns the status filter + list; the legacy detail view
   // (#ticketDetailView) stays legacy until a later D3 slice migrates it.
   { name: "ticket", mountId: "ticketReactIsland", yieldsLegacy: ["ticketStatusFilter", "ticketList"] },
+  // The admin island owns the whole #adminContent card grid (quota,
+  // members, webhooks, report subscriptions/export, CSAT, SLA, routing).
+  // Writes bridge back to legacy (helix-admin-*) so api()/toast/confirm
+  // stay in one place; queries stay disabled until helix-identity reports
+  // admin:manage, so a non-admin island never issues privileged requests.
+  {
+    name: "admin",
+    mountId: "adminReactIsland",
+    yieldsLegacy: [
+      "adminQuotaCard",
+      "adminMembersCard",
+      "adminWebhooksCard",
+      "adminReportSubsCard",
+      "adminReportExportCard",
+      "adminCsatCard",
+      "adminSlaCard",
+      "adminRoutingCard",
+    ],
+  },
   // The queue island owns the conversation list; the legacy strip controls
   // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
   { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },

@@ -2295,6 +2295,15 @@ async function loadAdminView() {
   }
   if (els.adminDenied) els.adminDenied.hidden = true;
   if (els.adminContent) els.adminContent.hidden = false;
+  // Island mode: the admin island owns the whole card grid and fetches via
+  // react-query. Fetching here would only fill the yielded legacy cards and
+  // double every request, so hand the refresh over. The denied/content
+  // toggling above stays legacy on purpose — the denial panel lives outside
+  // the yielded cards and the island renders nothing for non-admins.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent("helix-admin-refresh", { detail: { force: false } }));
+    return;
+  }
   const tenantId = adminTenantId();
   try {
     const [quota, members, webhooks] = await Promise.all([
@@ -2429,6 +2438,278 @@ async function deleteWebhook(id) {
   }
 }
 
+/* ── D3 bridge (admin island) ──────────────────────────────────────────
+ * The React admin island owns the whole card grid in the desktop shell and
+ * dispatches helix-admin-* events with form payloads instead of writing
+ * through the yielded legacy forms. Each bridge below keeps the legacy
+ * api()/toast/confirm contract for its domain and reports the outcome via
+ * helix-admin-saved {ok, domains} so the island refetches exactly the
+ * queries a write touched. */
+
+const ADMIN_REPORT_TYPE_LABELS = { quality: "质量报表", usage: "使用量报表" };
+
+function dispatchAdminSaved(ok, domains) {
+  window.dispatchEvent(new CustomEvent("helix-admin-saved", { detail: { ok, domains } }));
+}
+
+async function saveQuotaFromIsland({ conversation_quota: conversations, storage_quota_bytes: storage } = {}) {
+  const body = {};
+  if (conversations != null) body.conversation_quota = Number(conversations);
+  if (storage != null) body.storage_quota_bytes = Number(storage);
+  if (!Object.keys(body).length) return;
+  let ok = false;
+  try {
+    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/quota`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    ok = true;
+    showToast("配额已更新");
+  } catch (error) {
+    showToast(`配额保存失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["quota"]);
+  }
+}
+
+async function inviteMemberFromIsland({ actorId, role } = {}) {
+  if (!actorId) return;
+  let ok = false;
+  try {
+    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members`, {
+      method: "POST",
+      body: JSON.stringify({ actor_id: actorId, role: role || "operator" }),
+    });
+    ok = true;
+    showToast("成员已邀请");
+  } catch (error) {
+    showToast(`邀请失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["members"]);
+  }
+}
+
+async function changeMemberRoleFromIsland({ actorId, role } = {}) {
+  if (!actorId || !role) return;
+  // Phase 32.1 audit (client-side self-guard): the backend rejects demoting
+  // yourself; surface the message before the round-trip so the UX is clear.
+  if (actorId === (state.me?.actor_id || "") && role !== "admin") {
+    showToast("不能把自己的角色降级——至少保留一位管理员", true);
+    return;
+  }
+  let ok = false;
+  try {
+    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    });
+    ok = true;
+  } catch (error) {
+    showToast(`角色变更失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["members"]);
+  }
+}
+
+async function deactivateMemberFromIsland({ actorId } = {}) {
+  if (!actorId) return;
+  // Phase 32.1 audit (client-side self-guard): the backend rejects this.
+  if (actorId === (state.me?.actor_id || "")) {
+    showToast("不能停用自己——请先指派另一位管理员", true);
+    return;
+  }
+  let ok = false;
+  try {
+    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}/deactivate`, {
+      method: "POST",
+      body: "{}",
+    });
+    ok = true;
+  } catch (error) {
+    showToast(`停用失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["members"]);
+  }
+}
+
+async function registerWebhookFromIsland({ url, secret, events } = {}) {
+  const hookUrl = (url || "").trim();
+  const hookSecret = (secret || "").trim();
+  const hookEvents = Array.isArray(events) ? events : [];
+  if (!hookUrl || !hookSecret || !hookEvents.length) {
+    showToast("请填写 URL、密钥并至少选择一个事件", true);
+    return;
+  }
+  let ok = false;
+  try {
+    await api("/api/webhooks", {
+      method: "POST",
+      body: JSON.stringify({ url: hookUrl, events: hookEvents, secret: hookSecret }),
+    });
+    ok = true;
+    showToast("Webhook 已注册");
+  } catch (error) {
+    showToast(`Webhook 注册失败：${error.message || error}`, true);
+  } finally {
+    // 报表订阅的下拉选项来自 active webhooks — 两者一起失效。
+    dispatchAdminSaved(ok, ["webhooks", "subscriptions"]);
+  }
+}
+
+async function deleteWebhookFromIsland({ id } = {}) {
+  if (!id) return;
+  // Phase 32.1 audit: the confirm() prompt stays in legacy, exactly like
+  // the knowledge island's retire flow.
+  if (!window.confirm("确认删除该 Webhook 端点？已注册的待投递事件将进入死信。")) return;
+  let ok = false;
+  try {
+    await api(`/api/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+    ok = true;
+  } catch (error) {
+    showToast(`删除失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["webhooks", "subscriptions"]);
+  }
+}
+
+async function createSubscriptionFromIsland({ reportType, schedule, windowDays, webhookEndpointId } = {}) {
+  if (!webhookEndpointId) {
+    showToast("请先选择 Webhook 端点", true);
+    return;
+  }
+  let ok = false;
+  try {
+    await api("/api/admin/report-subscriptions", {
+      method: "POST",
+      body: JSON.stringify({
+        report_type: reportType || "quality",
+        schedule: schedule || "daily",
+        window_days: Number(windowDays || 7),
+        webhook_endpoint_id: webhookEndpointId,
+      }),
+    });
+    ok = true;
+    showToast("报表订阅已创建");
+  } catch (error) {
+    showToast(`创建订阅失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["subscriptions"]);
+  }
+}
+
+async function toggleSubscriptionFromIsland({ id, active } = {}) {
+  if (!id) return;
+  let ok = false;
+  try {
+    await api(`/api/admin/report-subscriptions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: Boolean(active) }),
+    });
+    ok = true;
+  } catch (error) {
+    showToast(`订阅状态变更失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["subscriptions"]);
+  }
+}
+
+async function deleteSubscriptionFromIsland({ id } = {}) {
+  if (!id) return;
+  let ok = false;
+  try {
+    await api(`/api/admin/report-subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    ok = true;
+    showToast("订阅已删除");
+  } catch (error) {
+    showToast(`删除订阅失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["subscriptions"]);
+  }
+}
+
+async function generateReportFromIsland({ reportType, windowDays } = {}) {
+  const type = reportType || "quality";
+  try {
+    const report = await api("/api/admin/reports/generate", {
+      method: "POST",
+      body: JSON.stringify({ report_type: type, window_days: Number(windowDays || 7) }),
+    });
+    // 预览文案与 js/admin-report.js generateReportPreview 逐字一致。
+    const rows = Array.isArray(report.rows) ? report.rows : [];
+    const header = `${ADMIN_REPORT_TYPE_LABELS[type] || type} ${report.from_date} → ${report.to_date}：${rows.length} 行`;
+    const text = rows.length
+      ? `${header}\n${rows.slice(0, 5).map((row) => JSON.stringify(row)).join("\n")}`
+      : `${header}\n（窗口内暂无数据）`;
+    window.dispatchEvent(new CustomEvent("helix-admin-report-generated", { detail: { ok: true, text } }));
+  } catch (error) {
+    showToast(`报表生成失败：${error.message || error}`, true);
+    window.dispatchEvent(new CustomEvent("helix-admin-report-generated", { detail: { ok: false } }));
+  }
+}
+
+async function saveSlaFromIsland({ priority, channel, firstResponseMinutes, resolveMinutes } = {}) {
+  const firstResponse = Number(firstResponseMinutes || 0);
+  const resolve = Number(resolveMinutes || 0);
+  if (!firstResponse || !resolve) {
+    showToast("请填写首响与解决时限", true);
+    return;
+  }
+  let ok = false;
+  try {
+    await api("/api/admin/sla-policies", {
+      method: "PUT",
+      body: JSON.stringify({
+        priority: priority || null,
+        channel: (channel || "").trim() || null,
+        first_response_minutes: firstResponse,
+        resolve_minutes: resolve,
+      }),
+    });
+    ok = true;
+    showToast("SLA 策略已保存");
+  } catch (error) {
+    showToast(`SLA 策略保存失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["sla"]);
+  }
+}
+
+async function createRuleFromIsland({ intent, label, channel, groupId, priority } = {}) {
+  if (!groupId) {
+    showToast("请先选择分配组", true);
+    return;
+  }
+  const body = { group_id: groupId, priority: Number(priority || 0) };
+  for (const [key, value] of [["intent", intent], ["label", label], ["channel", channel]]) {
+    const trimmed = (value || "").trim();
+    if (trimmed) body[key] = trimmed;
+  }
+  let ok = false;
+  try {
+    await api("/api/admin/routing-rules", { method: "POST", body: JSON.stringify(body) });
+    ok = true;
+    showToast("路由规则已添加");
+  } catch (error) {
+    showToast(`路由规则添加失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["rules"]);
+  }
+}
+
+async function deleteRuleFromIsland({ id } = {}) {
+  if (!id) return;
+  let ok = false;
+  try {
+    await api(`/api/admin/routing-rules/${encodeURIComponent(id)}`, { method: "DELETE" });
+    ok = true;
+    showToast("路由规则已删除");
+  } catch (error) {
+    showToast(`路由规则删除失败：${error.message || error}`, true);
+  } finally {
+    dispatchAdminSaved(ok, ["rules"]);
+  }
+}
+
 
 function renderReportWebhookOptions(webhooks) {
   return window.HelixModules?.['adminReport']?.['renderReportWebhookOptions'](...arguments);
@@ -2556,10 +2837,25 @@ async function runRefresh({ silent = false, refreshDetail = true, background = f
     const queueChanged = signature !== state.lastQueueSignature;
     const firstMe = !state.me;
     state.me = me;
-    // Expose the operator role so the desktop React islands (knowledge
-    // canWrite gate, terminal §4.1 RBAC) can read it without re-fetching
-    // /api/me. In a browser tab the islands never mount and this is inert.
-    if (typeof window !== "undefined") window.__HELIX_ROLE__ = me?.role || "guest";
+    // Expose the operator identity so the desktop React islands (knowledge
+    // canWrite gate, admin admin:manage gate, terminal §4.1 RBAC) can read
+    // it without re-fetching /api/me. The helix-identity event closes the
+    // mount race: islands that mount before /api/me returns keep every
+    // privileged query disabled until this dispatch lands. In a browser
+    // tab the islands never mount and all of this is inert.
+    if (typeof window !== "undefined") {
+      window.__HELIX_ROLE__ = me?.role || "guest";
+      window.__HELIX_PERMISSIONS__ = me?.permissions || [];
+      window.__HELIX_ACTOR__ = me?.actor_id || "";
+      window.dispatchEvent(new CustomEvent("helix-identity", {
+        detail: {
+          role: window.__HELIX_ROLE__,
+          permissions: window.__HELIX_PERMISSIONS__,
+          actorId: window.__HELIX_ACTOR__,
+          tenantId: me?.tenant_id || TENANT,
+        },
+      }));
+    }
     if (firstMe) pruneExpiredDrafts();
     if (firstMe) scheduleIdle(() => loadMentions());
     // roster 节流刷新:首次失败下个周期重试,成功后在后台周期更新,
@@ -3349,7 +3645,36 @@ if (els.memberForm) els.memberForm.addEventListener("submit", (event) => void in
 if (els.webhookForm) els.webhookForm.addEventListener("submit", (event) => void registerWebhook(event));
 window.HelixModules?.adminReport?.bindAdminReports?.();
 if (els.refreshAdmin) {
-  els.refreshAdmin.addEventListener("click", () => void loadAdminView());
+  els.refreshAdmin.addEventListener("click", () => {
+    // The header button is not yielded (it sits outside the island mount),
+    // so in island mode it drives the island's queries directly instead of
+    // the legacy fetch chain.
+    if (window.__HELIX_ISLAND_MODE__) {
+      window.dispatchEvent(new CustomEvent("helix-admin-refresh", { detail: { force: true } }));
+      return;
+    }
+    void loadAdminView();
+  });
+}
+// D3 bridge (admin island): the React admin island dispatches helix-admin-*
+// write events with form payloads; the bridges above own the api()/toast
+// lifecycle and answer with helix-admin-saved for the island's refetch.
+for (const [eventType, handler] of [
+  ["helix-admin-save-quota", saveQuotaFromIsland],
+  ["helix-admin-invite-member", inviteMemberFromIsland],
+  ["helix-admin-member-role", changeMemberRoleFromIsland],
+  ["helix-admin-member-deactivate", deactivateMemberFromIsland],
+  ["helix-admin-register-webhook", registerWebhookFromIsland],
+  ["helix-admin-delete-webhook", deleteWebhookFromIsland],
+  ["helix-admin-create-subscription", createSubscriptionFromIsland],
+  ["helix-admin-toggle-subscription", toggleSubscriptionFromIsland],
+  ["helix-admin-delete-subscription", deleteSubscriptionFromIsland],
+  ["helix-admin-generate-report", generateReportFromIsland],
+  ["helix-admin-save-sla", saveSlaFromIsland],
+  ["helix-admin-create-rule", createRuleFromIsland],
+  ["helix-admin-delete-rule", deleteRuleFromIsland],
+]) {
+  window.addEventListener(eventType, (event) => void handler(event.detail || {}));
 }
 if (els.memberList) {
   els.memberList.addEventListener("change", (event) => {

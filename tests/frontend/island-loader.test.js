@@ -79,6 +79,18 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
   // queue owns the conversation list; strip controls and bulk toolbar stay legacy.
   assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList"]);
+  // admin owns the whole card grid: quota/members/webhooks/reports/CSAT/
+  // SLA/routing; the denial panel (#adminDenied) and header stay legacy.
+  assert.deepEqual(byName.admin.yieldsLegacy, [
+    "adminQuotaCard",
+    "adminMembersCard",
+    "adminWebhooksCard",
+    "adminReportSubsCard",
+    "adminReportExportCard",
+    "adminCsatCard",
+    "adminSlaCard",
+    "adminRoutingCard",
+  ]);
   // composer owns the message forms; the send lifecycle stays legacy via bridges.
   assert.deepEqual(byName.composer.yieldsLegacy, ["customerForm", "operatorForm"]);
   // inspector owns the tabs + detail panels; the quality self-fetch stays legacy.

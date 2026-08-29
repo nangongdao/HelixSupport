@@ -61,6 +61,7 @@ export default defineConfig({
         knowledge: resolve(__dirname, "src/islands/knowledge-island.jsx"),
         ticket: resolve(__dirname, "src/islands/ticket-island.jsx"),
         queue: resolve(__dirname, "src/islands/queue-island.jsx"),
+        admin: resolve(__dirname, "src/islands/admin-island.jsx"),
         inspector: resolve(__dirname, "src/islands/inspector-island.jsx"),
         composer: resolve(__dirname, "src/islands/composer-island.jsx"),
         "command-palette": resolve(__dirname, "src/islands/command-palette-island.jsx"),

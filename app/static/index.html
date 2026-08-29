@@ -637,7 +637,7 @@
         </header>
         <div id="adminDenied" class="admin-denied" hidden>当前角色无权限查看管理页。</div>
         <div id="adminContent" class="admin-cards">
-          <section class="admin-card">
+          <section class="admin-card" id="adminQuotaCard">
             <h3>租户配额</h3>
             <dl id="quotaReadout" class="admin-readout"></dl>
             <form id="quotaForm" class="admin-form">
@@ -650,7 +650,7 @@
               <button class="button button-primary" type="submit">保存配额</button>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminMembersCard">
             <h3>成员</h3>
             <ul id="memberList" class="admin-list"></ul>
             <form id="memberForm" class="admin-form">
@@ -670,7 +670,7 @@
               <button class="button button-primary" type="submit">邀请成员</button>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminWebhooksCard">
             <h3>Webhook</h3>
             <ul id="webhookList" class="admin-list"></ul>
             <form id="webhookForm" class="admin-form">
@@ -687,7 +687,7 @@
               <button class="button button-primary" type="submit">注册 Webhook</button>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminReportSubsCard">
             <h3>报表订阅</h3>
             <ul id="reportSubscriptionList" class="admin-list"></ul>
             <form id="reportSubscriptionForm" class="admin-form">
@@ -712,7 +712,7 @@
               <button class="button button-primary" type="submit">创建订阅</button>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminReportExportCard">
             <h3>报表导出</h3>
             <form id="reportGenerateForm" class="admin-form">
               <label class="admin-field">报表
@@ -731,12 +731,12 @@
               <pre id="reportPreview" class="report-preview" hidden></pre>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminCsatCard">
             <h3>CSAT 评分汇总</h3>
             <dl id="csatReadout" class="admin-readout"></dl>
             <ul id="csatTrend" class="admin-list"></ul>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminSlaCard">
             <h3>SLA 策略</h3>
             <ul id="slaPolicyList" class="admin-list"></ul>
             <form id="slaPolicyForm" class="admin-form">
@@ -759,7 +759,7 @@
               <button class="button button-primary" type="submit">保存策略</button>
             </form>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="adminRoutingCard">
             <h3>自动路由规则</h3>
             <ul id="routingRuleList" class="admin-list"></ul>
             <form id="routingRuleForm" class="admin-form">
@@ -781,6 +781,11 @@
               <button class="button button-primary" type="submit">添加规则</button>
             </form>
           </section>
+          <!-- D3 React island mount (admin domain). The eight legacy
+               .admin-card sections above stay during the dual-track
+               period; the React island renders into this container and
+               takes over the whole card grid in island mode. -->
+          <div id="adminReactIsland" class="admin-react-island"></div>
         </div>
       </section>
       <section id="placeholderView" class="app-view" hidden aria-label="开发中视图">

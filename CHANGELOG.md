@@ -52,6 +52,14 @@
 - **vite 陈旧 chunk 累积修复**(`frontend/vite.config.js`):outDir 在 frontend 根之外时 Vite 默认不清空目录,内容一变哈希就变,旧 content-hashed chunk 永久累积——`client-*` 新旧两份即 362KB,静态预算门(全量计非 terminal JS)实测 903,980B > 700KB 上限。改 `emptyOutDir: true`(island-loader 由插件在 closeBundle 重拷,dist 内无第三方文件)。
 - **验证**:vitest **40** 例(新增 21 例:reducer 生命周期、校验 parity、桥契约、语言全集、角色可见性、刷新语义);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_knowledge.py`(writer 全旅程 + reader 只读)与 `tests/ui_accessibility.py` 对 127.0.0.1:8765 实跑通过;重建 dist 后静态 JS 回到预算内。
 
+### D3 长尾:admin 岛接管管理页(2026-08-29)
+
+- **admin 岛成为完整管理面**(`frontend/src/islands/admin-island.jsx` + `island-loader.js` 新增 admin 岛 + vite input 注册 + index.html `#adminReactIsland` 挂载点):八张卡片(租户配额/成员/Webhook/报表订阅/报表导出/CSAT/SLA 策略/自动路由规则)全部由 React 岛渲染,八张 legacy 卡片加 id 后经 yieldsLegacy 让位,拒绝面板 `#adminDenied` 与头部刷新按钮保持 legacy。
+- **确定性权限门**(`useIdentity` + `helix-identity` 事件):app.js 在 /api/me 后发布 `__HELIX_PERMISSIONS__`/`__HELIX_ACTOR__` 并派发 identity 事件,岛的八个查询全部 `enabled: canManageIdentity`——岛先于 /api/me 挂载的竞态下非管理员**零特权请求**(对齐 tests/ui_admin.py 的 denied 断言),管理员身份落地后查询自动解锁。此事件同时修复了 knowledge/terminal 岛读一次性 `__HELIX_ROLE__` 全局的同类竞态隐患(事件广播后可重渲染)。
+- **写桥**:13 个 `helix-admin-*` 事件桥把写回 legacy——api()/showToast()/window.confirm()(webhook 删除确认)与 Phase 32.1 自停用/自降级客户端守卫全部留在 app.js;岛在 `helix-admin-saved {ok, domains}` 回报后只失效被写域的查询(webhook 写会连带失效订阅下拉域)。表单清空遵循 legacy「成功才清空」语义(`useClearOnSaved`);报表导出走 `reportExportUrl` 本地导航(带鉴权 cookie),生成预览经 `helix-admin-report-generated` 回传文案。
+- **测试抓出一个真实浏览器缺陷**:React 合成事件不代理 `submitter`——岛若照搬 legacy 的 `event.submitter?.value`(js/admin-report.js bindAdminReports 收的是原生事件),「导出 CSV」按钮在真实浏览器里会永远走生成预览分支。岛改读 `event.nativeEvent.submitter`,vitest 以原生点击路径锁定该分支。
+- **验证**:vitest **64** 例(+24:身份门/八卡渲染契约/13 写桥/刷新语义/纯模型含 legacy "— MB" 空值逐字保真);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_admin.py`(配额写/成员生命周期/webhook 注册删除/拒绝视图零特权请求)与 ui_accessibility、ui_smoke 对实跑服务全绿;桌面链重建(dist+admin chunk 23.1KB → PyInstaller → 冒烟 → resources 快照核对 → NSIS)后 `desktop/verify_admin_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡片让位、配额 readout 渲染、经桥真实邀请成员并回显「主管」角色。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added
