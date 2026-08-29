@@ -44,6 +44,14 @@
 - frontend gate **165** tests + vitest **19**;performance gate 静态 JS 599KB/700KB + CSS 97KB/125KB,浏览器层 web + 桌面壳双上下文全绿;visual gate 四面 **0.00% drift**(令牌改动未波及 clean DB 基线);ui_smoke + ui_accessibility(含新增桌面壳 pass)旅程绿;`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿。
 - 注:本机 ruff 0.16.5 默认规则集宽于项目开发期(CI 固定 `ruff>=0.9,<1`),全仓 372 项报告属版本差异,非本次改动引入;本次改动未新增告警(并顺带消掉 1 项 PIE810)。
 
+### D3 收口:knowledge 岛接管编辑器(2026-08-29)
+
+- **knowledge 岛成为完整知识面**(`frontend/src/islands/knowledge-island.jsx` + `island-loader.js` yieldsLegacy 增加 `knowledgeEditor`):摘要 + 筛选 + 列表 + 草稿编辑器全部由 React 岛渲染,legacy 侧仅保留写生命周期(`saveKnowledgeArticle` 的 api()/toast/reload 与 `reviewKnowledgeArticle` 的 retire confirm())。编辑器写回走 `helix-knowledge-save` 事件桥,岛在 `helix-knowledge-saved` 回报前保持 busy;岛内 DOM 保留 legacy 定位符契约(`knowledgeEditor`/`knowledgeTitle`/… → React 后缀),ui_knowledge 与 axe 键盘路径定位不受影响。
+- **writer/reader 数据面补齐**:岛按角色请求 `?include_inactive=true`(对齐 legacy 缓存语义),摘要计数与编辑器不再只看到已发布文章;语言下拉覆盖 app.js 全部 14 种语言,未列出的语言码动态补入选项,编辑不再静默丢语言(review backlog 1);校验(`validateKnowledgeDraft`)复刻 legacy minlength 口径与文案,tags→title→content 顺序报错 + `role="alert"`。
+- **刷新桥语义**:视图重开只派发不强制刷新的 `helix-knowledge-refresh`,岛用 `refetchQueries({stale:true})` 对齐 legacy 15s 缓存(数据新鲜不重复请求);显式刷新/写入成功仍强制 refetch。
+- **vite 陈旧 chunk 累积修复**(`frontend/vite.config.js`):outDir 在 frontend 根之外时 Vite 默认不清空目录,内容一变哈希就变,旧 content-hashed chunk 永久累积——`client-*` 新旧两份即 362KB,静态预算门(全量计非 terminal JS)实测 903,980B > 700KB 上限。改 `emptyOutDir: true`(island-loader 由插件在 closeBundle 重拷,dist 内无第三方文件)。
+- **验证**:vitest **40** 例(新增 21 例:reducer 生命周期、校验 parity、桥契约、语言全集、角色可见性、刷新语义);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_knowledge.py`(writer 全旅程 + reader 只读)与 `tests/ui_accessibility.py` 对 127.0.0.1:8765 实跑通过;重建 dist 后静态 JS 回到预算内。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

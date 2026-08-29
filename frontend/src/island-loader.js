@@ -30,9 +30,9 @@ export const ISLANDS = [
   {
     name: "knowledge",
     mountId: "knowledgeReactIsland",
-    // The knowledge island owns the summary + filter toolbar + article list;
-    // the legacy editor/form (#knowledgeEditor/#knowledgeForm) stays legacy
-    // until a later D3 slice migrates it.
+    // The knowledge island owns the whole surface: summary + filter toolbar +
+    // article list + the draft editor. Writes still bridge back to legacy
+    // (helix-knowledge-save / -action) so api()/toast/reload stay in one place.
     yieldsLegacy: [
       "knowledgeSummary",
       "knowledgeSearch",
@@ -42,6 +42,7 @@ export const ISLANDS = [
       "knowledgeReadOnly",
       "knowledgeList",
       "knowledgeListStatus",
+      "knowledgeEditor",
     ],
   },
   // The ticket island owns the status filter + list; the legacy detail view

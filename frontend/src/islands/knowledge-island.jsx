@@ -5,17 +5,24 @@
  * the existing pure functions from js/knowledge.js (normalize/filter/
  * summarize/reviewActions — §43.6 framework-agnostic reducer triplets).
  *
- * Mounts into #knowledgeReactIsland. During the dual-track period the
- * legacy app.js still owns the editor/form; this island owns the article
- * list + summary + filters. Once D3 is complete the legacy rendering
- * functions are deleted and app.js keeps only glue.
+ * Mounts into #knowledgeReactIsland and owns the whole knowledge surface:
+ * summary + filters + article list + the draft editor (the final D3 slice).
+ * Editor writes go through legacy via helix-knowledge-save/-review so the
+ * api()/showToast()/reload lifecycle stays in one place; the island keeps
+ * the legacy DOM id + label contract (knowledgeEditor/knowledgeTitle/…) so
+ * the ui_knowledge and axe keyboard-path locators keep resolving.
  *
  * See DESKTOP_TAURI_PLAN.md §3.1 + §D3.
  */
 
-import React, { useReducer, useState, useCallback, useEffect } from "react";
+import React, { useReducer, useRef, useCallback, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 /* ── pure domain helpers (verbatim from js/knowledge.js, §43.6) ──────── */
 
@@ -26,7 +33,97 @@ const KNOWLEDGE_STATUS_LABELS = {
   pending_review: "待审核",
   retired: "已停用",
 };
-const LANGUAGE_NAMES = { zh: "中文", en: "English", ja: "日本語", ko: "한국어", es: "Español", fr: "Français", de: "Deutsch", pt: "Português" };
+// Must cover the full app.js LANGUAGE_NAMES set: an article in a language the
+// editor select omits would silently lose it on save (review backlog 1).
+const LANGUAGE_NAMES = {
+  zh: "中文",
+  en: "English",
+  ja: "日本語",
+  ko: "한국어",
+  ru: "Русский",
+  ar: "العربية",
+  hi: "हिन्दी",
+  he: "עברית",
+  th: "ไทย",
+  el: "Ελληνικά",
+  es: "Español",
+  fr: "Français",
+  de: "Deutsch",
+  pt: "Português",
+};
+
+const LANGUAGE_CODES = Object.keys(LANGUAGE_NAMES).sort((a, b) =>
+  LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b], "zh"),
+);
+
+export const KNOWLEDGE_EVENTS = Object.freeze({
+  ACTION: "helix-knowledge-action",
+  SAVE: "helix-knowledge-save",
+  SAVED: "helix-knowledge-saved",
+  NEW: "helix-knowledge-new",
+  REFRESH: "helix-knowledge-refresh",
+});
+
+/** React-suffixed ids: the yielded legacy editor keeps the originals. */
+export const EDITOR_IDS = Object.freeze({
+  form: "knowledgeFormReact",
+  heading: "knowledgeEditorTitleReact",
+  title: "knowledgeTitleReact",
+  content: "knowledgeContentReact",
+  tags: "knowledgeTagsReact",
+  category: "knowledgeCategoryReact",
+  language: "knowledgeLanguageReact",
+  source: "knowledgeSourceReact",
+});
+
+/** Comma/whitespace-separated tags → API list contract (js/knowledge.js). */
+function parseKnowledgeTags(value) {
+  return [...new Set(String(value || "").split(/[\s,，]+/).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function knowledgeFormPayload(values = {}) {
+  return {
+    title: String(values.title || "").trim(),
+    content: String(values.content || "").trim(),
+    tags: parseKnowledgeTags(values.tags),
+    category: String(values.category || "general").trim() || "general",
+    source_url: String(values.sourceUrl || "").trim(),
+    language: String(values.language || "").trim() || null,
+  };
+}
+
+const EMPTY_DRAFT = Object.freeze({
+  title: "",
+  content: "",
+  tags: "",
+  category: "general",
+  language: "",
+  sourceUrl: "",
+});
+
+function draftFromArticle(article) {
+  return {
+    title: article.title,
+    content: article.content,
+    tags: article.tags.join(", "),
+    category: article.category,
+    language: article.language || "",
+    sourceUrl: article.source_url,
+  };
+}
+
+/**
+ * Same order and copy as legacy saveKnowledgeArticle: HTML minlength counts
+ * raw characters, so a trimmed payload can still fall short of the backend
+ * schema (min 2 title / 10 content) — surface it before the 422.
+ * @returns {{field: string, message: string}|null}
+ */
+export function validateKnowledgeDraft(payload) {
+  if (!payload.tags.length) return { field: "tags", message: "请至少填写一个知识标签" };
+  if (payload.title.length < 2) return { field: "title", message: "标题至少需要 2 个字符" };
+  if (payload.content.length < 10) return { field: "content", message: "正文至少需要 10 个字符" };
+  return null;
+}
 
 function normalizeKnowledgeArticle(article = {}) {
   const status = article.status || (article.active === false ? "retired" : "published");
@@ -80,19 +177,53 @@ function reviewActionsFor(article) {
 
 /* ── reducer (§43.6: createState() + reduce(state, action)) ──────────── */
 
-function createKnowledgeState() {
+export function createKnowledgeState() {
   return {
     filters: { status: "all", language: "", query: "" },
-    editingId: null,
+    // editor === null keeps the aside hidden, which is what the single-column
+    // :has(.knowledge-editor[hidden]) layout rule keys off.
+    editor: null,
   };
 }
 
-function reduceKnowledge(state, action) {
+export function reduceKnowledge(state, action) {
   switch (action.type) {
     case "SET_FILTER":
       return { ...state, filters: { ...state.filters, ...action.payload } };
     case "RESET_FILTERS":
       return { ...state, filters: { status: "all", language: "", query: "" } };
+    case "OPEN_EDITOR":
+      return {
+        ...state,
+        editor: {
+          articleId: action.article ? action.article.id : null,
+          values: action.article ? draftFromArticle(action.article) : { ...EMPTY_DRAFT },
+          error: null,
+          busy: false,
+        },
+      };
+    case "CLOSE_EDITOR":
+      return { ...state, editor: null };
+    case "SET_FIELD":
+      if (!state.editor) return state;
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          values: { ...state.editor.values, [action.name]: action.value },
+        },
+      };
+    // Legacy resetKnowledgeEditor() also drops the editing id, turning the
+    // open editor back into a blank new-draft form.
+    case "RESET_EDITOR":
+      if (!state.editor) return state;
+      return { ...state, editor: { articleId: null, values: { ...EMPTY_DRAFT }, error: null, busy: false } };
+    case "SET_EDITOR_ERROR":
+      if (!state.editor) return state;
+      return { ...state, editor: { ...state.editor, error: action.error, busy: false } };
+    case "SET_EDITOR_BUSY":
+      if (!state.editor) return state;
+      return { ...state, editor: { ...state.editor, busy: action.busy } };
     default:
       return state;
   }
@@ -176,17 +307,113 @@ function KnowledgeArticle({ article, canWrite, onAction }) {
   );
 }
 
-function KnowledgeIsland() {
+/**
+ * The aside stays in the DOM even when closed: the single-column layout rule
+ * is `.knowledge-layout:has(.knowledge-editor[hidden])`, so dropping the
+ * element would leave the list squeezed beside a blank 420px column. The form
+ * itself only mounts while open, which also gives the title its focus-on-open
+ * for free (legacy editKnowledgeArticle/newKnowledgeDraft both focus it).
+ */
+function KnowledgeEditor({ editor, dispatch, onSubmit }) {
+  return (
+    <aside className="knowledge-editor" hidden={!editor} aria-label="知识草稿编辑器">
+      {editor && <KnowledgeEditorForm editor={editor} dispatch={dispatch} onSubmit={onSubmit} />}
+    </aside>
+  );
+}
+
+function KnowledgeEditorForm({ editor, dispatch, onSubmit }) {
+  const titleRef = useRef(null);
+  const editing = Boolean(editor.articleId);
+
+  useEffect(() => {
+    titleRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const field = (name) => ({
+    value: editor.values[name],
+    onChange: (e) => dispatch({ type: "SET_FIELD", name, value: e.target.value }),
+  });
+
+  // Keep an unmapped language (ru/ar/… beyond the list, or a code the backend
+  // added later) selectable so editing never silently drops it.
+  const current = editor.values.language;
+  const codes = current && !LANGUAGE_CODES.includes(current) ? [...LANGUAGE_CODES, current] : LANGUAGE_CODES;
+
+  return (
+    <form id={EDITOR_IDS.form} onSubmit={onSubmit} data-busy={String(editor.busy)} aria-busy={editor.busy}>
+      <header className="knowledge-editor-heading">
+        <div>
+          <span className="section-kicker">EDITOR</span>
+          <h3 id={EDITOR_IDS.heading}>{editing ? "编辑知识文章" : "新建知识草稿"}</h3>
+        </div>
+        <button
+          className="icon-button"
+          type="button"
+          title="关闭编辑器"
+          aria-label="关闭编辑器"
+          onClick={() => dispatch({ type: "CLOSE_EDITOR" })}
+        >
+          <svg className="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.4.0#x" /></svg>
+        </button>
+      </header>
+      {editor.error && (
+        <p className="knowledge-editor-error" role="alert">{editor.error.message}</p>
+      )}
+      <label className="knowledge-field">标题
+        <input id={EDITOR_IDS.title} ref={titleRef} type="text" minLength={2} maxLength={160} required {...field("title")} />
+      </label>
+      <label className="knowledge-field">正文
+        <textarea id={EDITOR_IDS.content} rows={10} minLength={10} maxLength={12000} required {...field("content")} />
+      </label>
+      <div className="knowledge-form-grid">
+        <label className="knowledge-field">标签
+          <input id={EDITOR_IDS.tags} type="text" maxLength={820} placeholder="shipping, refund" required {...field("tags")} />
+        </label>
+        <label className="knowledge-field">分类
+          <input id={EDITOR_IDS.category} type="text" minLength={2} maxLength={60} required {...field("category")} />
+        </label>
+        <label className="knowledge-field">语言
+          <select id={EDITOR_IDS.language} {...field("language")}>
+            <option value="">不限语言</option>
+            {codes.map((code) => (
+              <option value={code} key={code}>{LANGUAGE_NAMES[code] || code}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="knowledge-field">来源
+        <input id={EDITOR_IDS.source} type="text" minLength={1} maxLength={500} placeholder="https://… 或 internal:…" required {...field("sourceUrl")} />
+      </label>
+      <div className="knowledge-editor-actions">
+        <button className="button button-secondary" type="button" onClick={() => dispatch({ type: "RESET_EDITOR" })}>
+          重置
+        </button>
+        <button className="button button-primary" type="submit" disabled={editor.busy}>
+          <svg className="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.4.0#check" /></svg>
+          <span>{editing ? "保存修改" : "保存草稿"}</span>
+        </button>
+    </div>
+    </form>
+  );
+}
+
+export function KnowledgeIsland() {
   const [state, dispatch] = useReducer(reduceKnowledge, undefined, createKnowledgeState);
   // knowledge:write maps to admin/platform (matches app.js canWriteKnowledge +
   // backend ROLE_PERMISSIONS); the desktop shell exposes the role globally.
   const role = (typeof window !== "undefined" && window.__HELIX_ROLE__) || "guest";
   const canWrite = ["admin", "platform"].includes(role);
 
+  const queryClient = useQueryClient();
+  const queryKey = ["knowledge-articles", canWrite];
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["knowledge-articles"],
+    queryKey,
     queryFn: async () => {
-      const res = await fetch("/api/knowledge", {
+      // Writers need drafts/retired too, or the summary counters and the
+      // editor would only ever see published articles (legacy parity).
+      const path = canWrite ? "/api/knowledge?include_inactive=true" : "/api/knowledge";
+      const res = await fetch(path, {
         headers: { "X-Tenant-Id": "demo" },
       });
       if (!res.ok) throw new Error(`knowledge API ${res.status}`);
@@ -199,14 +426,79 @@ function KnowledgeIsland() {
   const filtered = filterKnowledgeArticles(articles, state.filters);
   const summary = summarizeKnowledgeArticles(articles);
 
-  const handleAction = useCallback((action, articleId) => {
-    // Delegate to the legacy app.js knowledge action handler via a custom
-    // event so the editor/form lifecycle stays in the legacy controller
-    // during the dual-track period.
-    window.dispatchEvent(
-      new CustomEvent("helix-knowledge-action", { detail: { action, articleId } }),
-    );
-  }, []);
+  const handleAction = useCallback(
+    (action, articleId) => {
+      if (action === "edit") {
+        const raw = articles.find((item) => item.id === articleId);
+        if (raw) dispatch({ type: "OPEN_EDITOR", article: normalizeKnowledgeArticle(raw) });
+        return;
+      }
+      // publish/retire keep their legacy home: reviewKnowledgeArticle owns the
+      // retire confirm() prompt and the api()/toast/reload lifecycle.
+      window.dispatchEvent(
+        new CustomEvent(KNOWLEDGE_EVENTS.ACTION, { detail: { action, articleId } }),
+      );
+    },
+    [articles],
+  );
+
+  const handleSubmit = useCallback(
+    (event) => {
+      event.preventDefault();
+      const editor = state.editor;
+      if (!editor || editor.busy) return;
+      const payload = knowledgeFormPayload(editor.values);
+      const invalid = validateKnowledgeDraft(payload);
+      if (invalid) {
+        dispatch({ type: "SET_EDITOR_ERROR", error: invalid });
+        document.getElementById(EDITOR_IDS[invalid.field])?.focus();
+        return;
+      }
+      dispatch({ type: "SET_EDITOR_ERROR", error: null });
+      dispatch({ type: "SET_EDITOR_BUSY", busy: true });
+      window.dispatchEvent(
+        new CustomEvent(KNOWLEDGE_EVENTS.SAVE, {
+          detail: { payload, editingId: editor.articleId },
+        }),
+      );
+    },
+    [state.editor],
+  );
+
+  // Legacy still owns the view header buttons (新建草稿 / 刷新) and the write
+  // lifecycle, so it drives the island through these three events.
+  useEffect(() => {
+    const onNew = () => dispatch({ type: "OPEN_EDITOR", article: null });
+    // A plain view re-open is not a reason to hit the network: legacy renders
+    // from its 15s cache there, and staleTime is the island's equivalent. The
+    // `stale: true` filter asks react-query at event time rather than trusting
+    // a render-time snapshot, so only an explicit refresh (or a write) always
+    // forces the round-trip.
+    const onRefresh = (event) => {
+      if (event.detail?.force) {
+        void refetch();
+        return;
+      }
+      void queryClient.refetchQueries({ queryKey, stale: true });
+    };
+    const onSaved = (event) => {
+      const { ok } = event.detail || {};
+      if (!ok) {
+        dispatch({ type: "SET_EDITOR_BUSY", busy: false });
+        return;
+      }
+      dispatch({ type: "CLOSE_EDITOR" });
+      void refetch();
+    };
+    window.addEventListener(KNOWLEDGE_EVENTS.NEW, onNew);
+    window.addEventListener(KNOWLEDGE_EVENTS.REFRESH, onRefresh);
+    window.addEventListener(KNOWLEDGE_EVENTS.SAVED, onSaved);
+    return () => {
+      window.removeEventListener(KNOWLEDGE_EVENTS.NEW, onNew);
+      window.removeEventListener(KNOWLEDGE_EVENTS.REFRESH, onRefresh);
+      window.removeEventListener(KNOWLEDGE_EVENTS.SAVED, onSaved);
+    };
+  }, [refetch]);
 
   if (isLoading) {
     return (
@@ -273,21 +565,31 @@ function KnowledgeIsland() {
           {filtered.length} / {articles.length} 篇
         </span>
       </div>
-      <section className="knowledge-list-panel" aria-label="知识文章">
-        <div className="knowledge-list-status" role="status">
-          {!filtered.length
-            ? articles.length
-              ? "没有符合当前筛选条件的文章。"
-              : "当前租户还没有知识文章。"
-            : ""}
-        </div>
-        <div className="knowledge-list" role="list">
-          {filtered.map((raw) => {
-            const article = normalizeKnowledgeArticle(raw);
-            return <KnowledgeArticle key={article.id} article={article} canWrite={canWrite} onAction={handleAction} />;
-          })}
-        </div>
-      </section>
+      {!canWrite && (
+        <p className="knowledge-read-only">
+          当前角色可检索已发布文章；草稿和审核操作仅对知识管理员开放。
+        </p>
+      )}
+      <div className="knowledge-layout">
+        <section className="knowledge-list-panel" aria-label="知识文章">
+          <div className="knowledge-list-status" role="status">
+            {!filtered.length
+              ? articles.length
+                ? "没有符合当前筛选条件的文章。"
+                : "当前租户还没有知识文章。"
+              : ""}
+          </div>
+          <div className="knowledge-list" role="list">
+            {filtered.map((raw) => {
+              const article = normalizeKnowledgeArticle(raw);
+              return <KnowledgeArticle key={article.id} article={article} canWrite={canWrite} onAction={handleAction} />;
+            })}
+          </div>
+        </section>
+        {/* Always rendered, hidden when closed — see KnowledgeEditor. Readers
+            never open it (no edit button), which matches the legacy aside. */}
+        <KnowledgeEditor editor={state.editor} dispatch={dispatch} onSubmit={handleSubmit} />
+      </div>
     </div>
   );
 }

@@ -39,7 +39,12 @@ export default defineConfig({
   base: "/static/dist/",
   build: {
     outDir: resolve(__dirname, "../app/static/dist"),
-    emptyOutDir: false,
+    // outDir sits outside the frontend root, so Vite would otherwise refuse
+    // to clean it and stale content-hashed chunks accumulate forever — the
+    // performance gate counts every non-terminal *.js and the duplicates
+    // blew the first-paint budget. The plugin below re-copies island-loader.js
+    // in closeBundle, so nothing non-Vite lives here.
+    emptyOutDir: true,
     sourcemap: true,
     // Generate manifest.json so the island loader can resolve content-hashed
     // chunk filenames without hardcoding them.

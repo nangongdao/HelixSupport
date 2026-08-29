@@ -69,9 +69,9 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   const byName = Object.fromEntries(ISLANDS.map((i) => [i.name, i]));
   // quality owns the trend buckets but not the gaps (island renders no gaps).
   assert.deepEqual(byName.quality.yieldsLegacy, ["qualityViewBuckets"]);
-  // knowledge owns summary + toolbar + list; the editor stays legacy.
+  // knowledge owns the whole surface: summary + toolbar + list + editor.
   assert.ok(byName.knowledge.yieldsLegacy.includes("knowledgeList"));
-  assert.ok(!byName.knowledge.yieldsLegacy.includes("knowledgeEditor"));
+  assert.ok(byName.knowledge.yieldsLegacy.includes("knowledgeEditor"));
   // command palette owns the Ctrl+K dialog.
   assert.deepEqual(byName["command-palette"].yieldsLegacy, ["commandPalette"]);
   // ticket owns the status filter + list; the detail view stays legacy.

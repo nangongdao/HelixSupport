@@ -1793,6 +1793,10 @@ function renderKnowledgeArticles() {
 function updateKnowledgeAccessState() {
   const writer = canWriteKnowledge();
   if (els.newKnowledgeDraft) els.newKnowledgeDraft.hidden = !writer;
+  // Island mode: #knowledgeReadOnly, the status filter and the editor are all
+  // yielded to the knowledge island. Un-hiding them here would resurrect a
+  // duplicate read-only notice beside the island's own.
+  if (window.__HELIX_ISLAND_MODE__) return;
   if (els.knowledgeReadOnly) els.knowledgeReadOnly.hidden = writer;
   if (!writer && els.knowledgeEditor) els.knowledgeEditor.hidden = true;
   if (!writer && els.knowledgeStatusFilter) {
@@ -1809,8 +1813,18 @@ function updateKnowledgeAccessState() {
 
 async function loadKnowledgeView({ force = false } = {}) {
   if (!els.knowledgeView) return;
-  syncKnowledgeLanguageSelects();
   updateKnowledgeAccessState();
+  // Island mode: the knowledge island owns the fetch (react-query) plus the
+  // summary/filters/list/editor DOM. Fetching here would only fill the yielded
+  // legacy containers and double every request, so hand the refresh over.
+  // `force` carries the cache decision across: without it a view re-open would
+  // refetch even though react-query already holds fresh data, where the legacy
+  // path below just re-renders.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent("helix-knowledge-refresh", { detail: { force } }));
+    return;
+  }
+  syncKnowledgeLanguageSelects();
   // Cache the article list per permission state so a mid-session role change
   // never shows drafts to a reader from an earlier writer fetch (audit:
   // review backlog 4).
@@ -1922,6 +1936,27 @@ async function saveKnowledgeArticle(event) {
     showToast(`知识文章保存失败：${error.message || error}`, true);
   } finally {
     setFormBusy(els.knowledgeForm, false);
+  }
+}
+
+// D3 bridge: the knowledge island owns the editor DOM and validates before it
+// dispatches, so this only needs the api()/toast half of saveKnowledgeArticle.
+// The island stays busy until helix-knowledge-saved reports the outcome.
+async function saveKnowledgeFromIsland({ payload, editingId } = {}) {
+  if (!canWriteKnowledge() || !payload) return;
+  let ok = false;
+  try {
+    const path = editingId
+      ? `/api/knowledge/${encodeURIComponent(editingId)}`
+      : "/api/knowledge/drafts";
+    await api(path, { method: editingId ? "PATCH" : "POST", body: JSON.stringify(payload) });
+    ok = true;
+    state.knowledgeLoadedAt = 0;
+    showToast(editingId ? "知识文章已更新" : "知识草稿已创建");
+  } catch (error) {
+    showToast(`知识文章保存失败：${error.message || error}`, true);
+  } finally {
+    window.dispatchEvent(new CustomEvent("helix-knowledge-saved", { detail: { ok } }));
   }
 }
 
@@ -3226,6 +3261,12 @@ if (els.knowledgeLanguageFilter) {
 }
 if (els.newKnowledgeDraft) {
   els.newKnowledgeDraft.addEventListener("click", () => {
+    // The header button is not yielded (it sits outside the island mount), so
+    // in island mode it opens the island's editor instead of the hidden form.
+    if (window.__HELIX_ISLAND_MODE__) {
+      window.dispatchEvent(new CustomEvent("helix-knowledge-new"));
+      return;
+    }
     resetKnowledgeEditor();
     els.knowledgeTitle?.focus({ preventScroll: true });
   });
@@ -3254,17 +3295,17 @@ if (els.knowledgeList) {
     else void reviewKnowledgeArticle(articleId, button.dataset.action);
   });
 }
-// D3 bridge: the React knowledge island dispatches "helix-knowledge-action"
-// for its own edit/publish/retire buttons (the legacy list above is yielded
-// and hidden in the desktop shell). Bridge those events back to the legacy
-// editor/form handlers so the article lifecycle stays in one place until
-// the editor itself is migrated to a later D3 slice.
+// D3 bridge: the React knowledge island owns the whole knowledge surface in
+// the desktop shell (the legacy list/editor above are yielded and hidden), but
+// the write lifecycle stays here — reviewKnowledgeArticle owns the retire
+// confirm() prompt, and both paths share one api()/toast/reload flow.
 window.addEventListener("helix-knowledge-action", (event) => {
   const { action, articleId } = event.detail || {};
-  if (!articleId || !action) return;
-  if (action === "edit") editKnowledgeArticle(articleId);
-  else if (action === "publish" || action === "retire")
-    void reviewKnowledgeArticle(articleId, action);
+  if (!articleId || !["publish", "retire"].includes(action)) return;
+  void reviewKnowledgeArticle(articleId, action);
+});
+window.addEventListener("helix-knowledge-save", (event) => {
+  void saveKnowledgeFromIsland(event.detail || {});
 });
 // D3 bridge: the React ticket island dispatches "helix-ticket-open" when a
 // row is clicked (the legacy #ticketList is yielded and hidden in the
