@@ -2884,7 +2884,12 @@ async function runRefresh({ silent = false, refreshDetail = true, background = f
     );
     state.queueHasMore = conversationPage.response.headers.get("X-Has-More") === "true";
     state.queueCursor = conversationPage.response.headers.get("X-Next-Cursor");
-    els.operatorIdentity.textContent = `${me.actor_id} · ${roleLabel(me.role)}`;
+    // Island mode: the identity island owns the readout (yielded span) and
+    // subscribes to the helix-identity dispatch below — skip painting the
+    // hidden legacy span.
+    if (!window.__HELIX_ISLAND_MODE__) {
+      els.operatorIdentity.textContent = `${me.actor_id} · ${roleLabel(me.role)}`;
+    }
     if (!queueOnly) renderLabelFilter();
     els.focusWaiting.setAttribute("aria-pressed", String(els.ownershipFilter.value === "needs_response"));
     if (state.dashboard && (!background || staleDashboard)) renderMetrics(state.dashboard);

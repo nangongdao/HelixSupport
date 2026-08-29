@@ -83,6 +83,9 @@ export const ISLANDS = [
   // foreground refreshAll cycles drive it via helix-dashboard-refresh
   // (background polls never refetched the dashboard, and still don't).
   { name: "dashboard", mountId: "dashboardReactIsland", yieldsLegacy: ["metrics"] },
+  // The identity island owns the header readout (actor · role) as a pure
+  // helix-identity subscriber; the surrounding header toggles stay legacy.
+  { name: "identity", mountId: "identityReactIsland", yieldsLegacy: ["operatorIdentity"] },
   { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.

@@ -83,6 +83,8 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   // dashboard owns the workspace metrics strip; the refresh cadence stays
   // legacy via helix-dashboard-refresh on foreground cycles.
   assert.deepEqual(byName.dashboard.yieldsLegacy, ["metrics"]);
+  // identity owns the header readout; the header toggles stay legacy.
+  assert.deepEqual(byName.identity.yieldsLegacy, ["operatorIdentity"]);
   // admin owns the whole card grid: quota/members/webhooks/reports/CSAT/
   // SLA/routing; the denial panel (#adminDenied) and header stay legacy.
   assert.deepEqual(byName.admin.yieldsLegacy, [

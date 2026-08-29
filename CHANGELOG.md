@@ -79,6 +79,11 @@
 - **状态完整性**:岛此前预快照/空态直接提前返回,现在统一渲染 `.queue-island` 包装层——预快照显示「正在同步 + 0 个会话」(镜像 legacy 初始文案),空态/加载中/列表态都带 strip;mentionsBadge 因绑定 session.js 面板生命周期保持 legacy(其所在 legacy footer 仍在)。
 - **验证**:vitest **84** 例(+4 strip 用例:+后缀计数/无更多隐藏/加载中 aria-busy/点击桥事件,预快照用例改写);pytest 门禁绿;ui_smoke + ui_virtual_queue + ui_accessibility legacy 实跑绿;桌面链重建(queue chunk 5.4KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_queue_strip_desktop.py` CDP 真机验证:**种子 60 条会话**(页大小 50)→ 条带显示「50+ 个会话」→ 岛内「加载更多」点击触发真实 cursor 请求 → 行数增至 60,legacy 控件全程让位。
 
+### D3 长尾:identity 岛接管头部身份读数(2026-08-29)
+
+- **identity 岛**(`frontend/src/islands/identity-island.jsx`):头部身份读数("actor · 角色",header 中唯一数据派生元素)由 React 岛渲染,legacy `#operatorIdentity` 经 yieldsLegacy 让位;周边切换按钮(主题/低配/检查器/刷新/移动端抽屉)各绑 legacy 偏好生命周期,保持 legacy。岛是 `helix-identity` 事件的纯订阅者(admin 岛切片引入的身份广播)——零 fetch 零写桥,事件按 actorId+role 去重避免每刷新周期重渲染;`identityModel` 逐字复刻 legacy `roleLabel` 回退映射(岛不接 i18n 模块,与其它岛逐字复制规则一致),未认证时显示 legacy 初始文案「正在验证」。app.js 岛模式下跳过向隐藏 legacy span 的绘制。
+- **验证**:vitest **90** 例(+6:模型 parity 含未知角色回退/待验证占位、事件订阅、全局 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(identity chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_identity_island_desktop.py` CDP 真机验证:岛读数「demo.admin · 管理员」、legacy span 隐藏且未被绘制、头部切换按钮全部保留。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -59,6 +59,11 @@
         </div>
         <div class="header-actions">
           <span id="operatorIdentity" class="operator-identity">正在验证</span>
+          <!-- D3 React island mount (header identity readout). The legacy
+               span above stays during the dual-track period; the React
+               island renders into this container and takes over the
+               readout in island mode. -->
+          <div id="identityReactIsland" class="identity-react-island"></div>
           <button id="themeToggle" class="icon-button header-tool" type="button" title="切换深浅主题" aria-label="切换深浅主题" aria-pressed="false">
             <svg class="icon"><use href="/static/icons.svg?v=1.4.0#moon" /></svg>
           </button>
