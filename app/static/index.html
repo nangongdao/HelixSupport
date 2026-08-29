@@ -137,7 +137,12 @@
             <button id="focusWaiting" class="focus-preset" type="button" aria-pressed="false">
               <svg class="icon"><use href="/static/icons.svg?v=1.4.0#activity" /></svg><span>待响应</span>
             </button>
-            <label class="saved-view-field">
+            <!-- D3 React island mount (saved views). The legacy select and
+                 the save/delete buttons below stay during the dual-track
+                 period; the React island renders into this container and
+                 takes over the controls in island mode. -->
+            <div id="savedViewsReactIsland" class="saved-views-react-island"></div>
+            <label id="savedViewField" class="saved-view-field">
               <span class="sr-only">已保存视图</span>
               <select id="savedViewSelect" aria-label="已保存视图"><option value="">保存的视图</option></select>
             </label>

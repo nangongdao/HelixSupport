@@ -915,6 +915,10 @@ function renderSavedViews() {
 }
 
 async function loadSavedViews() {
+  // Island mode: the saved-views island fetches /api/saved-views itself and
+  // the yielded legacy select stays empty; apply receives the view object
+  // through the bridge, so state.savedViews is not needed.
+  if (window.__HELIX_ISLAND_MODE__) return;
   try {
     state.savedViews = await api("/api/saved-views");
   } catch {
@@ -3333,6 +3337,43 @@ els.focusWaiting.addEventListener("click", () => {
   els.ownershipFilter.value = els.ownershipFilter.value === "needs_response" ? "" : "needs_response";
   refreshAll();
 });
+/**
+ * Saved-view data lifecycle — shared by the legacy controls and the
+ * island's helix-saved-views-save/-delete bridges. Returns the created view
+ * id on save so the bridge can tell the island which entry to select.
+ */
+async function saveSavedView(name) {
+  try {
+    const created = await api("/api/saved-views", {
+      method: "POST",
+      body: JSON.stringify({ name: name.trim(), filters: currentViewFilters() }),
+    });
+    await loadSavedViews();
+    if (!window.__HELIX_ISLAND_MODE__) {
+      els.savedViewSelect.value = created.id;
+      els.deleteView.disabled = false;
+    }
+    showToast("视图已保存");
+    return created.id;
+  } catch (error) {
+    showToast(error.message, true);
+    return null;
+  }
+}
+
+async function deleteSavedView(viewId) {
+  if (!viewId) return false;
+  try {
+    await request(`/api/saved-views/${encodeURIComponent(viewId)}`, { method: "DELETE" });
+    await loadSavedViews();
+    showToast("视图已删除");
+    return true;
+  } catch (error) {
+    showToast(error.message, true);
+    return false;
+  }
+}
+
 els.savedViewSelect.addEventListener("change", () => {
   const view = state.savedViews.find((item) => item.id === els.savedViewSelect.value);
   els.deleteView.disabled = !view;
@@ -3341,29 +3382,32 @@ els.savedViewSelect.addEventListener("change", () => {
 els.saveView.addEventListener("click", async () => {
   const name = window.prompt("保存视图名称");
   if (!name?.trim()) return;
-  try {
-    const created = await api("/api/saved-views", {
-      method: "POST",
-      body: JSON.stringify({ name: name.trim(), filters: currentViewFilters() }),
-    });
-    await loadSavedViews();
-    els.savedViewSelect.value = created.id;
-    els.deleteView.disabled = false;
-    showToast("视图已保存");
-  } catch (error) {
-    showToast(error.message, true);
-  }
+  await saveSavedView(name);
 });
 els.deleteView.addEventListener("click", async () => {
-  const viewId = els.savedViewSelect.value;
-  if (!viewId) return;
-  try {
-    await request(`/api/saved-views/${encodeURIComponent(viewId)}`, { method: "DELETE" });
-    await loadSavedViews();
-    showToast("视图已删除");
-  } catch (error) {
-    showToast(error.message, true);
-  }
+  await deleteSavedView(els.savedViewSelect.value);
+});
+// D3 bridge (saved views island): the island owns the select/save/delete
+// controls; apply receives the view object (the island holds the data),
+// save reads currentViewFilters() here where the filter inputs live, and
+// every mutation reports back so the island refetches and reselects.
+window.addEventListener("helix-saved-views-apply", (event) => {
+  const { view } = event.detail || {};
+  if (view) applySavedView(view);
+});
+window.addEventListener("helix-saved-views-save", async (event) => {
+  const { name } = event.detail || {};
+  if (!name) return;
+  const createdId = await saveSavedView(name);
+  window.dispatchEvent(new CustomEvent("helix-saved-views-changed", {
+    detail: { ok: createdId != null, id: createdId },
+  }));
+});
+window.addEventListener("helix-saved-views-delete", async (event) => {
+  const { id } = event.detail || {};
+  if (!id) return;
+  const ok = await deleteSavedView(id);
+  window.dispatchEvent(new CustomEvent("helix-saved-views-changed", { detail: { ok } }));
 });
 els.densityToggle.addEventListener("click", () => {
   // In low-perf the visible density is always compact (effectiveDensity);

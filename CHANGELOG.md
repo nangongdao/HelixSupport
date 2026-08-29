@@ -102,6 +102,12 @@
 - **workspace-tabs 岛**(`frontend/src/islands/workspace-tabs-island.jsx`):工作区「队列/工单」tablist 由 React 岛渲染,legacy `#workspaceTabs` 容器加 id 后经 yieldsLegacy 让位。职责切分:岛渲染两个 tab(保留 .workspace-tab/is-active/role=tab/aria-selected/data-wstab 契约)并乐观切换;窗格切换(queuePane dataset.mode、ticketPane 显隐)、工单加载与队列刷新副作用全部留在 legacy `switchWorkspaceTab`——岛点击经 `helix-workspace-tab {field}` 桥触发,legacy 每次切换派发 `helix-workspace-tab-changed {field}` 让岛对账(同时覆盖工单跳转回队列等程序化切换)。
 - **验证**:vitest **110** 例(+5:默认态契约/乐观切换桥/程序化对账/未知字段忽略/reducer 幂等);pytest 门禁绿;legacy 回归新增 ui_tickets(工单全旅程——tab 切换的直接消费者)与 ui_smoke、ui_accessibility 实跑绿;桌面链重建(tabs chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_workspace_tabs_desktop.py` CDP 真机验证:legacy 让位、岛切工单 → legacy 窗格跟随 → 切回队列 → 直接调 legacy 切换器程序化切换时岛正确对账。
 
+### D3 长尾:saved views 岛(2026-08-29)
+
+- **saved-views 岛**(`frontend/src/islands/saved-views-island.jsx`):工作区的视图选择器 + 保存/删除按钮由 React 岛渲染,legacy `#savedViewField`/`#saveView`/`#deleteView` 经 yieldsLegacy 让位。数据生命周期留在 legacy——apply 传完整 view 对象(岛持数据)给 `applySavedView`(重写 legacy 过滤输入 + refreshAll),save 经桥 `helix-saved-views-save {name}` 用 `currentViewFilters()`(legacy 输入是过滤器唯一真源)POST 并 toast,delete 经 `helix-saved-views-delete {id}`;桥完成派发 `helix-saved-views-changed {ok, id?}` 让岛 refetch 并重选新建视图/删除后清空选择。岛自取 `/api/saved-views`,legacy `loadSavedViews` 岛模式跳过。`display:contents` 让岛控件无缝接管工具栏 grid 的单元格。
+- **真机 CDP 抓住 mount 缺 Provider 缺陷**:岛的 `mount()` 忘了包 `QueryClientProvider` 而组件用 `useQueryClient`——真机启动 React 抛 "No QueryClient set",岛容器静默为空;组件测试各自包 provider 故测不出,只有桌面 boot 路径会踩中。修复 mount 并在注释记录该测试盲区。
+- **验证**:vitest **119** 例(+9:select 装载/类契约/apply 桥带完整 view/提示词保存桥/取消不发桥/changed 重选/删除清选/失败不动选择);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建后 `desktop/verify_saved_views_desktop.py` CDP 真机验证:legacy 让位、保存(POST 201 + 提示词 + 岛重选)、应用(改写 legacy 过滤输入 + 触发新队列请求)、删除(DELETE + 选择清空)全旅程绿。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -1528,6 +1528,14 @@ a.knowledge-source:hover {
   margin: -4px 0 10px;
 }
 
+/* D3: the React saved-views island mount dissolves into the tools grid —
+   its children take the grid cells of the legacy controls while those are
+   yielded (hidden → display:none drops them from the grid) in island
+   mode. */
+.saved-views-react-island {
+  display: contents;
+}
+
 .perf-hint {
   margin: -4px 0 10px;
   padding: 6px 9px;

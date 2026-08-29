@@ -104,6 +104,14 @@ export const ISLANDS = [
     mountId: "workspaceTabsReactIsland",
     yieldsLegacy: ["workspaceTabs"],
   },
+  // The saved views island owns the view select + save/delete buttons; the
+  // data lifecycle (apply filters, POST with currentViewFilters, DELETE)
+  // stays legacy via helix-saved-views-apply/-save/-delete/-changed.
+  {
+    name: "saved-views",
+    mountId: "savedViewsReactIsland",
+    yieldsLegacy: ["savedViewField", "saveView", "deleteView"],
+  },
   { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
