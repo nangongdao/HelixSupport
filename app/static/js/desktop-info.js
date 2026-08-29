@@ -1,11 +1,15 @@
 /**
- * Helix Support — desktop-info + view glue module (extracted from app.js)
+ * Helix Support — desktop-info module (extracted from app.js)
  *
- * Holds the settings-page desktop runtime info (D1) and the knowledge/admin
- * view-loading glue that dispatches island events. Extracted to bring the
- * legacy app.js controller under the §D3 <500-line target.
+ * Holds the settings-page desktop runtime info (D1). In island mode the
+ * settings island (frontend/src/islands/settings-island.jsx) owns this
+ * readout and tracks helix-backend-ready itself; this legacy path stays
+ * for the browser dual-track. Loaded from app.js via HelixModules.
  *
- * Loaded from app.js via the HelixModules namespace.
+ * (The earlier loadKnowledgeView/loadAdminView island-event glue lived
+ * here but dispatched events no consumer ever listened for — the real
+ * bridges are the helix-knowledge / helix-admin event families in app.js
+ * — and has been removed as dead code.)
  */
 
 const DESKTOP_VERSION = "1.4.0";
@@ -23,9 +27,12 @@ export function loadDesktopInfo(els) {
   if (isDesktop) {
     if (els.desktopEnvNote) els.desktopEnvNote.hidden = true;
     const backend = window.__HELIX_BACKEND__ || {};
+    // The shell injects { backendPort: location.port } (src-tauri/src/lib.rs);
+    // the old read of backend.port matched nothing, so the port readout sat
+    // at "等待中…" since D1.
     if (els.desktopBackendPort)
-      els.desktopBackendPort.textContent = backend.port
-        ? `127.0.0.1:${backend.port}`
+      els.desktopBackendPort.textContent = backend.backendPort
+        ? `127.0.0.1:${backend.backendPort}`
         : "等待中…";
     if (els.desktopBackendMode)
       els.desktopBackendMode.textContent = backend.error
@@ -53,43 +60,4 @@ export function knowledgeFilters(els) {
   };
 }
 
-/**
- * Load knowledge articles and dispatch a helix-knowledge-loaded island event.
- * @param {Object} els
- * @param {Object} deps - { api, dispatchIslandEvent, showToast }
- */
-export async function loadKnowledgeView(els, deps) {
-  if (!els.knowledgeView) return;
-  const { api, dispatchIslandEvent, showToast } = deps;
-  try {
-    const articles = await api("/api/knowledge");
-    const list = Array.isArray(articles) ? articles : articles?.items || [];
-    dispatchIslandEvent("helix-knowledge-loaded", { articles: list });
-  } catch (e) {
-    showToast(e.message, true);
-  }
-}
-
-/**
- * Load admin view data (quota/members/webhooks) and dispatch a
- * helix-admin-loaded island event. Requires admin/platform role.
- * @param {Object} els
- * @param {Object} deps - { api, dispatchIslandEvent, showToast, state, canManage }
- */
-export async function loadAdminView(els, deps) {
-  if (!els.adminView || !deps.canManage()) return;
-  const { api, dispatchIslandEvent, showToast, state } = deps;
-  try {
-    const tenantId = state.me?.tenant_id || "demo";
-    const [quota, members, webhooks] = await Promise.all([
-      api(`/api/admin/tenants/${encodeURIComponent(tenantId)}/quota`),
-      api(`/api/admin/tenants/${encodeURIComponent(tenantId)}/members`),
-      api("/api/webhooks"),
-    ]);
-    dispatchIslandEvent("helix-admin-loaded", { quota, members, webhooks });
-  } catch (e) {
-    showToast(e.message, true);
-  }
-}
-
-export default { loadDesktopInfo, knowledgeFilters, loadKnowledgeView, loadAdminView };
+export default { loadDesktopInfo, knowledgeFilters };

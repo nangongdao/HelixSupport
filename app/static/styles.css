@@ -1068,11 +1068,13 @@ a.knowledge-source:hover {
 /* D3: the React admin island mount spans the whole card grid — the island
    renders its own .admin-cards inside. In browser mode the mount is an
    empty grid child, and without the span auto-fit would squeeze it into a
-   single ~350px track. */
-.admin-react-island {
+   single ~350px track. Same for the settings island's mount. */
+.admin-react-island,
+.settings-react-island {
   grid-column: 1 / -1;
 }
-.admin-react-island .admin-cards {
+.admin-react-island .admin-cards,
+.settings-react-island .admin-cards {
   max-width: none;
 }
 

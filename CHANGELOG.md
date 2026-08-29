@@ -60,6 +60,13 @@
 - **测试抓出一个真实浏览器缺陷**:React 合成事件不代理 `submitter`——岛若照搬 legacy 的 `event.submitter?.value`(js/admin-report.js bindAdminReports 收的是原生事件),「导出 CSV」按钮在真实浏览器里会永远走生成预览分支。岛改读 `event.nativeEvent.submitter`,vitest 以原生点击路径锁定该分支。
 - **验证**:vitest **64** 例(+24:身份门/八卡渲染契约/13 写桥/刷新语义/纯模型含 legacy "— MB" 空值逐字保真);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_admin.py`(配额写/成员生命周期/webhook 注册删除/拒绝视图零特权请求)与 ui_accessibility、ui_smoke 对实跑服务全绿;桌面链重建(dist+admin chunk 23.1KB → PyInstaller → 冒烟 → resources 快照核对 → NSIS)后 `desktop/verify_admin_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡片让位、配额 readout 渲染、经桥真实邀请成员并回显「主管」角色。
 
+### D3 长尾:settings 岛 + 端口读数修复(2026-08-29)
+
+- **settings 岛接管设置面**(`frontend/src/islands/settings-island.jsx`):桌面运行时 readout(版本/端口/模式/数据目录)与偏好卡由 React 岛渲染,两张 legacy 卡片加 id 后经 yieldsLegacy 让位,标题保持 legacy。岛通过 `useDesktopBackend` 同时跟踪 `window.__HELIX_BACKEND__` 注入与 `helix-backend-ready` 事件(legacy 每次进视图重跑 `loadDesktopInfo` 的异步等价物),版本号从 `frontend/package.json` 以 JSON import 单源引用。
+- **修复 D1 起的端口读数缺陷**:壳注入契约是 `{ backendPort: location.port }`(src-tauri/src/lib.rs),而 legacy `desktop-info.js` 一直读不存在的 `backend.port`——桌面壳设置页端口自 D1 起恒显「等待中…」。legacy 与岛同步改读 `backendPort`;CDP 真机验证 readout 与实时 sidecar origin 端口一致。
+- **死代码清理**:`desktop-info.js` 移除早期探索遗留的 `loadKnowledgeView`/`loadAdminView`(派发从未有消费者的 helix-knowledge-loaded/helix-admin-loaded 事件;真实桥是 app.js 的 helix-knowledge/helix-admin 事件族)。
+- **验证**:vitest **72** 例(+8:模型 parity 含等待中/错误态/浏览器占位、backend-ready 异步更新、已注入即 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+settings chunk 2.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_settings_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡让位、版本/端口/模式渲染、端口与 origin 一致、env note 隐藏。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -67,6 +67,14 @@ export const ISLANDS = [
       "adminRoutingCard",
     ],
   },
+  // The settings island owns the settings surface: the desktop runtime
+  // readout tracks window.__HELIX_BACKEND__ + helix-backend-ready (the
+  // async equivalent of legacy loadDesktopInfo's re-run on view switch).
+  {
+    name: "settings",
+    mountId: "settingsReactIsland",
+    yieldsLegacy: ["settingsDesktopCard", "settingsPrefsCard"],
+  },
   // The queue island owns the conversation list; the legacy strip controls
   // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
   { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },

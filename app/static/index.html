@@ -794,7 +794,7 @@
           <h2>设置</h2>
         </header>
         <div class="admin-cards">
-          <section class="admin-card">
+          <section class="admin-card" id="settingsDesktopCard">
             <h3>桌面运行时</h3>
             <dl id="desktopInfoReadout" class="admin-readout" aria-live="polite">
               <dt>版本</dt><dd id="desktopVersion">—</dd>
@@ -804,10 +804,15 @@
             </dl>
             <p class="admin-field" id="desktopEnvNote" hidden>当前运行于浏览器环境，桌面运行时信息仅在 Tauri 桌面壳内可见。</p>
           </section>
-          <section class="admin-card">
+          <section class="admin-card" id="settingsPrefsCard">
             <h3>偏好</h3>
             <p class="admin-field">主题、密度、低配模式等偏好已集成在顶部工具栏，可随时切换并自动持久化。</p>
           </section>
+          <!-- D3 React island mount (settings/desktop-info). The two legacy
+               .admin-card sections above stay during the dual-track period;
+               the React island renders into this container and takes over
+               the settings surface in island mode. -->
+          <div id="settingsReactIsland" class="settings-react-island"></div>
         </div>
       </section>
         </main>
