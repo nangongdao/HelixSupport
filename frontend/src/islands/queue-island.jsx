@@ -1,17 +1,21 @@
 /**
  * Helix Support — conversation queue React island (D3)
  *
- * Renders the conversation queue list in the desktop shell. Data flows
- * through the legacy app.js: it owns polling, SSE, filters, pagination and
- * calls renderQueue(), which in island mode publishes HELIX_QUEUE_UPDATED
- * {conversations, selectedId, canOperate, queueHasMore, compact} instead of
- * painting #conversationList. This island listens, renders the same row
- * classes as queueRowHtml (so visual/axe/perf gates stay valid), and bridges
- * row/checkbox interactions back via the legacy events:
- *   helix-queue-select  {id}       → legacy selectConversation(id)
- *   helix-queue-bulk    {id,on}    → legacy bulk checkbox toggle
- * Legacy keeps owning the stripped controls #queueCount/#loadMore and the
- * bulk toolbar (#bulkToolbar), so ui_smoke queue assertions stay green.
+ * Renders the conversation queue list AND the footer strip controls in the
+ * desktop shell. Data flows through the legacy app.js: it owns polling, SSE,
+ * filters, pagination and calls renderQueue(), which in island mode
+ * publishes HELIX_QUEUE_UPDATED
+ * {conversations, selectedId, canOperate, queueHasMore, queueLoadingMore,
+ * compact} instead of painting #conversationList/#queueCount/#loadMore.
+ * This island listens, renders the same row classes as queueRowHtml (so
+ * visual/axe/perf gates stay valid), and bridges interactions back via the
+ * legacy events:
+ *   helix-queue-select    {id}       → legacy selectConversation(id)
+ *   helix-queue-bulk      {id,on}    → legacy bulk checkbox toggle
+ *   helix-queue-load-more {}         → legacy loadMoreConversations()
+ * Legacy keeps owning the bulk toolbar (#bulkToolbar) and the mentions
+ * badge (its own session.js lifecycle), so ui_smoke queue assertions stay
+ * green.
  *
  * Mounts into #queueReactIsland (unhidden only when the build is at
  * STATIC_ASSET_VERSION=1.4.0). In a plain browser tab the mount stays hidden
@@ -28,6 +32,7 @@ export const QUEUE_EVENTS = Object.freeze({
   SYNC: "helix-conversations-sync",
   SELECT: "helix-queue-select",
   BULK: "helix-queue-bulk",
+  LOAD_MORE: "helix-queue-load-more",
 });
 
 const VIRTUAL_THRESHOLD = 200;
@@ -134,6 +139,27 @@ function QueueRow({ conversation, active, selected, canOperate, compact, onSelec
   );
 }
 
+/* ── footer strip (mirrors legacy #queueCount/#loadMore) ───────────────── */
+
+function QueueStrip({ count, hasMore, loadingMore }) {
+  return (
+    <div className="queue-footer">
+      <span>{count}{hasMore ? "+" : ""} 个会话</span>
+      <button
+        className="queue-more"
+        type="button"
+        hidden={!hasMore}
+        disabled={loadingMore}
+        aria-busy={loadingMore}
+        onClick={() => window.dispatchEvent(new CustomEvent(QUEUE_EVENTS.LOAD_MORE))}
+      >
+        <svg className="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.4.0#chevron-down" /></svg>
+        <span>加载更多</span>
+      </button>
+    </div>
+  );
+}
+
 /* ── queue island ──────────────────────────────────────────────────────── */
 
 export function QueueIsland() {
@@ -194,10 +220,23 @@ export function QueueIsland() {
   }, []);
 
   if (!snapshot) {
-    return <div className="queue-loading" role="status" aria-label="队列加载中">正在同步会话队列</div>;
+    return (
+      <div className="queue-island">
+        <div className="queue-loading" role="status" aria-label="队列加载中">正在同步会话队列</div>
+        <QueueStrip count={0} hasMore={false} loadingMore={false} />
+      </div>
+    );
   }
+
+  const queueHasMore = Boolean(snapshot.queueHasMore);
+  const queueLoadingMore = Boolean(snapshot.queueLoadingMore);
   if (!conversations.length) {
-    return <div className="queue-empty">当前筛选条件下没有会话</div>;
+    return (
+      <div className="queue-island">
+        <div className="queue-empty">当前筛选条件下没有会话</div>
+        <QueueStrip count={0} hasMore={false} loadingMore={false} />
+      </div>
+    );
   }
 
   const visibleConversations = win
@@ -232,6 +271,11 @@ export function QueueIsland() {
           <div className="vqueue-pad" data-pad="bottom" aria-hidden="true" style={{ height: `${win.bottomPad}px` }} />
         )}
       </div>
+      <QueueStrip
+        count={conversations.length}
+        hasMore={queueHasMore}
+        loadingMore={queueLoadingMore}
+      />
     </div>
   );
 }

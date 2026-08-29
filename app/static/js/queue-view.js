@@ -185,13 +185,11 @@ export function renderWindowedQueue(win, rowHeight, opts) {
 
 export function renderQueue() {
   const { state, els } = ctx;
-  els.queueCount.textContent = `${state.conversations.length}${state.queueHasMore ? "+" : ""} 个会话`;
-  els.loadMore.hidden = !state.queueHasMore;
-  els.loadMore.disabled = state.queueLoadingMore;
-  els.loadMore.setAttribute("aria-busy", String(state.queueLoadingMore));
-  // Island mode: the React queue island owns the list DOM. Publish the
-  // snapshot the island mirrors and stop painting #conversationList (kept
-  // hidden by the loader) — the strip controls remain legacy-owned above.
+  // Island mode: the React queue island owns the list DOM AND the strip
+  // controls (#queueCount/#loadMore are yielded by the loader). Publish the
+  // snapshot the island mirrors and stop painting the legacy DOM entirely —
+  // the load-more pagination lifecycle stays in app.js via the
+  // helix-queue-load-more bridge.
   if (window.__HELIX_ISLAND_MODE__) {
     window.dispatchEvent(
       new CustomEvent("helix-conversations-updated", {
@@ -200,6 +198,7 @@ export function renderQueue() {
           selectedId: state.selectedId,
           bulkSelected: [...state.bulkSelected],
           queueHasMore: state.queueHasMore,
+          queueLoadingMore: state.queueLoadingMore,
           canOperate: ctx.canOperate(),
           compact: ctx.isCompactDensity(state.density, state.lowPerf),
         },
@@ -207,6 +206,10 @@ export function renderQueue() {
     );
     return;
   }
+  els.queueCount.textContent = `${state.conversations.length}${state.queueHasMore ? "+" : ""} 个会话`;
+  els.loadMore.hidden = !state.queueHasMore;
+  els.loadMore.disabled = state.queueLoadingMore;
+  els.loadMore.setAttribute("aria-busy", String(state.queueLoadingMore));
   els.list.setAttribute("aria-busy", "false");
   if (!state.conversations.length) {
     els.loadMore.hidden = true;

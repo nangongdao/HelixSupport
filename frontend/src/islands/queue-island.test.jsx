@@ -113,8 +113,80 @@ describe("QueueIsland mirror contract", () => {
     expect(await waitFor(() => screen.getByText("当前筛选条件下没有会话"))).toBeTruthy();
   });
 
-  it("renders nothing until the first snapshot arrives", () => {
+  it("renders the syncing placeholder plus a zeroed strip before the first snapshot", () => {
+    // Island owns the strip now, so even the pre-snapshot frame mirrors
+    // legacy's initial "0 个会话" instead of rendering nothing at all.
     const { container } = render(<QueueIsland />);
-    expect(container.querySelector(".queue-island")).toBeNull();
+    expect(screen.getByRole("status", { name: "队列加载中" })).toBeTruthy();
+    expect(screen.getByText("0 个会话")).toBeTruthy();
+    expect(container.querySelector(".queue-island")).toBeTruthy();
+  });
+});
+
+describe("QueueIsland footer strip", () => {
+  it("renders the count with a + suffix while more pages exist", async () => {
+    render(<QueueIsland />);
+    publish({
+      conversations: [makeConversation()],
+      selectedId: null,
+      bulkSelected: [],
+      canOperate: true,
+      compact: false,
+      queueHasMore: true,
+    });
+    expect(await waitFor(() => screen.getByText("1+ 个会话"))).toBeTruthy();
+    const more = screen.getByRole("button", { name: /加载更多/ });
+    expect(more.hidden).toBe(false);
+    expect(more.disabled).toBe(false);
+  });
+
+  it("drops the + and hides 加载更多 when no more pages remain", async () => {
+    const { container } = render(<QueueIsland />);
+    publish({
+      conversations: [makeConversation()],
+      selectedId: null,
+      bulkSelected: [],
+      canOperate: true,
+      compact: false,
+      queueHasMore: false,
+    });
+    expect(await waitFor(() => screen.getByText("1 个会话"))).toBeTruthy();
+    // hidden 按钮不进可访问性树,按 DOM 断言其隐藏态。
+    const more = container.querySelector(".queue-more");
+    expect(more.hidden).toBe(true);
+  });
+
+  it("marks the load-more button busy while a page fetch is in flight", async () => {
+    render(<QueueIsland />);
+    publish({
+      conversations: [makeConversation()],
+      selectedId: null,
+      bulkSelected: [],
+      canOperate: true,
+      compact: false,
+      queueHasMore: true,
+      queueLoadingMore: true,
+    });
+    const more = await waitFor(() => screen.getByRole("button", { name: /加载更多/ }));
+    expect(more.disabled).toBe(true);
+    expect(more.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("dispatches helix-queue-load-more when the button is clicked", async () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    render(<QueueIsland />);
+    publish({
+      conversations: [makeConversation()],
+      selectedId: null,
+      bulkSelected: [],
+      canOperate: true,
+      compact: false,
+      queueHasMore: true,
+    });
+    fireEvent.click(await waitFor(() => screen.getByRole("button", { name: /加载更多/ })));
+    const loadMoreEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find(
+      (ev) => ev.type === QUEUE_EVENTS.LOAD_MORE,
+    );
+    expect(loadMoreEvent).toBeTruthy();
   });
 });

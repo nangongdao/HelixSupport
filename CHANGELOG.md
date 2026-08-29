@@ -73,6 +73,12 @@
 - **刷新节奏语义保真**:legacy 仅在**前台** refreshAll 周期(初次加载/用户操作/搜索)refetch `/api/dashboard`,30s 后台轮询复用缓存读数——岛模式下 legacy 前台周期派发 `helix-dashboard-refresh {force}`,后台周期不派发也不发请求;岛 `staleTime: Infinity` 只响应 force 事件,首帧渲染空网格(不闪 0)对齐 legacy 首刷前行为。应用状态不再写 `state.dashboard`,yielded 的 `#metrics` 不再被填充。
 - **验证**:vitest **80** 例(+8:净渲染 parity 含告警规则/缺省 0、tenant 头、首帧空网格、force 刷新 refetch、unforced 忽略);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+dashboard chunk 1.6KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_dashboard_island_desktop.py` CDP 真机验证:4 瓦片标签/数值/legacy 让位/tenant 头/force 事件触发真实 refetch 全过。过程杂音:rustc 因系统内存不足(可用 2.5GB)OOM 崩溃留下损坏的编译产物(E0463 找不到 crate),清 `target/release/{deps,.fingerprint}` 后重建通过(3m35s)。
 
+### D3 长尾:queue 岛接管条带控件(2026-08-29)
+
+- **queue 岛扩至 footer strip**(`frontend/src/islands/queue-island.jsx`):会话计数与「加载更多」按钮由岛渲染,legacy `#queueCount`/`#loadMore` 经 yieldsLegacy 让位;快照通道 `helix-conversations-updated` 增加 `queueLoadingMore`,js/queue-view.js 的 renderQueue 在岛模式下完全停止绘制 legacy 队列 DOM(此前 strip 仍由 legacy 先画)。分页生命周期(cursor、加载中守卫、query-key 陈旧校验)留在 legacy——岛按钮经新增的 `helix-queue-load-more` 事件桥触发 `loadMoreConversations()`。
+- **状态完整性**:岛此前预快照/空态直接提前返回,现在统一渲染 `.queue-island` 包装层——预快照显示「正在同步 + 0 个会话」(镜像 legacy 初始文案),空态/加载中/列表态都带 strip;mentionsBadge 因绑定 session.js 面板生命周期保持 legacy(其所在 legacy footer 仍在)。
+- **验证**:vitest **84** 例(+4 strip 用例:+后缀计数/无更多隐藏/加载中 aria-busy/点击桥事件,预快照用例改写);pytest 门禁绿;ui_smoke + ui_virtual_queue + ui_accessibility legacy 实跑绿;桌面链重建(queue chunk 5.4KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_queue_strip_desktop.py` CDP 真机验证:**种子 60 条会话**(页大小 50)→ 条带显示「50+ 个会话」→ 岛内「加载更多」点击触发真实 cursor 请求 → 行数增至 60,legacy 控件全程让位。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

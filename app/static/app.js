@@ -3279,6 +3279,10 @@ els.newConversationForm.addEventListener("submit", async (event) => {
 
 els.refreshList.addEventListener("click", () => refreshAll());
 els.loadMore.addEventListener("click", loadMoreConversations);
+// D3 bridge (queue island strip): the island's 加载更多 button dispatches
+// helix-queue-load-more; the pagination lifecycle (cursor, loading-more
+// guard, query-key staleness check) stays here.
+window.addEventListener("helix-queue-load-more", () => void loadMoreConversations());
 els.statusFilter.addEventListener("change", () => refreshAll());
 els.labelFilter.addEventListener("change", () => refreshAll());
 els.priorityFilter.addEventListener("change", () => refreshAll());

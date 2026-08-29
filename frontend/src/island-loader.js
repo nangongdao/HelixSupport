@@ -75,9 +75,10 @@ export const ISLANDS = [
     mountId: "settingsReactIsland",
     yieldsLegacy: ["settingsDesktopCard", "settingsPrefsCard"],
   },
-  // The queue island owns the conversation list; the legacy strip controls
-  // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
-  { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },
+  // The queue island owns the conversation list AND the footer strip
+  // (count + load-more); the bulk toolbar and the mentions badge stay
+  // legacy (the badge has its own session.js lifecycle).
+  { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList", "queueCount", "loadMore"] },
   // The dashboard island owns the workspace metrics strip; legacy
   // foreground refreshAll cycles drive it via helix-dashboard-refresh
   // (background polls never refetched the dashboard, and still don't).
