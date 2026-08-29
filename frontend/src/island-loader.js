@@ -78,6 +78,10 @@ export const ISLANDS = [
   // The queue island owns the conversation list; the legacy strip controls
   // (#queueCount/#loadMore) and the bulk toolbar stay legacy.
   { name: "queue", mountId: "queueReactIsland", yieldsLegacy: ["conversationList"] },
+  // The dashboard island owns the workspace metrics strip; legacy
+  // foreground refreshAll cycles drive it via helix-dashboard-refresh
+  // (background polls never refetched the dashboard, and still don't).
+  { name: "dashboard", mountId: "dashboardReactIsland", yieldsLegacy: ["metrics"] },
   { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.

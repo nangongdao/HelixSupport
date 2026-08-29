@@ -118,6 +118,11 @@
             <button id="wsTabTickets" class="workspace-tab" type="button" role="tab" aria-selected="false" data-wstab="tickets">工单</button>
           </div>
           <div id="metrics" class="metric-grid" aria-live="polite"></div>
+          <!-- D3 React island mount (dashboard metrics). The legacy #metrics
+               grid above stays during the dual-track period; the React
+               island renders into this container and takes over the strip
+               in island mode. -->
+          <div id="dashboardReactIsland"></div>
           <div class="queue-workspace-tools" aria-label="队列工作区工具">
             <button id="focusWaiting" class="focus-preset" type="button" aria-pressed="false">
               <svg class="icon"><use href="/static/icons.svg?v=1.4.0#activity" /></svg><span>待响应</span>

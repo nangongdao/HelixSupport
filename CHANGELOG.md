@@ -67,6 +67,12 @@
 - **死代码清理**:`desktop-info.js` 移除早期探索遗留的 `loadKnowledgeView`/`loadAdminView`(派发从未有消费者的 helix-knowledge-loaded/helix-admin-loaded 事件;真实桥是 app.js 的 helix-knowledge/helix-admin 事件族)。
 - **验证**:vitest **72** 例(+8:模型 parity 含等待中/错误态/浏览器占位、backend-ready 异步更新、已注入即 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+settings chunk 2.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_settings_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡让位、版本/端口/模式渲染、端口与 origin 一致、env note 隐藏。
 
+### D3 长尾:dashboard metrics 岛(2026-08-29)
+
+- **dashboard 岛接管工作区指标条**(`frontend/src/islands/dashboard-island.jsx`):四格指标(自动/待响应/认领中/SLA 超时)由 React 岛渲染,legacy `#metrics` 经 yieldsLegacy 让位;`metricsModel` 捕获 legacy `renderMetrics` 的**净渲染效果**——legacy 先构建「待人工」瓦片再在绘制前原地改写为「待响应」(needs_response),可见瓦片集从未显示 waiting_human,岛直接按净效果建模并以测试锁定。
+- **刷新节奏语义保真**:legacy 仅在**前台** refreshAll 周期(初次加载/用户操作/搜索)refetch `/api/dashboard`,30s 后台轮询复用缓存读数——岛模式下 legacy 前台周期派发 `helix-dashboard-refresh {force}`,后台周期不派发也不发请求;岛 `staleTime: Infinity` 只响应 force 事件,首帧渲染空网格(不闪 0)对齐 legacy 首刷前行为。应用状态不再写 `state.dashboard`,yielded 的 `#metrics` 不再被填充。
+- **验证**:vitest **80** 例(+8:净渲染 parity 含告警规则/缺省 0、tenant 头、首帧空网格、force 刷新 refetch、unforced 忽略);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+dashboard chunk 1.6KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_dashboard_island_desktop.py` CDP 真机验证:4 瓦片标签/数值/legacy 让位/tenant 头/force 事件触发真实 refetch 全过。过程杂音:rustc 因系统内存不足(可用 2.5GB)OOM 崩溃留下损坏的编译产物(E0463 找不到 crate),清 `target/release/{deps,.fingerprint}` 后重建通过(3m35s)。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

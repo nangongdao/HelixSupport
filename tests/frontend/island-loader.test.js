@@ -77,8 +77,11 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   // ticket owns the status filter + list; the detail view stays legacy.
   assert.deepEqual(byName.ticket.yieldsLegacy, ["ticketStatusFilter", "ticketList"]);
   assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
-  // queue owns the conversation list; strip controls and bulk toolbar stay legacy.
+  // The queue island owns the conversation list; strip controls and bulk toolbar stay legacy.
   assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList"]);
+  // dashboard owns the workspace metrics strip; the refresh cadence stays
+  // legacy via helix-dashboard-refresh on foreground cycles.
+  assert.deepEqual(byName.dashboard.yieldsLegacy, ["metrics"]);
   // admin owns the whole card grid: quota/members/webhooks/reports/CSAT/
   // SLA/routing; the denial panel (#adminDenied) and header stay legacy.
   assert.deepEqual(byName.admin.yieldsLegacy, [

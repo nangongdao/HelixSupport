@@ -2823,9 +2823,19 @@ async function runRefresh({ silent = false, refreshDetail = true, background = f
     const meRequest = state.me ? Promise.resolve(state.me) : api("/api/me");
     const queueOnly = background;
     const staleDashboard = !state.dashboard || !background;
+    // Island mode: the dashboard island owns /api/dashboard. Legacy only
+    // refetched on foreground cycles (background polls reuse the cached
+    // readout), so hand the refresh over on exactly those cycles and never
+    // touch the yielded #metrics strip.
+    const islandDashboard = window.__HELIX_ISLAND_MODE__;
+    if (islandDashboard && !background) {
+      window.dispatchEvent(new CustomEvent("helix-dashboard-refresh", { detail: { force: true } }));
+    }
     const requests = [
       meRequest,
-      staleDashboard ? api("/api/dashboard") : Promise.resolve(state.dashboard),
+      staleDashboard && !islandDashboard
+        ? api("/api/dashboard")
+        : Promise.resolve(state.dashboard),
       apiWithHeaders(`/api/conversations?${conversationQuery()}`),
       queueOnly
         ? Promise.resolve(state.labelCatalog)
