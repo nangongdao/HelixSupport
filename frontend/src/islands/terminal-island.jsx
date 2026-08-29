@@ -80,6 +80,14 @@ function TerminalIsland() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Bridge: the command palette's 服务器日志 command toggles the drawer
+  // (the helix-command consumer in app.js dispatches helix-terminal-toggle).
+  useEffect(() => {
+    const onToggle = () => setOpen((prev) => !prev);
+    window.addEventListener("helix-terminal-toggle", onToggle);
+    return () => window.removeEventListener("helix-terminal-toggle", onToggle);
+  }, []);
+
   // Load diagnostic command list from Rust. The caller's role is passed
   // for the Rust-side RBAC check (defense-in-depth, §4.1).
   useEffect(() => {

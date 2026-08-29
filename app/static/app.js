@@ -3739,6 +3739,50 @@ window.addEventListener("helix-mentions-mark-read", async (event) => {
   const { id } = event.detail || {};
   if (id) await window.HelixModules?.session?.markMentionRead?.(id);
 });
+// D3 bridge (command palette island): the palette island dispatches
+// helix-command {id} for every executed command. This consumer was missing
+// since the palette was island-activated, so desktop commands were inert;
+// each id maps onto the same handlers the legacy surfaces use.
+async function checkBackendHealth() {
+  try {
+    const res = await fetch("/health/ready");
+    const body = await res.json().catch(() => ({}));
+    const ready = res.ok && body.status === "ready";
+    showToast(ready ? "健康检查：后端就绪" : `健康检查：后端异常（${body.status || res.status}）`, !ready);
+  } catch (error) {
+    showToast(`健康检查失败：${error.message || error}`, true);
+  }
+}
+window.addEventListener("helix-command", (event) => {
+  const { id } = event.detail || {};
+  switch (id) {
+    case "nav:workspace":
+    case "nav:quality":
+    case "nav:knowledge":
+    case "nav:admin":
+    case "nav:settings":
+      switchAppView(id.slice("nav:".length));
+      break;
+    case "conv:new":
+      // Island mode: route through the conversation dialog island's bridge.
+      window.dispatchEvent(new CustomEvent("helix-conversation-new"));
+      break;
+    case "conv:refresh":
+      void refreshAll();
+      break;
+    case "conv:convert-ticket":
+      void window.HelixModules?.ticketView?.convertToTicket?.();
+      break;
+    case "diag:logs":
+      window.dispatchEvent(new CustomEvent("helix-terminal-toggle"));
+      break;
+    case "diag:health":
+      void checkBackendHealth();
+      break;
+    default:
+      break;
+  }
+});
 // D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
 // row checkbox toggles (the legacy list is yielded in the desktop shell).
 // Mirror the legacy change handler so the bulk toolbar stays in sync.

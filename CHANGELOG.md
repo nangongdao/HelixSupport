@@ -114,6 +114,11 @@
 - **能力边界记录**:真实提及种子需要第二作者会话(后端跳过自我提及),CDP 旅程以空收件箱路径验证(徽标隐藏 parity/程序化开面板/真实 API 空态/外点关闭),jump 与 mark-read 桥由组件测试锁定派发契约。
 - **验证**:vitest **127** 例(+8:权限门/徽标可见性两态/面板行渲染/空态/跳转桥/已读桥 + changed refetch/外点关闭);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(mentions chunk 4.1KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_mentions_island_desktop.py` CDP 真机验证:legacy 让位、0 未读徽标隐藏、程序化开面板渲染真实空态、打开时徽标可见、外点关闭、真实 API 已请求。
 
+### D3 长尾:palette 命令接线(2026-08-29)
+
+- **闭合先前缺口:helix-command 事件自 palette 岛激活以来无消费者**——桌面壳 Ctrl+K 选任何命令都无效果。app.js 新增消费者把 9 条命令映射到既有处理器:nav:* → `switchAppView`、conv:new → `helix-conversation-new`(岛对话框桥)、conv:refresh → `refreshAll`、conv:convert-ticket → ticketView 模块、diag:logs → 新增 `helix-terminal-toggle` 桥(terminal 岛监听开关抽屉)、diag:health → 新增 `checkBackendHealth()`(GET /health/ready 结果 toast)。legacy 命令路径不变(浏览器模式 palette 岛不挂载)。
+- **验证**:vitest **127**(纯接线无新增岛代码);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(app.js → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_palette_commands_desktop.py` CDP 真机验证:Ctrl+K 开面板、nav:admin 打开管理视图(admin 岛渲染)、conv:refresh 触发真实队列请求、diag:logs 打开诊断终端抽屉。脚本内置重试:palette 岛在 ISLANDS 数组末尾异步挂载,过早按键会丢失。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added
