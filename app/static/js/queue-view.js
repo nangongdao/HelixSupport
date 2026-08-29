@@ -116,6 +116,9 @@ export function renderLabelChips(labels, emptyText = "无标签") {
 
 export function renderBulkToolbar() {
   const els = ctx.els;
+  // Island mode: the React queue island owns the bulk toolbar (yielded);
+  // keep the selection state in sync through the snapshot publish instead.
+  if (window.__HELIX_ISLAND_MODE__) return;
   const count = ctx.state.bulkSelected.size;
   els.bulkToolbar.hidden = !ctx.canOperate() || count === 0;
   els.bulkCount.textContent = `已选 ${count} 项`;

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import React from "react";
 
 import { QueueIsland, QUEUE_EVENTS } from "../islands/queue-island.jsx";
@@ -188,5 +188,107 @@ describe("QueueIsland footer strip", () => {
       (ev) => ev.type === QUEUE_EVENTS.LOAD_MORE,
     );
     expect(loadMoreEvent).toBeTruthy();
+  });
+});
+
+describe("QueueIsland bulk toolbar", () => {
+  const base = {
+    conversations: [makeConversation()],
+    selectedId: null,
+    bulkSelected: [],
+    canOperate: true,
+    compact: false,
+  };
+
+  it("shows the toolbar with the selection count once rows are selected", async () => {
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1"] });
+    await waitFor(() => expect(screen.getByText("已选 1 项")).toBeTruthy());
+    expect(document.querySelector(".bulk-toolbar .bulk-action-field")).toBeTruthy();
+  });
+
+  it("shows the label field only for add/remove-label actions", async () => {
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1"] });
+    await waitFor(() => expect(screen.getByText("已选 1 项")).toBeTruthy());
+    expect(screen.queryByLabelText("批量标签")).toBeNull();
+    fireEvent.change(screen.getByLabelText("批量操作"), {
+      target: { value: "add-label" },
+    });
+    expect(screen.getByLabelText("批量标签")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("批量操作"), {
+      target: { value: "claim" },
+    });
+    expect(screen.queryByLabelText("批量标签")).toBeNull();
+  });
+
+  it("bridges apply with the parsed labels for label actions", async () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1", "conv_2"] });
+    await waitFor(() => expect(screen.getByText("已选 2 项")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("批量操作"), {
+      target: { value: "add-label" },
+    });
+    fireEvent.change(screen.getByLabelText("批量标签"), {
+      target: { value: " VIP， 退款风险 " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用批量操作" }));
+    const applyEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find(
+      (ev) => ev.type === QUEUE_EVENTS.BULK_APPLY,
+    );
+    expect(applyEvent.detail).toEqual({
+      action: "add-label",
+      labels: ["VIP", "退款风险"],
+    });
+  });
+
+  it("blocks label actions with empty labels via an inline alert", async () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1"] });
+    await waitFor(() => expect(screen.getByText("已选 1 项")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("批量操作"), {
+      target: { value: "remove-label" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用批量操作" }));
+    // legacy applyBulkAction 的「请输入标签」文案,岛内联呈现且不发桥。
+    expect(screen.getByRole("alert").textContent).toBe("请输入标签");
+    expect(
+      dispatchSpy.mock.calls.some(([ev]) => ev.type === QUEUE_EVENTS.BULK_APPLY),
+    ).toBe(false);
+  });
+
+  it("releases the busy apply button when the bridge reports completion", async () => {
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1"] });
+    await waitFor(() => expect(screen.getByText("已选 1 项")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "应用批量操作" }));
+    const applyButton = screen.getByRole("button", { name: "应用批量操作" });
+    expect(applyButton.disabled).toBe(true);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(QUEUE_EVENTS.BULK_APPLIED));
+    });
+    expect(applyButton.disabled).toBe(false);
+  });
+
+  it("hides the toolbar for operators without selection or without canOperate", async () => {
+    render(<QueueIsland />);
+    publish(base);
+    expect(document.querySelector(".bulk-toolbar")).toBeNull();
+    publish({ ...base, canOperate: false, bulkSelected: ["conv_1"] });
+    expect(document.querySelector(".bulk-toolbar")).toBeNull();
+  });
+
+  it("dispatches helix-queue-bulk-clear on the clear button", async () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    render(<QueueIsland />);
+    publish({ ...base, bulkSelected: ["conv_1"] });
+    await waitFor(() => expect(screen.getByText("已选 1 项")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
+    const clearEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find(
+      (ev) => ev.type === QUEUE_EVENTS.BULK_CLEAR,
+    );
+    expect(clearEvent).toBeTruthy();
   });
 });

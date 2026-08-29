@@ -2972,10 +2972,16 @@ async function performConversationAction(action, successMessage) {
   }
 }
 
-async function applyBulkAction() {
+/**
+ * Bulk action lifecycle — shared by the legacy toolbar form and the
+ * island's helix-queue-bulk-apply bridge. `source` carries the island's
+ * {action, labels}; without it the values come from the legacy toolbar
+ * inputs (browser dual-track).
+ */
+async function applyBulkAction(source = null) {
   const conversationIds = [...state.bulkSelected];
   if (!conversationIds.length) return;
-  const selectedAction = els.bulkAction.value;
+  const selectedAction = source ? source.action : els.bulkAction.value;
   const payload = { conversation_ids: conversationIds };
   if (selectedAction === "priority-high" || selectedAction === "priority-normal") {
     payload.action = "set_priority";
@@ -2983,10 +2989,12 @@ async function applyBulkAction() {
   } else if (selectedAction === "claim" || selectedAction === "release") {
     payload.action = selectedAction;
   } else {
-    const labels = els.bulkLabelInput.value
-      .split(/[,，]/)
-      .map((label) => label.trim())
-      .filter(Boolean);
+    const labels = source
+      ? source.labels
+      : els.bulkLabelInput.value
+          .split(/[,，]/)
+          .map((label) => label.trim())
+          .filter(Boolean);
     if (!labels.length) {
       showToast("请输入标签", true);
       els.bulkLabelInput.focus();
@@ -3389,7 +3397,9 @@ if (els.inspectorToggle) {
   });
 }
 els.bulkAction.addEventListener("change", renderBulkToolbar);
-els.applyBulk.addEventListener("click", applyBulkAction);
+// The click event must NOT leak into applyBulkAction's optional `source`
+// parameter (a MouseEvent is truthy and would shadow the island payload).
+els.applyBulk.addEventListener("click", () => void applyBulkAction());
 els.clearBulk.addEventListener("click", () => {
   state.bulkSelected.clear();
   renderQueue();
@@ -3676,6 +3686,20 @@ window.addEventListener("helix-queue-bulk", (event) => {
   if (on) state.bulkSelected.add(id);
   else state.bulkSelected.delete(id);
   renderBulkToolbar();
+});
+// D3 bridge (queue island bulk toolbar): apply/clear arrive with the
+// island's toolbar state; the bulk lifecycle (payload build, POST, toast,
+// selection reset, refresh) stays here and reports completion so the
+// island can release its busy state.
+window.addEventListener("helix-queue-bulk-apply", async (event) => {
+  const { action, labels } = event.detail || {};
+  if (!action) return;
+  await applyBulkAction({ action, labels });
+  window.dispatchEvent(new CustomEvent("helix-queue-bulk-applied"));
+});
+window.addEventListener("helix-queue-bulk-clear", () => {
+  state.bulkSelected.clear();
+  renderQueue();
 });
 // D3 bridge: on mount the React queue island asks for the current queue
 // snapshot (helix-conversations-sync); re-render in island mode so the

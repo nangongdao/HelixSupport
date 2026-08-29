@@ -91,6 +91,12 @@
 - **queue drawer 决策不激活**:抽屉入口 `#mobileQueue` 为 `.mobile-only`(≤900px 才显示),桌面壳宽视口下不可达;岛模式只存在于桌面壳,迁移零收益,与 session/shell 决策同理,列为后续候选。
 - **验证**:vitest **98** 例(+8:payload 投影 parity/开闭契约/桥 busy 态/成功关闭/失败保留);pytest 门禁绿;ui_smoke(含 legacy 对话框旅程)+ ui_accessibility 实跑绿;桌面链重建(dialog chunk 3.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_conversation_dialog_desktop.py` CDP 真机验证:legacy 对话框让位、新建按钮开岛对话框并聚焦名称、真实 POST 201、成功后岛关闭且新会话入列并选中(is-active)。
 
+### D3 长尾:queue 岛接管 bulk toolbar(2026-08-29)
+
+- **bulk toolbar 并入 queue 岛**(`frontend/src/islands/queue-island.jsx`):批量操作条(已选计数/动作下拉/标签字段/应用/清除)由岛渲染,legacy `#bulkToolbar` 经 yieldsLegacy 让位,renderBulkToolbar 岛模式直接跳过绘制。批量生命周期(payload 构建、POST bulk-actions、toast、选择清空、refreshAll)留在 legacy——`applyBulkAction(source)` 增加可选载荷参数,legacy 表单路径与岛 `helix-queue-bulk-apply {action, labels}` 桥共用;标签动作的空标签校验前移到岛内(复刻 legacy「请输入标签」文案,role=alert 内联呈现,不发桥);桥完成派发 `helix-queue-bulk-applied` 释放岛的 busy 态;`helix-queue-bulk-clear` 桥走 legacy 清空 → 快照回流同步岛。
+- **门禁抓住一个真 bug**:重构后 legacy 点击监听器仍直接绑定 `applyBulkAction`,点击事件对象作为首个实参泄漏进 `source` 形参(MouseEvent 为 truthy)→ `source.labels` 为 undefined → `.length` 抛错,批量 POST 永不发出。ui_smoke 批量旅程超时暴露,监听器改为显式无参调用。vitest 岛侧补 busy 释放用例锁定 `helix-queue-bulk-applied` 契约。
+- **验证**:vitest **105** 例(+7:计数/标签字段显隐/桥载荷含逗号全半角解析/空标签内联阻断/busy 释放/无选择隐藏/清除桥);pytest 门禁绿;ui_smoke(批量旅程恢复)+ ui_virtual_queue + ui_accessibility 实跑绿;桌面链重建(queue chunk → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_bulk_toolbar_desktop.py` CDP 真机验证:legacy 让位、无选择时无工具栏、选 2 行显示「已选 2 项」、真实 POST 200 updated=2、成功后工具栏消失。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

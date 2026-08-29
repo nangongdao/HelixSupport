@@ -77,9 +77,14 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   // ticket owns the status filter + list; the detail view stays legacy.
   assert.deepEqual(byName.ticket.yieldsLegacy, ["ticketStatusFilter", "ticketList"]);
   assert.ok(!byName.ticket.yieldsLegacy.includes("ticketDetailView"));
-  // queue owns the conversation list and the footer strip (count +
-  // load-more); the bulk toolbar and mentions badge stay legacy.
-  assert.deepEqual(byName.queue.yieldsLegacy, ["conversationList", "queueCount", "loadMore"]);
+  // queue owns the conversation list, the footer strip (count + load-more)
+  // and the bulk toolbar; only the mentions badge stays legacy.
+  assert.deepEqual(byName.queue.yieldsLegacy, [
+    "conversationList",
+    "queueCount",
+    "loadMore",
+    "bulkToolbar",
+  ]);
   // dashboard owns the workspace metrics strip; the refresh cadence stays
   // legacy via helix-dashboard-refresh on foreground cycles.
   assert.deepEqual(byName.dashboard.yieldsLegacy, ["metrics"]);
