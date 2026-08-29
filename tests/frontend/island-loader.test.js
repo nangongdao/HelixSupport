@@ -93,6 +93,8 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
   // conversation dialog owns the new-conversation <dialog>; the create
   // lifecycle stays legacy via helix-conversation-create/-created.
   assert.deepEqual(byName["conversation-dialog"].yieldsLegacy, ["newConversationDialog"]);
+  // workspace tabs owns the 队列/工单 tablist; pane switching stays legacy.
+  assert.deepEqual(byName["workspace-tabs"].yieldsLegacy, ["workspaceTabs"]);
   // admin owns the whole card grid: quota/members/webhooks/reports/CSAT/
   // SLA/routing; the denial panel (#adminDenied) and header stay legacy.
   assert.deepEqual(byName.admin.yieldsLegacy, [

@@ -3677,6 +3677,14 @@ window.addEventListener("helix-queue-select", (event) => {
   if (!id) return;
   void selectConversation(id);
 });
+// D3 bridge (workspace tabs island): the island dispatches
+// helix-workspace-tab on clicks; pane switching and the data side effects
+// (ticket loading, queue refresh) stay in legacy switchWorkspaceTab.
+window.addEventListener("helix-workspace-tab", (event) => {
+  const { field } = event.detail || {};
+  if (!["queue", "tickets"].includes(field)) return;
+  window.HelixModules?.ticketView?.switchWorkspaceTab?.(field);
+});
 // D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
 // row checkbox toggles (the legacy list is yielded in the desktop shell).
 // Mirror the legacy change handler so the bulk toolbar stays in sync.

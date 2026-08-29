@@ -97,6 +97,11 @@
 - **门禁抓住一个真 bug**:重构后 legacy 点击监听器仍直接绑定 `applyBulkAction`,点击事件对象作为首个实参泄漏进 `source` 形参(MouseEvent 为 truthy)→ `source.labels` 为 undefined → `.length` 抛错,批量 POST 永不发出。ui_smoke 批量旅程超时暴露,监听器改为显式无参调用。vitest 岛侧补 busy 释放用例锁定 `helix-queue-bulk-applied` 契约。
 - **验证**:vitest **105** 例(+7:计数/标签字段显隐/桥载荷含逗号全半角解析/空标签内联阻断/busy 释放/无选择隐藏/清除桥);pytest 门禁绿;ui_smoke(批量旅程恢复)+ ui_virtual_queue + ui_accessibility 实跑绿;桌面链重建(queue chunk → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_bulk_toolbar_desktop.py` CDP 真机验证:legacy 让位、无选择时无工具栏、选 2 行显示「已选 2 项」、真实 POST 200 updated=2、成功后工具栏消失。
 
+### D3 长尾:workspace tabs 岛(2026-08-29)
+
+- **workspace-tabs 岛**(`frontend/src/islands/workspace-tabs-island.jsx`):工作区「队列/工单」tablist 由 React 岛渲染,legacy `#workspaceTabs` 容器加 id 后经 yieldsLegacy 让位。职责切分:岛渲染两个 tab(保留 .workspace-tab/is-active/role=tab/aria-selected/data-wstab 契约)并乐观切换;窗格切换(queuePane dataset.mode、ticketPane 显隐)、工单加载与队列刷新副作用全部留在 legacy `switchWorkspaceTab`——岛点击经 `helix-workspace-tab {field}` 桥触发,legacy 每次切换派发 `helix-workspace-tab-changed {field}` 让岛对账(同时覆盖工单跳转回队列等程序化切换)。
+- **验证**:vitest **110** 例(+5:默认态契约/乐观切换桥/程序化对账/未知字段忽略/reducer 幂等);pytest 门禁绿;legacy 回归新增 ui_tickets(工单全旅程——tab 切换的直接消费者)与 ui_smoke、ui_accessibility 实跑绿;桌面链重建(tabs chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_workspace_tabs_desktop.py` CDP 真机验证:legacy 让位、岛切工单 → legacy 窗格跟随 → 切回队列 → 直接调 legacy 切换器程序化切换时岛正确对账。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

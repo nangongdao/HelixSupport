@@ -118,7 +118,12 @@
               <span>新建</span>
             </button>
           </div>
-          <div class="workspace-tabs" role="tablist" aria-label="工作区视图">
+          <!-- D3 React island mount (workspace tabs). The legacy tablist
+               below stays during the dual-track period; the React island
+               renders into this container and takes over the tabs in
+               island mode. -->
+          <div id="workspaceTabsReactIsland"></div>
+          <div id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="工作区视图">
             <button id="wsTabQueue" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" data-wstab="queue">队列</button>
             <button id="wsTabTickets" class="workspace-tab" type="button" role="tab" aria-selected="false" data-wstab="tickets">工单</button>
           </div>

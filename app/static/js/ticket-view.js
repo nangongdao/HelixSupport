@@ -61,6 +61,11 @@ export function switchWorkspaceTab(field) {
   if (!ctx.els.wsTabQueue || !ctx.els.wsTabTickets) return;
   const isTickets = field === "tickets";
   if (ctx.els.queuePane) ctx.els.queuePane.dataset.mode = isTickets ? "tickets" : "queue";
+  // Island mode: the workspace tabs island owns the tablist; report the new
+  // active tab so the island reconciles (also covers programmatic switches).
+  window.dispatchEvent(
+    new CustomEvent("helix-workspace-tab-changed", { detail: { field } }),
+  );
   if (ctx.els.wsTabQueue) {
     ctx.els.wsTabQueue.classList.toggle("is-active", !isTickets);
     ctx.els.wsTabQueue.setAttribute("aria-selected", String(!isTickets));

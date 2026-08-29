@@ -97,6 +97,13 @@ export const ISLANDS = [
     mountId: "conversationDialogReactIsland",
     yieldsLegacy: ["newConversationDialog"],
   },
+  // The workspace tabs island owns the 队列/工单 tablist; pane switching and
+  // data loading stay legacy via helix-workspace-tab/-changed.
+  {
+    name: "workspace-tabs",
+    mountId: "workspaceTabsReactIsland",
+    yieldsLegacy: ["workspaceTabs"],
+  },
   { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
