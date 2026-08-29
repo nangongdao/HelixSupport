@@ -9,20 +9,7 @@
 - Python 3.11.4 (rls-venv)
 - Windows 11 (WebView2 Evergreen 自带)
 
-### 1. 打包 Python sidecar
-
-```bash
-artifacts/rls-venv/Scripts/python.exe -m PyInstaller desktop/helix-server.spec --noconfirm
-```
-
-产出：`desktop/dist/helix-server/helix-server.exe` + `_internal/`
-
-冒烟测试：
-```bash
-artifacts/rls-venv/Scripts/python.exe desktop/smoke_sidecar.py
-```
-
-### 2. 构建 Vite React 岛产物
+### 1. 构建 Vite React 岛产物（必须先于 sidecar 打包）
 
 ```bash
 cd frontend
@@ -32,10 +19,34 @@ npx vite build
 
 产出：`app/static/dist/` (manifest.json + content-hashed chunks + island-loader.js)
 
+**顺序警告**：PyInstaller 把 `app/static/` 整体嵌入 sidecar。若先打 sidecar 再建 dist，嵌入的就是过期静态资源（真机冒烟曾抓出 v1.3.9 旧快照导致岛挂载点缺失、`/static/dist/` 404，桌面壳静默回退 legacy 渲染）。
+
+### 2. 打包 Python sidecar
+
+```bash
+artifacts/rls-venv/Scripts/python.exe -m PyInstaller desktop/helix-server.spec --noconfirm
+```
+
+产出：`dist/helix-server/helix-server.exe` + `_internal/`（仓库根 `dist/`，非 `desktop/dist/`）
+
+冒烟测试：
+```bash
+artifacts/rls-venv/Scripts/python.exe desktop/smoke_sidecar.py
+```
+
 ### 3. 部署 sidecar 到 Tauri 资源目录
 
 ```bash
-cp -r desktop/dist/helix-server src-tauri/resources/server/
+cp -r dist/helix-server src-tauri/resources/server/
+```
+
+**验证嵌入快照的新鲜度**（旧快照会静默回退 legacy，必须显式核对）：
+
+```bash
+# 嵌入的 index.html 应包含岛挂载点与当前版本号
+grep -c "ReactIsland" src-tauri/resources/server/helix-server/_internal/app/static/index.html
+grep -o "v=[0-9.]*" src-tauri/resources/server/helix-server/_internal/app/static/index.html | head -1
+ls src-tauri/resources/server/helix-server/_internal/app/static/dist/manifest.json
 ```
 
 ### 4. 构建 Tauri 桌面壳
