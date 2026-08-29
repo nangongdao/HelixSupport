@@ -9,6 +9,10 @@
 
 On Windows, `powershell.exe -NoLogo -NoProfile -NonInteractive -File .\scripts\start_local.ps1` starts a hidden local process, chooses 8000 (or 8001 if occupied), waits for readiness, and prints its URL/PID.
 
+## Desktop App (Tauri, v1.4.0-desktop)
+
+Windows 桌面档位以 Tauri 2.x 原生壳替代浏览器：Python sidecar 随包捆绑并由 Rust supervisor 编排（动态端口、就绪探测、崩溃自愈、单实例锁），数据落在 `%APPDATA%/HelixSupport/data/support.db`。打包、签名、自动更新与冷启动验收见 [`DEPLOYMENT_DESKTOP.md`](DEPLOYMENT_DESKTOP.md)。
+
 ## Container Runtime
 
 ```powershell

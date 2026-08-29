@@ -67,7 +67,7 @@ cd ../src-tauri && cargo tauri build
 
 ## 界面预览
 
-> 截图为 v1.4.0 专业 SaaS 主题（三层 @layer 设计令牌 + 动效令牌 + 桌面 splash 叠层；中性板岩深色 + 靛蓝强调色）。操作台支持深/浅双主题切换，下方均为深色主题。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获。
+> 截图为 v1.4.0 专业 SaaS 主题（三层 @layer 设计令牌 + 动效令牌；中性板岩浅色 + 靛蓝强调色，默认主题）。操作台支持深/浅双主题切换。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获（七张，含桌面壳）。
 
 ### 人工接管与质量洞察
 
@@ -106,6 +106,14 @@ cd ../src-tauri && cargo tauri build
 </p>
 
 Web Chat 使用短期签名 bootstrap token 换取会话绑定 token，以带认证的 fetch-SSE 流式接收回复；支持品牌名、主题色、语言、刷新恢复和人工接管状态。
+
+### 桌面壳（Tauri）
+
+<p align="center">
+  <img src="docs/assets/screenshots/desktop-shell.png" alt="Tauri 桌面壳渲染的坐席工作台，React 岛接管队列/编排/检查器">
+</p>
+
+桌面应用（v1.4.0-desktop）以 Tauri 2.x 原生壳启动同一控制台：React 岛接管队列、编排器与检查器渲染（D3 双轨迁移），Python sidecar 动态端口后台启动，构建与发布细节见 [`DEPLOYMENT_DESKTOP.md`](DEPLOYMENT_DESKTOP.md)。
 
 ## 系统架构
 
@@ -335,7 +343,7 @@ npm audit --audit-level=high
 | 容量与性能 | [`docs/CAPACITY.md`](docs/CAPACITY.md) · [`docs/PERF_NOTES.md`](docs/PERF_NOTES.md) |
 | 坐席与租户手册 | [`docs/guides/operator-manual.md`](docs/guides/operator-manual.md) · [`docs/guides/tenant-admin-manual.md`](docs/guides/tenant-admin-manual.md) |
 | 交付证据 | [`IMPLEMENTATION_REPORT_PHASE_38.md`](IMPLEMENTATION_REPORT_PHASE_38.md) · [`CHANGELOG.md`](CHANGELOG.md) |
-| README 截图重捕获 | `HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py`（对 clean-DB 服务，覆盖 `docs/assets/screenshots/`） |
+| README 截图重捕获 | `HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py`（对 clean-DB 服务，覆盖 `docs/assets/screenshots/`，七张含桌面壳） |
 
 ## 安全与生产边界
 
