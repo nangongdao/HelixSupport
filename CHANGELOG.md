@@ -84,6 +84,13 @@
 - **identity 岛**(`frontend/src/islands/identity-island.jsx`):头部身份读数("actor · 角色",header 中唯一数据派生元素)由 React 岛渲染,legacy `#operatorIdentity` 经 yieldsLegacy 让位;周边切换按钮(主题/低配/检查器/刷新/移动端抽屉)各绑 legacy 偏好生命周期,保持 legacy。岛是 `helix-identity` 事件的纯订阅者(admin 岛切片引入的身份广播)——零 fetch 零写桥,事件按 actorId+role 去重避免每刷新周期重渲染;`identityModel` 逐字复刻 legacy `roleLabel` 回退映射(岛不接 i18n 模块,与其它岛逐字复制规则一致),未认证时显示 legacy 初始文案「正在验证」。app.js 岛模式下跳过向隐藏 legacy span 的绘制。
 - **验证**:vitest **90** 例(+6:模型 parity 含未知角色回退/待验证占位、事件订阅、全局 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(identity chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_identity_island_desktop.py` CDP 真机验证:岛读数「demo.admin · 管理员」、legacy span 隐藏且未被绘制、头部切换按钮全部保留。
 
+### D3 长尾:conversation dialog 岛 + drawer 决策(2026-08-29)
+
+- **conversation-dialog 岛**(`frontend/src/islands/conversation-dialog-island.jsx`):新建会话 `<dialog>` 由 React 岛渲染(原生 dialog + showModal 焦点管理),legacy `#newConversationDialog` 经 yieldsLegacy 让位。桥三件套:legacy「新建」按钮岛模式下派发 `helix-conversation-new` 开岛对话框;岛提交经 `helix-conversation-create {payload}` 回 legacy——`createConversation(payload)` 从表单处理器中提取为共享生命周期(POST → 选中 → 前插 → renderQueue → loadDetail → refreshAll),legacy 与岛共用;岛经 `helix-conversation-created {ok}` 回报,成功关闭、失败保留输入。取消/关闭为岛本地行为(无需 legacy 往返)。
+- **jsdom 能力探测回退**:jsdom 26 仍未实现 `showModal/close`——岛做能力探测,无原生 API 时直接设 `open` 属性(测试路径),真实浏览器走模态路径(top layer + backdrop + 焦点圈),生产行为不变。
+- **queue drawer 决策不激活**:抽屉入口 `#mobileQueue` 为 `.mobile-only`(≤900px 才显示),桌面壳宽视口下不可达;岛模式只存在于桌面壳,迁移零收益,与 session/shell 决策同理,列为后续候选。
+- **验证**:vitest **98** 例(+8:payload 投影 parity/开闭契约/桥 busy 态/成功关闭/失败保留);pytest 门禁绿;ui_smoke(含 legacy 对话框旅程)+ ui_accessibility 实跑绿;桌面链重建(dialog chunk 3.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_conversation_dialog_desktop.py` CDP 真机验证:legacy 对话框让位、新建按钮开岛对话框并聚焦名称、真实 POST 201、成功后岛关闭且新会话入列并选中(is-active)。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -829,6 +829,10 @@
       </div>
     </div>
 
+    <!-- D3 React island mount (new-conversation dialog). The legacy dialog
+         below stays during the dual-track period; the React island renders
+         its own dialog into this container and takes over in island mode. -->
+    <div id="conversationDialogReactIsland" class="conversation-dialog-react-island"></div>
     <dialog id="newConversationDialog" class="dialog">
       <form id="newConversationForm" method="dialog">
         <div class="dialog-heading">

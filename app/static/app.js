@@ -3239,6 +3239,12 @@ els.csatCopyBtn.addEventListener("click", async () => {
 els.reopenBtn.addEventListener("click", () => performConversationAction("reopen", "会话已重开"));
 
 els.newConversation.addEventListener("click", () => {
+  // Island mode: the conversation dialog island owns the <dialog>; hand the
+  // open over and let the island dispatch helix-conversation-create.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent("helix-conversation-new"));
+    return;
+  }
   els.newConversationForm.reset();
   els.newConversationDialog.showModal();
   window.setTimeout(() => els.newCustomerName.focus(), 0);
@@ -3251,6 +3257,37 @@ function closeConversationDialog() {
 els.closeDialog.addEventListener("click", closeConversationDialog);
 els.cancelDialog.addEventListener("click", closeConversationDialog);
 
+/**
+ * D3 bridge: the create lifecycle behind the new-conversation dialog —
+ * shared verbatim by the legacy form submit and the island's
+ * helix-conversation-create bridge so api()/selection/detail/refresh stay
+ * in one place.
+ */
+async function createConversation(payload) {
+  setFormBusy(els.newConversationForm, true);
+  try {
+    const created = await api("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!window.__HELIX_ISLAND_MODE__) closeConversationDialog();
+    state.selectedId = created.id;
+    state.conversations = [
+      created,
+      ...state.conversations.filter((conversation) => conversation.id !== created.id),
+    ];
+    renderQueue();
+    await loadDetail(created.id);
+    void refreshAll({ silent: true, refreshDetail: false });
+    return true;
+  } catch (error) {
+    showToast(error.message, true);
+    return false;
+  } finally {
+    setFormBusy(els.newConversationForm, false);
+  }
+}
+
 els.newConversationForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = {
@@ -3260,26 +3297,16 @@ els.newConversationForm.addEventListener("submit", async (event) => {
   const customerRef = els.newCustomerRef.value.trim();
   if (customerRef) payload.customer_ref = customerRef;
   if (!payload.customer_name) return;
-  setFormBusy(els.newConversationForm, true);
-  try {
-    const created = await api("/api/conversations", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    closeConversationDialog();
-    state.selectedId = created.id;
-    state.conversations = [
-      created,
-      ...state.conversations.filter((conversation) => conversation.id !== created.id),
-    ];
-    renderQueue();
-    await loadDetail(created.id);
-    void refreshAll({ silent: true, refreshDetail: false });
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setFormBusy(els.newConversationForm, false);
-  }
+  await createConversation(payload);
+});
+
+// D3 bridge (conversation dialog island): the island reports the form
+// outcome via helix-conversation-created so it can close on success.
+window.addEventListener("helix-conversation-create", async (event) => {
+  const { payload } = event.detail || {};
+  if (!payload) return;
+  const ok = await createConversation(payload);
+  window.dispatchEvent(new CustomEvent("helix-conversation-created", { detail: { ok } }));
 });
 
 els.refreshList.addEventListener("click", () => refreshAll());

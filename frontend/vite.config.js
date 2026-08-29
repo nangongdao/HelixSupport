@@ -65,6 +65,7 @@ export default defineConfig({
         settings: resolve(__dirname, "src/islands/settings-island.jsx"),
         dashboard: resolve(__dirname, "src/islands/dashboard-island.jsx"),
         identity: resolve(__dirname, "src/islands/identity-island.jsx"),
+        "conversation-dialog": resolve(__dirname, "src/islands/conversation-dialog-island.jsx"),
         inspector: resolve(__dirname, "src/islands/inspector-island.jsx"),
         composer: resolve(__dirname, "src/islands/composer-island.jsx"),
         "command-palette": resolve(__dirname, "src/islands/command-palette-island.jsx"),
