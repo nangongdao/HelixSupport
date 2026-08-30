@@ -128,6 +128,9 @@ export const ISLANDS = [
   // loadOlderMessages lifecycle and the feedback/translate writes stay
   // legacy via helix-thread-state/-load-older/-feedback/-translate.
   { name: "thread", mountId: "threadReactIsland", yieldsLegacy: ["messages"] },
+  // The summary island owns the conversation summary banner; the model is
+  // derived in js/summary.js and published via helix-summary-state.
+  { name: "summary", mountId: "summaryReactIsland", yieldsLegacy: ["summaryBanner"] },
   // The command-palette island owns the Ctrl+K palette; the legacy
   // #commandPalette dialog would otherwise double-handle the shortcut.
   { name: "command-palette", mountId: "commandPaletteReactIsland", yieldsLegacy: ["commandPalette"] },

@@ -29,6 +29,7 @@ import * as qualityPanel from "./quality-panel.js?v=1.4.0";
 import * as session from "./session.js?v=1.4.0";
 import * as sse from "./sse.js?v=1.4.0";
 import * as state from "./state.js?v=1.4.0";
+import * as summary from "./summary.js?v=1.4.0";
 import * as thread from "./thread.js?v=1.4.0";
 import * as ticketView from "./ticket-view.js?v=1.4.0";
 import * as vqueue from "./vqueue.js?v=1.4.0";
@@ -122,6 +123,7 @@ export function initModules() {
     session,
     sse,
     state,
+    summary,
     thread,
     ticketView,
     vqueue,

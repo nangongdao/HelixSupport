@@ -1198,22 +1198,21 @@ function renderDetail(detail) {
 }
 
 function renderSummaries(detail) {
-  const summaries = detail.summaries || [];
-  if (!summaries.length) {
-    els.summaryBanner.hidden = true;
+  // Single model source (js/summary.js): the legacy banner paints from it in
+  // a plain browser tab; island mode publishes it to the summary island.
+  const model = window.HelixModules?.summary?.summaryModel?.(detail.summaries) || {
+    visible: false,
+    title: "",
+    text: "",
+  };
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent(window.HelixModules?.summary?.SUMMARY_EVENT || "helix-summary-state", { detail: model }));
     return;
   }
-  const context = summaries.find((entry) => entry.kind === "context");
-  const disposition = summaries.find((entry) => entry.kind === "disposition");
-  const entry = context || disposition;
-  if (!entry) {
-    els.summaryBanner.hidden = true;
-    return;
-  }
-  els.summaryTitle.textContent = entry.kind === "context" ? "前情摘要（接入参考）" : "处置记录草稿";
-  const badge = entry.source === "model" ? "（AI 生成草稿）" : "（自动投影）";
-  els.summaryText.textContent = `${entry.content}${badge}`;
-  els.summaryBanner.hidden = false;
+  els.summaryBanner.hidden = !model.visible;
+  if (!model.visible) return;
+  els.summaryTitle.textContent = model.title;
+  els.summaryText.textContent = model.text;
 }
 
 function clearSelection() {
@@ -3634,6 +3633,10 @@ window.addEventListener("helix-mentions-open-jump", async (event) => {
 window.addEventListener("helix-mentions-mark-read", async (event) => {
   const { id } = event.detail || {};
   if (id) await window.HelixModules?.session?.markMentionRead?.(id);
+});
+// D3 bridge (summary island): republish the current banner model on request.
+window.addEventListener("helix-summary-sync", () => {
+  if (window.__HELIX_ISLAND_MODE__ && state.detail) renderSummaries(state.detail);
 });
 // D3 bridge (command palette island): the palette island dispatches
 // helix-command {id} for every executed command. This consumer was missing
