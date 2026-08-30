@@ -109,7 +109,7 @@ test("ROLE_NAMES covers the four transcript roles", () => {
 test("currentThreadSnapshot builds sorted languages and feeds attachment meta", () => {
   installWindow({ islandMode: true });
   globalThis.window.HelixModules = {
-    attachment: { attachmentMetaSnapshot: () => ({ "att-1": { filename: "发货单.pdf" } }) },
+    attachments: { attachmentMetaSnapshot: () => ({ "att-1": { filename: "发货单.pdf" } }) },
   };
   configureDeps();
   const snapshot = currentThreadSnapshot({ messages: MESSAGES });

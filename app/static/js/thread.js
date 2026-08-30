@@ -47,7 +47,7 @@ export const ROLE_NAMES = Object.freeze({
 export function currentThreadSnapshot({ messages, preserveAnchor = false, loading = false } = {}) {
   const attachmentMeta =
     typeof window !== "undefined"
-      ? window.HelixModules?.attachment?.attachmentMetaSnapshot?.() || {}
+      ? window.HelixModules?.attachments?.attachmentMetaSnapshot?.() || {}
       : {};
   return {
     loading: Boolean(loading),

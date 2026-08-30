@@ -1,26 +1,51 @@
 /**
- * Helix Support — composer island bridge (D3)
+ * Helix Support — composer island bridge (D3 + tools slice)
  *
  * Routes the React composer island's interactions back to the legacy
- * composer lifecycle (drafts, operator send). Kept in its own module so
- * composer.js stays under the 400-line gate.
+ * composer lifecycle (drafts, operator send, copilot tools, canned macros,
+ * pending attachments) and publishes helix-composer-state snapshots with
+ * the tool data the island renders (canned responses, pending attachments,
+ * canOperate). Kept in its own module so composer.js stays under the
+ * 400-line gate.
  */
 
-import { sendOperatorMessage, saveDraft, clearDraft } from "./composer.js?v=1.4.0";
+import {
+  applyCopilotTone,
+  clearDraft,
+  fetchCopilotSuggestions,
+  recordMacroUse,
+  saveDraft,
+  sendOperatorMessage,
+} from "./composer.js?v=1.4.0";
+import {
+  removePendingAttachment,
+  uploadPendingAttachment,
+} from "./attachment.js?v=1.4.0";
 
 let ctx = null;
 
-/** Inject the legacy app.js singletons (state/els/api/helpers). */
+/** Inject the legacy app.js singletons (state/els/canOperate). */
 export function configure(deps) {
   ctx = deps;
 }
 
-/** Publish the current composer state for the React island mirror. */
+/** Publish the current composer state for the React island mirror. The
+ * tools (copilot bar, canned chips, pending attachments) are gated on
+ * human + canOperate exactly like their legacy counterparts. */
 export function publishComposerState() {
   if (typeof window === "undefined" || !window.__HELIX_ISLAND_MODE__) return;
   const detail = ctx.state?.detail?.conversation;
   const resolved = Boolean(detail && detail.status === "resolved");
   const human = Boolean(detail && ["waiting_human", "human_active"].includes(detail.status));
+  const canOperate = Boolean(ctx.canOperate?.());
+  const meta = window.HelixModules?.attachments?.attachmentMetaSnapshot?.() || {};
+  const conversationId = ctx.state?.selectedId;
+  const pending = conversationId
+    ? (window.HelixModules?.attachments?.pendingIds?.(conversationId) || []).map((id) => ({
+        id,
+        filename: meta[id]?.filename || id,
+      }))
+    : [];
   window.dispatchEvent(
     new CustomEvent("helix-composer-state", {
       detail: {
@@ -29,6 +54,9 @@ export function publishComposerState() {
         customerBusy: ctx.els?.customerForm?.dataset?.busy === "true",
         operatorBusy: ctx.els?.operatorForm?.dataset?.busy === "true",
         operatorDraft: ctx.els?.operatorInput?.value || "",
+        canOperate,
+        cannedResponses: Array.isArray(ctx.state?.cannedResponses) ? ctx.state.cannedResponses : [],
+        pendingAttachments: pending,
       },
     }),
   );
@@ -36,8 +64,9 @@ export function publishComposerState() {
 
 /**
  * Bind the island bridge (exactly once, at app.js load). The React composer
- * island renders mirrored forms in the desktop shell (legacy forms yielded +
- * hidden); route its interactions back to the legacy send/draft lifecycle.
+ * island renders mirrored forms + tool surfaces in the desktop shell (legacy
+ * forms yielded + hidden); route its interactions back to the legacy
+ * send/draft/copilot/attachment lifecycle.
  */
 export function bindIslandBridge() {
   if (!ctx?.els) return false;
@@ -59,6 +88,31 @@ export function bindIslandBridge() {
     } else {
       clearDraft(conversationId);
     }
+  });
+  // Copilot tools: the island passes its own textarea content where the
+  // legacy flow would have read #operatorInput.
+  window.addEventListener("helix-composer-copilot-suggest", (event) => {
+    const { draft } = event.detail || {};
+    void fetchCopilotSuggestions({ draft });
+  });
+  window.addEventListener("helix-composer-copilot-tone", (event) => {
+    const { tone, text } = event.detail || {};
+    if (tone) void applyCopilotTone(tone, { text });
+  });
+  // Macro usage tracking for canned chips / macro suggestions applied
+  // island-side (the insertion itself is island-local).
+  window.addEventListener("helix-composer-macro-use", (event) => {
+    const { macroId } = event.detail || {};
+    if (macroId) void recordMacroUse(macroId);
+  });
+  // Pending attachments: the island's file input hands the raw File across.
+  window.addEventListener("helix-composer-attachment-upload", (event) => {
+    const { file } = event.detail || {};
+    if (file) void uploadPendingAttachment(file);
+  });
+  window.addEventListener("helix-composer-attachment-remove", (event) => {
+    const { id } = event.detail || {};
+    if (id) removePendingAttachment(ctx.state.selectedId, id);
   });
   window.addEventListener("helix-composer-sync", () => publishComposerState());
   window.addEventListener("helix-queue-select", () => publishComposerState());

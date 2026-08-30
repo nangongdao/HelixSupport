@@ -98,6 +98,12 @@ export async function uploadPendingAttachment(file) {
 }
 
 export function renderPendingAttachments() {
+  // Island mode: publish the composer state snapshot (the composer island
+  // renders the pending chips from it); legacy keeps painting its DOM.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+    return;
+  }
   if (!ctx.els.pendingAttachments) return;
   const ids = ctx.state.selectedId ? pendingAttachmentsByConv[ctx.state.selectedId] || [] : [];
   if (!ids.length) {
@@ -116,11 +122,27 @@ export function clearPendingAttachments(conversationId) {
 }
 
 export function renderAttachmentBar(detail) {
-  if (!ctx.els.attachmentBar) return;
   const conversation = detail.conversation;
   const human = ["waiting_human", "human_active"].includes(conversation.status);
-  ctx.els.attachmentBar.hidden = !human || !ctx.canOperate();
+  const visible = human && ctx.canOperate();
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    // The island derives the bar visibility from the composer state snapshot.
+    if (!visible) delete pendingAttachmentsByConv[conversation.id];
+    renderPendingAttachments();
+    return;
+  }
+  if (!ctx.els.attachmentBar) return;
+  ctx.els.attachmentBar.hidden = !visible;
   if (ctx.els.attachmentBar.hidden) delete pendingAttachmentsByConv[conversation.id];
+  renderPendingAttachments();
+}
+
+/** Shared pending-attachment removal (legacy chip click + island bridge). */
+export function removePendingAttachment(conversationId, id) {
+  if (!conversationId || !id) return;
+  pendingAttachmentsByConv[conversationId] = (
+    pendingAttachmentsByConv[conversationId] || []
+  ).filter((existing) => existing !== id);
   renderPendingAttachments();
 }
 
@@ -138,12 +160,7 @@ export function bindAttachments() {
     ctx.els.pendingAttachments.addEventListener("click", (event) => {
       const button = event.target.closest(".pending-attachment-remove");
       if (!button) return;
-      if (ctx.state.selectedId) {
-        pendingAttachmentsByConv[ctx.state.selectedId] = (
-          pendingAttachmentsByConv[ctx.state.selectedId] || []
-        ).filter((id) => id !== button.dataset.id);
-      }
-      renderPendingAttachments();
+      removePendingAttachment(ctx.state.selectedId, button.dataset.id);
     });
   }
   return true;

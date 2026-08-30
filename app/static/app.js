@@ -312,7 +312,9 @@ _helixModules.composer?.configure?.({
 _helixModules.composerIslandBridge?.configure?.({
   state,
   els,
+  canOperate,
 });
+_helixModules.drafts?.configure?.({ state });
 _helixModules.composerIslandBridge?.bindIslandBridge?.();
 _helixModules.session?.configure?.({
   state,
@@ -1154,10 +1156,18 @@ function renderDetail(detail) {
   }
   if (els.watchBtn) els.watchBtn.hidden = resolved || !canReadConversations();
   if (resolved || !canReadConversations()) stopWatching();
-  els.operatorForm.hidden = !human;
-  els.composerNotice.hidden = !human;
-  els.cannedBar.hidden = !human || !canOperate();
-  els.noteForm.hidden = resolved;
+  // Island mode: #operatorForm is yielded (hidden by the loader) and the
+  // canned chips render island-side from the state snapshot — only the
+  // not-yielded legacy surfaces (composer notice, note form) toggle here.
+  if (window.__HELIX_ISLAND_MODE__) {
+    els.composerNotice.hidden = !human;
+    els.noteForm.hidden = resolved;
+  } else {
+    els.operatorForm.hidden = !human;
+    els.composerNotice.hidden = !human;
+    els.cannedBar.hidden = !human || !canOperate();
+    els.noteForm.hidden = resolved;
+  }
   renderCannedResponses();
   if (human && canOperate()) {
     const draft = loadDraft(conversation.id);
@@ -1349,6 +1359,12 @@ function conversationQuery() {
 }
 
 function renderCannedResponses() {
+  // Island mode: the composer island renders the canned chips from the
+  // composer state snapshot (cannedResponses travel in the payload).
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+    return;
+  }
   if (!els.cannedList) return;
   if (!state.cannedResponses.length) {
     els.cannedList.innerHTML = '<span class="canned-empty">暂无快捷回复</span>';
