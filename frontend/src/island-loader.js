@@ -120,7 +120,7 @@ export const ISLANDS = [
     mountId: "mentionsPanelReactIsland",
     yieldsLegacy: ["mentionsBadge", "mentionsPanel"],
   },
-  { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit"] },
+  { name: "inspector", mountId: "inspectorReactIsland", yieldsLegacy: ["inspectorTabs", "inspectorOverview", "inspectorEvidence", "inspectorAudit", "noteForm"] },
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
   { name: "composer", mountId: "composerReactIsland", yieldsLegacy: ["customerForm", "operatorForm"] },

@@ -128,6 +128,7 @@ test("ISLANDS entries that take over a legacy surface declare yieldsLegacy", () 
     "inspectorOverview",
     "inspectorEvidence",
     "inspectorAudit",
+    "noteForm",
   ]);
   // terminal has no legacy sibling.
   assert.equal(byName.terminal.yieldsLegacy, undefined);

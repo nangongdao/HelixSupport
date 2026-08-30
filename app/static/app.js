@@ -41,6 +41,16 @@ const LANGUAGE_OPTIONS = Object.keys(LANGUAGE_NAMES)
   .map((code) => `<option value="${code}">${LANGUAGE_NAMES[code]}</option>`)
   .join("");
 
+const ROLE_LABELS = {
+  admin: "管理员",
+  supervisor: "主管",
+  operator: "客服",
+  channel: "渠道",
+  viewer: "只读",
+  auditor: "审计员",
+};
+
+
 const state = {
   selectedId: null,
   conversations: [],
@@ -406,6 +416,7 @@ _helixModules.inspector?.configure?.({
   formatTime,
   latestAssistant,
   renderLabelChips,
+  roleLabels: ROLE_LABELS,
 });
 
 function queuePageSize() {
@@ -636,7 +647,11 @@ async function loadCollaborators() {
     state.collaborators = Array.isArray(payload) ? payload : [];
     state.collaboratorsLoadedAt = Date.now();
     // roster 迟到达时若候选已打开,重渲染一次补上(修复与输入竞态的窗口)。
-    if (state.mentionOpen && els.mentionSuggest) {
+    if (window.__HELIX_ISLAND_MODE__) {
+      // Island mode: the note composer renders mention candidates from the
+      // inspector state snapshot — republish so a late roster lands.
+      window.HelixModules?.inspector?.publishInspectorState?.();
+    } else if (state.mentionOpen && els.mentionSuggest) {
       renderMentionSuggest(state.mentionToken);
     }
   } catch (error) {
@@ -1158,10 +1173,10 @@ function renderDetail(detail) {
   if (resolved || !canReadConversations()) stopWatching();
   // Island mode: #operatorForm is yielded (hidden by the loader) and the
   // canned chips render island-side from the state snapshot — only the
-  // not-yielded legacy surfaces (composer notice, note form) toggle here.
+  // not-yielded legacy surfaces (composer notice) toggle here. #noteForm
+  // is island-owned too (inspector domain), so it never toggles here.
   if (window.__HELIX_ISLAND_MODE__) {
     els.composerNotice.hidden = !human;
-    els.noteForm.hidden = resolved;
   } else {
     els.operatorForm.hidden = !human;
     els.composerNotice.hidden = !human;
@@ -2100,15 +2115,6 @@ const WEBHOOK_EVENTS = [
   ["conversation.sla_impending", "SLA 临近"],
   ["report.generated", "报表生成"],
 ];
-
-const ROLE_LABELS = {
-  admin: "管理员",
-  supervisor: "主管",
-  operator: "客服",
-  channel: "渠道",
-  viewer: "只读",
-  auditor: "审计员",
-};
 
 function canManage() {
   // The page includes Webhook/report/routing operations whose backend
@@ -3063,25 +3069,15 @@ els.noteInput.addEventListener("keydown", (event) => {
 els.noteForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!state.selectedId) return;
-  const conversationId = state.selectedId;
   const content = els.noteInput.value.trim();
   if (!content) return;
   setFormBusy(els.noteForm, true);
-  try {
-    await api(`/api/conversations/${encodeURIComponent(conversationId)}/notes`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    });
+  const ok = await window.HelixModules?.inspector?.submitNote?.({ content });
+  if (ok) {
     els.noteInput.value = "";
     hideMentionSuggest();
-    showToast("内部备注已添加");
-    await loadDetail(conversationId);
-    void refreshAll({ silent: true, refreshDetail: false });
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setFormBusy(els.noteForm, false);
   }
+  setFormBusy(els.noteForm, false);
 });
 
 els.claimBtn.addEventListener("click", () => performConversationAction("claim", "会话已认领"));

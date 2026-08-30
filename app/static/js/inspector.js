@@ -287,7 +287,8 @@ export function renderInspector(detail) {
 }
 
 /** Publish the current inspector state for the React island mirror. */
-function publishInspectorState() {
+export function publishInspectorState() {
+  const roleLabels = ctx.roleLabels || {};
   window.dispatchEvent(
     new CustomEvent("helix-inspector-state", {
       detail: {
@@ -295,9 +296,34 @@ function publishInspectorState() {
         collapsed: ctx.state.inspectorCollapsed,
         activeTab: ctx.state.activeTab,
         canOperate: ctx.canOperate(),
+        actorId: ctx.state.me ? ctx.state.me.actor_id : "",
+        collaborators: (ctx.state.collaborators || []).map((c) => ({
+          actor_id: c.actor_id,
+          roleLabel: roleLabels[c.role] || c.role,
+        })),
       },
     }),
   );
+}
+
+/** Shared internal-note write (legacy form submit + island bridge). Returns
+ * whether the note landed; callers own their DOM state. */
+export async function submitNote({ content } = {}) {
+  const text = String(content || "").trim();
+  if (!ctx.state.selectedId || !text) return false;
+  try {
+    await ctx.api(`/api/conversations/${encodeURIComponent(ctx.state.selectedId)}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ content: text }),
+    });
+    ctx.showToast("内部备注已添加");
+    await ctx.loadDetail(ctx.state.selectedId);
+    void ctx.refreshAll?.({ silent: true, refreshDetail: false });
+    return true;
+  } catch (error) {
+    ctx.showToast(error.message || "内部备注提交失败", true);
+    return false;
+  }
 }
 
 // D3 bridge: the React inspector island dispatches tab switches, priority
@@ -327,6 +353,17 @@ function bindIslandBridge() {
     };
     void updateLabels(form);
   });
+  // Note composer: the island owns the form DOM; the write + completion
+  // feedback stay here.
+  window.addEventListener("helix-inspector-note-submit", (event) => {
+    const { content } = event.detail || {};
+    void (async () => {
+      const ok = await submitNote({ content });
+      window.dispatchEvent(
+        new CustomEvent("helix-inspector-note-submitted", { detail: { ok } }),
+      );
+    })();
+  });
 }
 
 export function switchInspectorTab(tab) {
@@ -349,19 +386,8 @@ export function switchInspectorTab(tab) {
 }
 
 export default {
-  INSPECTOR_TABS,
-  createInspectorState,
-  reduceInspector,
-  safeCitationUrl,
-  configure,
-  updateLabels,
-  updatePriority,
-  setConversationPriority,
-  renderOverview,
-  renderEvidence,
-  renderAudit,
-  resetInspectorRenderFlags,
-  ensureInspectorTab,
-  renderInspector,
-  switchInspectorTab,
+  INSPECTOR_TABS, createInspectorState, reduceInspector, safeCitationUrl,
+  configure, updateLabels, updatePriority, setConversationPriority, submitNote,
+  renderOverview, renderEvidence, renderAudit, resetInspectorRenderFlags,
+  ensureInspectorTab, renderInspector, switchInspectorTab, publishInspectorState,
 };

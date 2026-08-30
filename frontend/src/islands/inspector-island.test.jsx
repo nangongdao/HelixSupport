@@ -21,6 +21,12 @@ const QUALITY_HTML = {
     '<article class="quality-gap"><button class="quality-gap-draft" data-conversation-id="conv-1" data-message-id="msg-1" type="button">生成知识草稿</button></article>',
 };
 
+const COLLABORATORS = [
+  { actor_id: "demo.admin", roleLabel: "管理员" },
+  { actor_id: "colleague.a", roleLabel: "坐席" },
+  { actor_id: "colleague.b", roleLabel: "坐席" },
+];
+
 function renderIsland() {
   render(<InspectorIsland />);
 }
@@ -29,12 +35,18 @@ function showConversation() {
   // A selected conversation switches the panels from the empty mirrors to
   // the data path; the quality panel renders in both, but the tab bridge
   // only routes to legacy loadQualityPanel from a real tab click below.
-  const detail = {
-    conversation: { id: "conv-1", channel: "webchat", labels: [], priority: "normal" },
-  };
   act(() => {
     window.dispatchEvent(
-      new CustomEvent(INSPECTOR_EVENTS.STATE, { detail }),
+      new CustomEvent(INSPECTOR_EVENTS.STATE, {
+        detail: {
+          detail: {
+            conversation: { id: "conv-1", channel: "webchat", labels: [], priority: "normal", status: "human_active" },
+          },
+          canOperate: true,
+          actorId: "demo.admin",
+          collaborators: COLLABORATORS,
+        },
+      }),
     );
   });
 }
@@ -132,5 +144,115 @@ describe("InspectorIsland quality bridges", () => {
     fireEvent.click(panel.querySelector(".quality-card"));
     expect(onDraft).not.toHaveBeenCalled();
     window.removeEventListener(INSPECTOR_EVENTS.QUALITY_DRAFT, onDraft);
+  });
+});
+
+describe("InspectorIsland note composer (island-owned)", () => {
+  function openNoteForm() {
+    renderIsland();
+    showConversation();
+    const form = document.getElementById("noteForm");
+    expect(form).toBeTruthy();
+    expect(form.hidden).toBe(false);
+    return form;
+  }
+
+  it("renders the legacy note form contract and hides it when resolved", () => {
+    const { container } = render(<InspectorIsland />);
+    showConversation();
+    const form = document.getElementById("noteForm");
+    expect(form).toBeTruthy();
+    expect(document.getElementById("noteInput")).toBeTruthy();
+    expect(document.querySelector('label[for="noteInput"]')?.textContent).toContain("内部备注");
+    expect(screen.getByRole("button", { name: "添加内部备注" })).toBeTruthy();
+    // Resolved conversations hide the composer.
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(INSPECTOR_EVENTS.STATE, {
+          detail: {
+            detail: {
+              conversation: { id: "conv-1", channel: "webchat", labels: [], priority: "normal", status: "resolved" },
+            },
+            canOperate: true,
+            actorId: "demo.admin",
+            collaborators: COLLABORATORS,
+          },
+        }),
+      );
+    });
+    expect(document.getElementById("noteForm").hidden).toBe(true);
+    void container;
+  });
+
+  it("renders mention candidates for a trailing @token, excluding the actor", () => {
+    renderIsland();
+    showConversation();
+    const input = document.getElementById("noteInput");
+    const typed = "请 @colleague";
+    fireEvent.change(input, { target: { value: typed, selectionStart: typed.length } });
+    // the @token sits at the caret; matches both colleagues.
+    const options = document.querySelectorAll("#mentionSuggest .macro-option");
+    expect(options.length).toBe(2);
+    expect(options[0].textContent).toContain("colleague.a");
+    expect(document.querySelector("#mentionSuggest")).toBeTruthy();
+  });
+
+  it("applies a picked mention at the caret with a trailing space", () => {
+    renderIsland();
+    showConversation();
+    const input = document.getElementById("noteInput");
+    fireEvent.change(input, { target: { value: "请 @co 查看进展", selectionStart: 5 } });
+    const options = document.querySelectorAll("#mentionSuggest .macro-option");
+    expect(options.length).toBeGreaterThan(0);
+    fireEvent.click(options[0]);
+    expect(input.value.startsWith("请 @colleague.a ")).toBe(true);
+    expect(document.getElementById("mentionSuggest").hidden).toBe(true);
+  });
+
+  it("navigates candidates with the keyboard and applies on Enter", () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    renderIsland();
+    showConversation();
+    const input = document.getElementById("noteInput");
+    fireEvent.change(input, { target: { value: "麻烦 @c", selectionStart: "麻烦 @c".length } });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const active = document.querySelector("#mentionSuggest .macro-option.is-active");
+    expect(active?.dataset.mentionActor).toBe("colleague.a");
+    fireEvent.keyDown(input, { key: "Enter" });
+    const submitEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find((ev) => ev.type === INSPECTOR_EVENTS.NOTE_SUBMIT);
+    void submitEvent;
+    expect(input.value.startsWith("麻烦 @colleague.a ")).toBe(true);
+  });
+
+  it("bridges the submit to helix-inspector-note-submit and clears on ok", () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    renderIsland();
+    showConversation();
+    const input = document.getElementById("noteInput");
+    fireEvent.change(input, { target: { value: "核对完毕，可以解决" } });
+    fireEvent.submit(document.getElementById("noteForm"));
+    const submitEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find((ev) => ev.type === INSPECTOR_EVENTS.NOTE_SUBMIT);
+    expect(submitEvent.detail).toEqual({ content: "核对完毕，可以解决" });
+    expect(input.value).not.toBe("");
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(INSPECTOR_EVENTS.NOTE_SUBMITTED, { detail: { ok: true } }),
+      );
+    });
+    expect(input.value).toBe("");
+  });
+
+  it("keeps the note text when the write failed", () => {
+    renderIsland();
+    showConversation();
+    const input = document.getElementById("noteInput");
+    fireEvent.change(input, { target: { value: "失败也要保留草稿" } });
+    fireEvent.submit(document.getElementById("noteForm"));
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(INSPECTOR_EVENTS.NOTE_SUBMITTED, { detail: { ok: false } }),
+      );
+    });
+    expect(input.value).toBe("失败也要保留草稿");
   });
 });
