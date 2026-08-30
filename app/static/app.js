@@ -434,6 +434,7 @@ _helixModules.commandDispatch?.configure?.({
   showToast,
   switchAppView,
   refreshAll,
+  actions: { closeCommandPalette, loadDetail },
 });
 _helixModules.adminActions?.configure?.({
   state,
@@ -527,6 +528,7 @@ _helixModules.commandDispatch?.configure?.({
   showToast,
   switchAppView,
   refreshAll,
+  actions: { closeCommandPalette, loadDetail },
 });
 _helixModules.conversationActions?.configure?.({
   state,
@@ -1528,30 +1530,11 @@ function closeCommandPalette() {
   }
 }
 
+// moved to js/command-dispatch.js (runCommand — palette command routing).
 function runCommand(command) {
-  if (!command) return;
-  closeCommandPalette();
-  const { run } = command;
-  if (run.startsWith("view:")) {
-    switchAppView(run.slice("view:".length));
-    return;
-  }
-  if (run.startsWith("conversation:")) {
-    switchAppView("workspace");
-    void loadDetail(run.slice("conversation:".length));
-    return;
-  }
-  const actions = {
-    "action:new_conversation": () => els.newConversation?.click(),
-    "action:refresh": () => refreshAll(),
-    "action:toggle_theme": () => document.getElementById("themeToggle")?.click(),
-    "action:toggle_lowperf": () => els.lowPerfToggle?.click(),
-    "action:toggle_inspector": () => els.inspectorToggle?.click(),
-    "action:save_view": () => els.saveView?.click(),
-  };
-  const action = actions[run];
-  if (action) action();
+  return window.HelixModules?.['commandDispatch']?.['runCommand'](...arguments);
 }
+
 
 // ---- UI 升级 §17.2: 三档密度 (comfortable/compact/dense) --------------------
 

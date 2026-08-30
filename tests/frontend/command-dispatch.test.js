@@ -4,7 +4,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { bindCommandDispatch, checkBackendHealth, configure } from "../../app/static/js/command-dispatch.js";
+import { bindCommandDispatch, checkBackendHealth, configure, runCommand } from "../../app/static/js/command-dispatch.js";
 
 function installWindow() {
   const stub = new (class extends EventTarget {})();
@@ -14,14 +14,19 @@ function installWindow() {
 
 const dispatched = [];
 
-function configureDeps({ fetchImpl } = {}) {
+function configureDeps({ fetchImpl, overrides = {} } = {}) {
   const calls = [];
   configure({
     state: {},
-    els: {},
+    els: { newConversation: { click() {} }, lowPerfToggle: { click() {} }, inspectorToggle: { click() {} }, saveView: { click() {} } },
     showToast: async (message, isError) => calls.push({ toast: message, isError }),
     switchAppView: (view) => calls.push({ view }),
     refreshAll: async () => calls.push({ refreshed: true }),
+    actions: {
+      closeCommandPalette: () => calls.push({ paletteClosed: true }),
+      loadDetail: async (id) => calls.push({ loadDetail: id }),
+    },
+    ...overrides,
   });
   if (fetchImpl) {
     globalThis.fetch = async (url) => fetchImpl(url);
@@ -84,4 +89,36 @@ test("diag:health toasts ready and failure states", async () => {
   globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ status: "degraded" }) });
   await checkBackendHealth();
   assert.ok(calls.some((call) => call.toast === "健康检查：后端异常（degraded）" && call.isError));
+});
+
+test("runCommand closes the palette and routes view switches", () => {
+  installWindow();
+  const { calls } = configureDeps();
+  runCommand({ run: "view:admin" });
+  assert.ok(calls.some((call) => call.paletteClosed));
+  assert.deepEqual(calls.filter((call) => call.view), [{ view: "admin" }]);
+});
+
+test("runCommand jumps to a conversation via workspace + loadDetail", () => {
+  installWindow();
+  const { calls } = configureDeps();
+  runCommand({ run: "conversation:conv-7" });
+  assert.deepEqual(calls.filter((call) => call.view), [{ view: "workspace" }]);
+  assert.ok(calls.some((call) => call.loadDetail === "conv-7"));
+});
+
+test("runCommand maps the workspace actions to their UI triggers", () => {
+  const windowStub = installWindow();
+  const { els } = configureDeps();
+  const clicked = [];
+  globalThis.document = {
+    getElementById: (id) => ({
+      click: () => clicked.push(id),
+    }),
+  };
+  runCommand({ run: "action:new_conversation" });
+  runCommand({ run: "action:toggle_theme" });
+  runCommand({ run: "action:save_view" });
+  assert.deepEqual(clicked, ["themeToggle"]);
+  void els;
 });

@@ -62,4 +62,33 @@ export function bindCommandDispatch() {
   return true;
 }
 
-export default { checkBackendHealth, bindCommandDispatch };
+
+/** Execute a palette command: close the palette, then route view switches,
+ * conversation jumps and the workspace actions. Extracted from app.js; the
+ * palette close and the app.js-scoped handlers arrive through configure. */
+export function runCommand(command) {
+  if (!command) return;
+  ctx.actions.closeCommandPalette();
+  const { run } = command;
+  if (run.startsWith("view:")) {
+    ctx.switchAppView(run.slice("view:".length));
+    return;
+  }
+  if (run.startsWith("conversation:")) {
+    ctx.switchAppView("workspace");
+    void ctx.actions.loadDetail(run.slice("conversation:".length));
+    return;
+  }
+  const actions = {
+    "action:new_conversation": () => ctx.els.newConversation?.click(),
+    "action:refresh": () => ctx.refreshAll(),
+    "action:toggle_theme": () => document.getElementById("themeToggle")?.click(),
+    "action:toggle_lowperf": () => ctx.els.lowPerfToggle?.click(),
+    "action:toggle_inspector": () => ctx.els.inspectorToggle?.click(),
+    "action:save_view": () => ctx.els.saveView?.click(),
+  };
+  const action = actions[run];
+  if (action) action();
+}
+
+export default { checkBackendHealth, bindCommandDispatch, runCommand };
