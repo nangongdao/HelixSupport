@@ -1,11 +1,7 @@
 /**
- * Helix Support — composer surface (ROADMAP §41.6 / ARC-001).
- *
- * Local drafts, claim renewal, canned-response macros, and the AI copilot
- * bar. Extracted from the legacy app.js; app.js keeps thin delegating
- * wrappers with identical names/signatures, so the running UI behaviour is
- * unchanged. app.js calls configure() once at load time with its singletons
- * (state/els/api/…) because this module binds no DOM at import time.
+ * Helix Support — composer surface (ROADMAP §41.6 / ARC-001): drafts, claim
+ * renewal, canned macros and the AI copilot bar. app.js keeps thin
+ * delegating wrappers and calls configure() once with its singletons.
  */
 
 import { clearPendingAttachments, pendingIds } from "./attachment.js?v=1.4.0";
@@ -22,13 +18,11 @@ export function configure(deps) {
   ctx = deps;
 }
 
-// Draft persistence moved to js/drafts.js; re-exported so the
-// window.HelixModules.composer namespace (and the island bridge imports)
-// keep the same surface.
+// Draft persistence lives in js/drafts.js (re-exported for the namespace).
 export { clearDraft, draftKey, draftTtlMs, draftsEnabled, loadDraft, pruneExpiredDrafts, saveDraft } from "./drafts.js?v=1.4.0";
 
-/** Publish a copilot UI section to the composer island (no-op outside
- * island mode). Sections: {status?, suggestions?, knowledge?, rewritten?}. */
+/** Publish a copilot section {status?, suggestions?, knowledge?, rewritten?}
+ * to the composer island (no-op outside island mode). */
 function publishCopilot(detail) {
   if (typeof window === "undefined" || !window.__HELIX_ISLAND_MODE__) return;
   window.dispatchEvent(new CustomEvent(COMPOSER_COPILOT_EVENT, { detail }));
@@ -114,6 +108,26 @@ export function applyMacroFromSuggest(responseId) {
   );
 }
 
+/** Paint the canned chips (browser); island mode republishes state. */
+export function renderCannedResponses() {
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+    return;
+  }
+  if (!ctx.els.cannedList) return;
+  if (!ctx.state.cannedResponses.length) {
+    ctx.els.cannedList.innerHTML = '<span class="canned-empty">暂无快捷回复</span>';
+    return;
+  }
+  ctx.els.cannedList.innerHTML = ctx.state.cannedResponses
+    .slice(0, 8)
+    .map(
+      (item) =>
+        `<button class="canned-chip" type="button" data-macro-id="${ctx.escapeHtml(item.id)}" title="${ctx.escapeHtml(item.body)}">${ctx.escapeHtml(item.title)}${item.shortcut ? ` /${ctx.escapeHtml(item.shortcut)}` : ""}</button>`,
+    )
+    .join("");
+}
+
 export async function loadCannedResponses({ force = false } = {}) {
   if (!ctx.canOperate()) {
     ctx.state.cannedResponses = [];
@@ -130,8 +144,7 @@ export async function loadCannedResponses({ force = false } = {}) {
   publishState();
 }
 
-/** Usage tracking for macros applied outside the legacy DOM flow (island
- * canned chips and macro suggest). Best-effort, like the legacy path. */
+/** Usage tracking for island-applied macros (best-effort, like legacy). */
 export async function recordMacroUse(responseId) {
   try {
     await ctx.api(`/api/canned-responses/${encodeURIComponent(responseId)}/use`, { method: "POST" });

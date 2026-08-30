@@ -418,6 +418,31 @@ _helixModules.inspector?.configure?.({
   renderLabelChips,
   roleLabels: ROLE_LABELS,
 });
+_helixModules.detail?.configure?.({
+  state,
+  els,
+  canOperate,
+  canReadConversations,
+  escapeHtml,
+  actions: {
+    formatSla,
+    statusLabel,
+    renderSubtitle,
+    renderLanguagePicker,
+    renderCannedResponses,
+    loadDraft,
+    renderMessages,
+    renderInspector,
+    renderSummaries,
+    renderCopilot,
+    renderAttachmentBar,
+    loadAttachmentNames,
+    scheduleClaimRenewal,
+    scheduleIdle,
+    enrichTicketBadge,
+    stopWatching,
+  },
+});
 _helixModules.savedViews?.configure?.({
   state,
   els,
@@ -476,7 +501,6 @@ _helixModules.refresh?.configure?.({
     loadCollaborators,
     loadCannedResponses,
     renderLabelFilter,
-    renderMetrics,
     loadDetail,
     selectConversation,
     clearSelection,
@@ -786,25 +810,9 @@ function newIdempotencyKey() {
   return `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+// moved to js/refresh.js (metric tiles painter)
 function renderMetrics(data) {
-  const items = [
-    ["自动", data?.open ?? 0, false],
-    ["待人工", data?.waiting_human ?? 0, (data?.waiting_human ?? 0) > 0],
-    ["认领中", data?.claimed_active ?? 0, false],
-    ["SLA 超时", data?.sla_breached ?? 0, (data?.sla_breached ?? 0) > 0],
-  ];
-  els.metrics.innerHTML = items
-    .map(
-      ([label, value, alert]) =>
-        `<div class="metric${alert ? " is-alert" : ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`,
-    )
-    .join("");
-  const responseMetric = els.metrics.children[1];
-  if (responseMetric) {
-    responseMetric.querySelector("span").textContent = "待响应";
-    responseMetric.querySelector("strong").textContent = String(data?.needs_response ?? 0);
-    responseMetric.classList.toggle("is-alert", (data?.needs_response ?? 0) > 0);
-  }
+  return window.HelixModules?.['refresh']?.['renderMetrics'](...arguments);
 }
 
 function canOperate() {
@@ -1027,85 +1035,14 @@ function renderLanguagePicker(conversation) {
   els.conversationLanguageSelect.value = conversation.language || "";
 }
 
+// moved to js/detail.js (renderDetail — the conversation-detail assembly
+// across header/actions/composer/thread/inspector/attachments).
 function renderDetail(detail) {
-  state.detail = detail;
-  const conversation = detail.conversation;
-  const sla = formatSla(conversation);
-  els.emptyState.hidden = true;
-  els.conversationView.hidden = false;
-  els.conversationTitle.textContent = conversation.customer_name;
-  els.conversationStatus.textContent = statusLabel(conversation.status);
-  els.conversationStatus.className = `status-pill ${conversation.status}`;
-  renderSubtitle(conversation);
-  renderLanguagePicker(conversation);
-  els.customerAvatar.textContent = [...conversation.customer_name][0]?.toUpperCase() || "?";
-  els.threadContext.textContent = `${conversation.intent || "待识别"} · ${conversation.assigned_agent || "未分配"}`;
-  els.threadSla.textContent = sla.text;
-  els.threadSla.classList.toggle("is-breached", sla.breached);
-
-  const resolved = conversation.status === "resolved";
-  const human = ["waiting_human", "human_active"].includes(conversation.status);
-  const claimedByMe = conversation.claim_active && conversation.claimed_by === state.me?.actor_id;
-  els.claimBtn.hidden = resolved || claimedByMe || !canOperate();
-  els.releaseBtn.hidden = !claimedByMe || !canOperate();
-  if (els.assignBtn) els.assignBtn.hidden = resolved || !canOperate();
-  els.acceptBtn.hidden = resolved || conversation.status === "human_active";
-  els.resolveBtn.hidden = resolved;
-  els.reopenBtn.hidden = !resolved;
-  // Backlog (工单化): convert button hides once the conversation belongs to
-  // a ticket; the badge shows the ticket id and, once fetched, its status.
-  if (els.ticketBtn) els.ticketBtn.hidden = !canOperate() || Boolean(conversation.ticket_id);
-  if (els.ticketBadge) {
-    if (conversation.ticket_id) {
-      els.ticketBadge.textContent = `工单 ${conversation.ticket_id}`;
-      els.ticketBadge.hidden = false;
-      scheduleIdle(() => enrichTicketBadge(conversation.ticket_id));
-    } else {
-      els.ticketBadge.hidden = true;
-    }
-  }
-  if (els.watchBtn) els.watchBtn.hidden = resolved || !canReadConversations();
-  if (resolved || !canReadConversations()) stopWatching();
-  // Island mode: #operatorForm is yielded (hidden by the loader) and the
-  // canned chips render island-side from the state snapshot — only the
-  // not-yielded legacy surfaces (composer notice) toggle here. #noteForm
-  // is island-owned too (inspector domain), so it never toggles here.
-  if (window.__HELIX_ISLAND_MODE__) {
-    els.composerNotice.hidden = !human;
-  } else {
-    els.operatorForm.hidden = !human;
-    els.composerNotice.hidden = !human;
-    els.cannedBar.hidden = !human || !canOperate();
-    els.noteForm.hidden = resolved;
-  }
-  renderCannedResponses();
-  if (human && canOperate()) {
-    const draft = loadDraft(conversation.id);
-    if (!els.operatorInput.value || els.operatorInput.dataset.conversationId !== conversation.id) {
-      els.operatorInput.value = draft;
-    }
-    els.operatorInput.dataset.conversationId = conversation.id;
-  }
-  const customerBusy = els.customerForm.dataset.busy === "true";
-  els.customerInput.disabled = resolved || customerBusy;
-  els.customerForm.querySelector("button").disabled = resolved || customerBusy;
-  els.customerInput.placeholder = resolved ? "会话已解决，请先重开" : "输入一条模拟客户消息…";
-  renderMessages(detail.messages);
-  renderInspector(detail);
-  renderSummaries(detail);
-  renderCopilot(detail);
-  renderAttachmentBar(detail);
-  if (conversation.id) {
-    scheduleIdle(async () => {
-      await loadAttachmentNames(conversation.id);
-      // Island mode: the thread island renders attachment chips from the
-      // snapshot — republish so real names replace the id fallbacks.
-      if (state.selectedId !== conversation.id) return;
-      window.HelixModules?.thread?.publishThreadState?.({ messages: detail.messages });
-    });
-  }
-  scheduleClaimRenewal(detail);
+  return window.HelixModules?.['detail']?.['renderDetail'](...arguments);
 }
+
+
+
 
 function renderSummaries(detail) {
   // Single model source (js/summary.js): the legacy banner paints from it in
@@ -1267,26 +1204,12 @@ function conversationQuery() {
   return params.toString();
 }
 
+// moved to js/composer.js (renderCannedResponses — island republish +
 function renderCannedResponses() {
-  // Island mode: the composer island renders the canned chips from the
-  // composer state snapshot (cannedResponses travel in the payload).
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
-    return;
-  }
-  if (!els.cannedList) return;
-  if (!state.cannedResponses.length) {
-    els.cannedList.innerHTML = '<span class="canned-empty">暂无快捷回复</span>';
-    return;
-  }
-  els.cannedList.innerHTML = state.cannedResponses
-    .slice(0, 8)
-    .map(
-      (item) =>
-        `<button class="canned-chip" type="button" data-macro-id="${escapeHtml(item.id)}" title="${escapeHtml(item.body)}">${escapeHtml(item.title)}${item.shortcut ? ` /${escapeHtml(item.shortcut)}` : ""}</button>`,
-    )
-    .join("");
+  return window.HelixModules?.['composer']?.['renderCannedResponses'](...arguments);
 }
+
+// legacy chip paint); insertCannedResponse stays with its binding.
 
 async function insertCannedResponse(responseId) {
   const macro = state.cannedResponses.find((item) => item.id === responseId);

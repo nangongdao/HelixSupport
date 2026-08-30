@@ -165,6 +165,29 @@ export async function refreshAll({ silent = false, refreshDetail = true, backgro
   }
 }
 
+/** Paint the four workspace metric tiles; the 待人工 tile re-labels to
+ * 待响应 with the needs_response count (ROADMAP §17.1 readout parity). */
+export function renderMetrics(data) {
+  const items = [
+    ["自动", data?.open ?? 0, false],
+    ["待人工", data?.waiting_human ?? 0, (data?.waiting_human ?? 0) > 0],
+    ["认领中", data?.claimed_active ?? 0, false],
+    ["SLA 超时", data?.sla_breached ?? 0, (data?.sla_breached ?? 0) > 0],
+  ];
+  ctx.els.metrics.innerHTML = items
+    .map(
+      ([label, value, alert]) =>
+        `<div class="metric${alert ? " is-alert" : ""}"><span>${ctx.escapeHtml(label)}</span><strong>${ctx.escapeHtml(value)}</strong></div>`,
+    )
+    .join("");
+  const responseMetric = ctx.els.metrics.children[1];
+  if (responseMetric) {
+    responseMetric.querySelector("span").textContent = "待响应";
+    responseMetric.querySelector("strong").textContent = String(data?.needs_response ?? 0);
+    responseMetric.classList.toggle("is-alert", (data?.needs_response ?? 0) > 0);
+  }
+}
+
 export async function runRefresh({ silent = false, refreshDetail = true, background = false } = {}) {
   const { state, els, actions } = ctx;
   if (!silent) {
@@ -244,7 +267,7 @@ export async function runRefresh({ silent = false, refreshDetail = true, backgro
     }
     if (!queueOnly) actions.renderLabelFilter();
     els.focusWaiting.setAttribute("aria-pressed", String(els.ownershipFilter.value === "needs_response"));
-    if (state.dashboard && (!background || staleDashboard)) actions.renderMetrics(state.dashboard);
+    if (state.dashboard && (!background || staleDashboard)) renderMetrics(state.dashboard);
     if (!background || queueChanged || !els.list.children.length) actions.renderQueue();
 
     const selected = state.selectedId
@@ -304,5 +327,5 @@ export function bindRefresh() {
 
 export default {
   relayClientId, setLiveStatus, connectQueueEvents, initQueueRelay,
-  schedulePolling, refreshAll, runRefresh, bindRefresh,
+  schedulePolling, refreshAll, runRefresh, renderMetrics, bindRefresh,
 };

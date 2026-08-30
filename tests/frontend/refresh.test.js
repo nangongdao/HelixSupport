@@ -19,12 +19,13 @@ function stubEls() {
     innerHTML: "",
     hidden: false,
     attrs: {},
+    children: [],
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     setAttribute(name, value) { this.attrs[name] = value; },
     getAttribute: () => null,
     addEventListener() {},
     removeEventListener() {},
-    setAttribute(name, value) { this.attrs[name] = value; },
+    querySelector: () => null,
   });
   return {
     refreshList: el(),
@@ -33,6 +34,7 @@ function stubEls() {
     focusWaiting: el(),
     ownershipFilter: el(),
     list: el(),
+    metrics: el(),
   };
 }
 
@@ -53,7 +55,6 @@ function configureDeps({ me = null, conversations = [], apiImpl, overrides = {} 
     loadCollaborators: async () => calls.actions.push("loadCollaborators"),
     loadCannedResponses: async () => calls.actions.push("loadCannedResponses"),
     renderLabelFilter: () => calls.actions.push("renderLabelFilter"),
-    renderMetrics: () => calls.actions.push("renderMetrics"),
     loadDetail: async (id) => calls.actions.push(`loadDetail:${id}`),
     selectConversation: async (id) => calls.actions.push(`selectConversation:${id}`),
     clearSelection: () => calls.actions.push("clearSelection"),
@@ -140,14 +141,17 @@ test("refreshAll deduplicates concurrent calls through state.refreshPromise", as
 
 test("runRefresh fans out the parallel requests and repaints the queue", async () => {
   installWindow();
-  const { calls } = configureDeps({
+  const { calls, els } = configureDeps({
     conversations: [{ id: "conv-1", version: 1, updated_at: "t" }],
   });
   await runRefresh({ silent: true });
   assert.ok(calls.actions.includes("renderQueue"));
   assert.ok(calls.actions.includes("loadCannedResponses"));
   assert.ok(calls.actions.includes("renderLabelFilter"));
-  assert.ok(calls.actions.includes("renderMetrics"));
+  assert.match(els.metrics.innerHTML, /自动/);
+  // The 待人工→待响应 re-label needs real child nodes (browser gates cover it);
+  // here the four tiles' markup is what a stubbed el can assert.
+  assert.match(els.metrics.innerHTML, /待人工/);
   // The single conversation gets auto-selected on a foreground refresh.
   assert.ok(calls.actions.some((entry) => String(entry).startsWith("selectConversation:conv-1")));
 });

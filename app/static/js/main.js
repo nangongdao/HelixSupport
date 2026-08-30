@@ -29,6 +29,7 @@ import * as savedViews from "./saved-views.js?v=1.4.0";
 import * as commandDispatch from "./command-dispatch.js?v=1.4.0";
 import * as refresh from "./refresh.js?v=1.4.0";
 import * as queueActions from "./queue-actions.js?v=1.4.0";
+import * as detail from "./detail.js?v=1.4.0";
 import * as adminActions from "./admin-actions.js?v=1.4.0";
 import * as nav from "./nav.js?v=1.4.0";
 import * as queueView from "./queue-view.js?v=1.4.0";
@@ -131,6 +132,7 @@ export function initModules() {
     commandDispatch,
     refresh,
     queueActions,
+    detail,
     adminActions,
     nav,
     queueView,
