@@ -13,7 +13,9 @@ import {
   applyCopilotTone,
   clearDraft,
   fetchCopilotSuggestions,
+  hideMacroSuggest,
   recordMacroUse,
+  renderMacroSuggest,
   saveDraft,
   sendOperatorMessage,
 } from "./composer.js?v=1.4.0";
@@ -113,6 +115,32 @@ export function bindIslandBridge() {
   window.addEventListener("helix-composer-attachment-remove", (event) => {
     const { id } = event.detail || {};
     if (id) removePendingAttachment(ctx.state.selectedId, id);
+  });
+  // Browser dual-track: the legacy #operatorInput typing listener is the
+  // exact counterpart of the helix-composer-typing bridge above (draft
+  // autosave debounce + trailing-/ macro suggest), so both live here.
+  ctx.els.operatorInput?.addEventListener("input", () => {
+    const conversationId = ctx.state.selectedId;
+    if (conversationId) {
+      window.clearTimeout(ctx.state.draftTimer);
+      ctx.state.draftTimer = window.setTimeout(() => {
+        saveDraft(conversationId, ctx.els.operatorInput.value);
+      }, 300);
+    }
+    const match = ctx.els.operatorInput.value.match(/(^|\s)\/([^\s]*)$/);
+    if (match) renderMacroSuggest(match[2] || "");
+    else hideMacroSuggest();
+  });
+  ctx.els.operatorInput?.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      ctx.els.operatorForm.requestSubmit();
+      return;
+    }
+    if (event.key === "Escape" && ctx.state.macroOpen) {
+      event.preventDefault();
+      hideMacroSuggest();
+    }
   });
   window.addEventListener("helix-composer-sync", () => publishComposerState());
   window.addEventListener("helix-queue-select", () => publishComposerState());
