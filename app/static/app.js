@@ -418,6 +418,16 @@ _helixModules.inspector?.configure?.({
   renderLabelChips,
   roleLabels: ROLE_LABELS,
 });
+_helixModules.knowledgeView?.configure?.({
+  state,
+  els,
+  api,
+  showToast,
+  setFormBusy,
+  escapeHtml,
+  formatTime,
+  languageNames: LANGUAGE_NAMES,
+});
 
 function queuePageSize() {
   return state.lowPerf ? QUEUE_PAGE_SIZE_LOW : QUEUE_PAGE_SIZE_NORMAL;
@@ -1480,421 +1490,17 @@ function renderAttachmentBar(detail) {
 }
 
 // ---- ROADMAP §17: 知识运营页 ---------------------------------------------
-
-// The module layer (main.js) is the single source of truth; this fallback
-// mirrors js/knowledge.js exactly so a module-load failure never silently
-// changes filter/summary/review behaviour (audit: review backlog 2).
-const knowledgeModule = window.HelixModules?.knowledge || {
-  KNOWLEDGE_STATUS_LABELS: {
-    published: "已发布",
-    draft: "草稿",
-    pending_review: "待审核",
-    retired: "已停用",
-  },
-  normalizeKnowledgeArticle(article = {}) {
-    const status = article.status || (article.active === false ? "retired" : "published");
-    const tags = Array.isArray(article.tags)
-      ? article.tags
-      : String(article.tags || "")
-          .split(/[\s,，]+/)
-          .filter(Boolean);
-    return {
-      ...article,
-      title: String(article.title || ""),
-      content: String(article.content || ""),
-      category: String(article.category || "general"),
-      source_url: String(article.source_url || ""),
-      language: article.language || null,
-      status,
-      tags: [...new Set(tags.map((tag) => String(tag).trim()).filter(Boolean))],
-    };
-  },
-  parseKnowledgeTags(value) {
-    return [
-      ...new Set(
-        String(value || "")
-          .split(/[\s,，]+/)
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-      ),
-    ];
-  },
-  matchesKnowledgeArticle(article, filters = {}) {
-    const normalized = knowledgeModule.normalizeKnowledgeArticle(article);
-    const status = ["all", "published", "draft", "pending_review", "retired"].includes(
-      filters.status,
-    )
-      ? filters.status
-      : "all";
-    const language = String(filters.language || "").trim();
-    if (status !== "all" && normalized.status !== status) return false;
-    if (language && normalized.language && normalized.language !== language) return false;
-    const query = String(filters.query || "").trim().toLocaleLowerCase();
-    if (!query) return true;
-    return [
-      normalized.title,
-      normalized.content,
-      normalized.category,
-      normalized.source_url,
-      normalized.language || "",
-      ...normalized.tags,
-    ]
-      .join(" ")
-      .toLocaleLowerCase()
-      .includes(query);
-  },
-  filterKnowledgeArticles(articles, filters = {}) {
-    return (Array.isArray(articles) ? articles : [])
-      .map(knowledgeModule.normalizeKnowledgeArticle)
-      .filter((article) => knowledgeModule.matchesKnowledgeArticle(article, filters));
-  },
-  summarizeKnowledgeArticles(articles) {
-    const summary = { total: 0, published: 0, draft: 0, pending_review: 0, retired: 0 };
-    for (const article of Array.isArray(articles) ? articles : []) {
-      const status = knowledgeModule.normalizeKnowledgeArticle(article).status;
-      summary.total += 1;
-      if (Object.hasOwn(summary, status)) summary[status] += 1;
-    }
-    return summary;
-  },
-  reviewActionsFor(article) {
-    const status = knowledgeModule.normalizeKnowledgeArticle(article).status;
-    if (status === "draft" || status === "pending_review") return ["publish", "retire"];
-    if (status === "published") return ["retire"];
-    return [];
-  },
-  knowledgeFormPayload(values = {}) {
-    return {
-      title: String(values.title || "").trim(),
-      content: String(values.content || "").trim(),
-      tags: knowledgeModule.parseKnowledgeTags(values.tags),
-      category: String(values.category || "general").trim() || "general",
-      source_url: String(values.sourceUrl || "").trim(),
-      language: String(values.language || "").trim() || null,
-    };
-  },
-};
-
-function syncKnowledgeLanguageSelects() {
-  // The editor + filter selects must cover the full LANGUAGE_NAMES set, or an
-  // article in an unlisted language (ru/ar/hi/…) would silently lose its
-  // language when edited through the form (audit: review backlog 1).
-  for (const select of [els.knowledgeLanguage, els.knowledgeLanguageFilter]) {
-    if (!select) continue;
-    const covered = new Set([...select.options].map((option) => option.value));
-    const missing = Object.keys(LANGUAGE_NAMES)
-      .sort((a, b) => LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b], "zh"))
-      .filter((code) => !covered.has(code));
-    for (const code of missing) {
-      select.insertAdjacentHTML("beforeend", `<option value="${code}">${LANGUAGE_NAMES[code]}</option>`);
-    }
-  }
-}
-
-const {
-  KNOWLEDGE_STATUS_LABELS,
-  normalizeKnowledgeArticle,
-  filterKnowledgeArticles,
-  summarizeKnowledgeArticles,
-  reviewActionsFor,
-  knowledgeFormPayload,
-} = knowledgeModule;
-
-function canWriteKnowledge() {
-  return state.me?.permissions?.includes("knowledge:write") === true;
-}
+// moved to js/knowledge-view.js (knowledge lifecycle + listeners + island
+// bridges); the pure helpers stay in js/knowledge.js.
 
 // D1 桌面设置页 + D3 知识/管理岛事件桥：委托给 js/desktop-info.js 模块。
 function loadDesktopInfo() {
   window.HelixModules?.desktopInfo?.loadDesktopInfo(els);
 }
 
-function knowledgeFilters() {
-  return {
-    query: els.knowledgeSearch?.value || "",
-    status: els.knowledgeStatusFilter?.value || "all",
-    language: els.knowledgeLanguageFilter?.value || "",
-  };
-}
-
-function renderKnowledgeSummary() {
-  if (!els.knowledgeSummary) return;
-  const summary = summarizeKnowledgeArticles(state.knowledgeArticles);
-  const writer = canWriteKnowledge();
-  const rows = [
-    ["全部", summary.total],
-    ["已发布", summary.published],
-    ["草稿", writer ? summary.draft : "—"],
-    ["待审核", writer ? summary.pending_review : "—"],
-    ["已停用", writer ? summary.retired : "—"],
-  ];
-  els.knowledgeSummary.innerHTML = rows
-    .map(
-      ([label, count]) =>
-        `<div class="knowledge-summary-item"><span>${label}</span><strong>${escapeHtml(count)}</strong></div>`,
-    )
-    .join("");
-}
-
-function knowledgeSourceMarkup(article) {
-  const source = String(article.source_url || "");
-  if (/^https?:\/\//i.test(source)) {
-    return `<a class="knowledge-source" href="${escapeHtml(source)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(source)}">${escapeHtml(source)}</a>`;
-  }
-  return `<span class="knowledge-source" title="${escapeHtml(source)}">${escapeHtml(source || "未记录来源")}</span>`;
-}
-
-function renderKnowledgeArticles() {
-  if (!els.knowledgeList) return;
-  const articles = filterKnowledgeArticles(state.knowledgeArticles, knowledgeFilters());
-  const writer = canWriteKnowledge();
-  if (els.knowledgeResultCount) {
-    els.knowledgeResultCount.textContent = `${articles.length} / ${state.knowledgeArticles.length} 篇`;
-  }
-  if (!articles.length) {
-    els.knowledgeList.innerHTML = "";
-    if (els.knowledgeListStatus) {
-      els.knowledgeListStatus.textContent = state.knowledgeArticles.length
-        ? "没有符合当前筛选条件的文章。"
-        : "当前租户还没有知识文章。";
-    }
-    return;
-  }
-  if (els.knowledgeListStatus) els.knowledgeListStatus.textContent = "";
-  els.knowledgeList.innerHTML = articles
-    .map((raw) => {
-      const article = normalizeKnowledgeArticle(raw);
-      const status = Object.hasOwn(KNOWLEDGE_STATUS_LABELS, article.status)
-        ? article.status
-        : "retired";
-      const statusLabel = KNOWLEDGE_STATUS_LABELS[status] || status;
-      const language = article.language ? LANGUAGE_NAMES[article.language] || article.language : "通用";
-      const tags = article.tags.length
-        ? article.tags.map((tag) => `<span class="knowledge-tag">${escapeHtml(tag)}</span>`).join("")
-        : '<span class="knowledge-tag">未分类</span>';
-      const reviewButtons = writer
-        ? reviewActionsFor(article)
-            .map((action) => {
-              const label = action === "publish" ? "发布" : "停用";
-              return `<button type="button" class="knowledge-action" data-action="${action}" data-article-id="${escapeHtml(article.id)}">${label}</button>`;
-            })
-            .join("")
-        : "";
-      const editButton = writer
-        ? `<button type="button" class="knowledge-action" data-action="edit" data-article-id="${escapeHtml(article.id)}">编辑</button>`
-        : "";
-      return `<article class="knowledge-article" role="listitem" data-article-id="${escapeHtml(article.id)}">
-        <div class="knowledge-article-head">
-          <h3>${escapeHtml(article.title)}</h3>
-          <span class="knowledge-status ${status}">${escapeHtml(statusLabel)}</span>
-        </div>
-        <div class="knowledge-article-meta">
-          <span>${escapeHtml(article.category)}</span><span>·</span>
-          <span>${escapeHtml(language)}</span><span>·</span>
-          <span>v${escapeHtml(article.version || 1)}</span><span>·</span>
-          <time>${escapeHtml(formatTime(article.updated_at, true))}</time>
-        </div>
-        <div class="knowledge-tag-list">${tags}</div>
-        <details>
-          <summary>查看正文</summary>
-          <p class="knowledge-article-content">${escapeHtml(article.content)}</p>
-        </details>
-        ${knowledgeSourceMarkup(article)}
-        ${writer ? `<div class="knowledge-article-actions">${editButton}${reviewButtons}</div>` : ""}
-      </article>`;
-    })
-    .join("");
-}
-
-function updateKnowledgeAccessState() {
-  const writer = canWriteKnowledge();
-  if (els.newKnowledgeDraft) els.newKnowledgeDraft.hidden = !writer;
-  // Island mode: #knowledgeReadOnly, the status filter and the editor are all
-  // yielded to the knowledge island. Un-hiding them here would resurrect a
-  // duplicate read-only notice beside the island's own.
-  if (window.__HELIX_ISLAND_MODE__) return;
-  if (els.knowledgeReadOnly) els.knowledgeReadOnly.hidden = writer;
-  if (!writer && els.knowledgeEditor) els.knowledgeEditor.hidden = true;
-  if (!writer && els.knowledgeStatusFilter) {
-    for (const option of els.knowledgeStatusFilter.options) {
-      option.disabled = option.value !== "all" && option.value !== "published";
-    }
-    if (!["all", "published"].includes(els.knowledgeStatusFilter.value)) {
-      els.knowledgeStatusFilter.value = "published";
-    }
-  } else if (writer && els.knowledgeStatusFilter) {
-    for (const option of els.knowledgeStatusFilter.options) option.disabled = false;
-  }
-}
-
+// moved to js/knowledge-view.js (loadKnowledgeView — dual-track fetch/cache)
 async function loadKnowledgeView({ force = false } = {}) {
-  if (!els.knowledgeView) return;
-  updateKnowledgeAccessState();
-  // Island mode: the knowledge island owns the fetch (react-query) plus the
-  // summary/filters/list/editor DOM. Fetching here would only fill the yielded
-  // legacy containers and double every request, so hand the refresh over.
-  // `force` carries the cache decision across: without it a view re-open would
-  // refetch even though react-query already holds fresh data, where the legacy
-  // path below just re-renders.
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.dispatchEvent(new CustomEvent("helix-knowledge-refresh", { detail: { force } }));
-    return;
-  }
-  syncKnowledgeLanguageSelects();
-  // Cache the article list per permission state so a mid-session role change
-  // never shows drafts to a reader from an earlier writer fetch (audit:
-  // review backlog 4).
-  if (
-    !force &&
-    state.knowledgeLoadedForWriter === canWriteKnowledge() &&
-    state.knowledgeLoadedAt &&
-    Date.now() - state.knowledgeLoadedAt < 15000
-  ) {
-    renderKnowledgeSummary();
-    renderKnowledgeArticles();
-    return;
-  }
-  if (els.knowledgeList) els.knowledgeList.setAttribute("aria-busy", "true");
-  if (els.knowledgeListStatus) els.knowledgeListStatus.textContent = "正在加载文章…";
-  try {
-    const path = canWriteKnowledge() ? "/api/knowledge?include_inactive=true" : "/api/knowledge";
-    const articles = await api(path);
-    state.knowledgeArticles = Array.isArray(articles)
-      ? articles.map(normalizeKnowledgeArticle)
-      : [];
-    state.knowledgeLoadedForWriter = canWriteKnowledge();
-    state.knowledgeLoadedAt = Date.now();
-    renderKnowledgeSummary();
-    renderKnowledgeArticles();
-  } catch (error) {
-    state.knowledgeArticles = [];
-    state.knowledgeLoadedForWriter = null;
-    state.knowledgeLoadedAt = 0;
-    if (els.knowledgeList) els.knowledgeList.innerHTML = "";
-    if (els.knowledgeListStatus) {
-      els.knowledgeListStatus.textContent = `知识文章加载失败：${error.message || error}`;
-    }
-  } finally {
-    if (els.knowledgeList) els.knowledgeList.setAttribute("aria-busy", "false");
-  }
-}
-
-function resetKnowledgeEditor({ close = false } = {}) {
-  state.knowledgeEditingId = null;
-  els.knowledgeForm?.reset();
-  if (els.knowledgeCategory) els.knowledgeCategory.value = "general";
-  if (els.knowledgeEditorTitle) els.knowledgeEditorTitle.textContent = "新建知识草稿";
-  if (els.knowledgeSaveLabel) els.knowledgeSaveLabel.textContent = "保存草稿";
-  if (els.knowledgeEditor) els.knowledgeEditor.hidden = close;
-}
-
-function editKnowledgeArticle(articleId) {
-  if (!canWriteKnowledge()) return;
-  const raw = state.knowledgeArticles.find((article) => article.id === articleId);
-  if (!raw) return;
-  const article = normalizeKnowledgeArticle(raw);
-  state.knowledgeEditingId = article.id;
-  if (els.knowledgeTitle) els.knowledgeTitle.value = article.title;
-  if (els.knowledgeContent) els.knowledgeContent.value = article.content;
-  if (els.knowledgeTags) els.knowledgeTags.value = article.tags.join(", ");
-  if (els.knowledgeCategory) els.knowledgeCategory.value = article.category;
-  if (els.knowledgeLanguage) els.knowledgeLanguage.value = article.language || "";
-  if (els.knowledgeSource) els.knowledgeSource.value = article.source_url;
-  if (els.knowledgeEditorTitle) els.knowledgeEditorTitle.textContent = "编辑知识文章";
-  if (els.knowledgeSaveLabel) els.knowledgeSaveLabel.textContent = "保存修改";
-  if (els.knowledgeEditor) els.knowledgeEditor.hidden = false;
-  els.knowledgeTitle?.focus({ preventScroll: true });
-}
-
-async function saveKnowledgeArticle(event) {
-  event.preventDefault();
-  if (!canWriteKnowledge() || !els.knowledgeForm) return;
-  const payload = knowledgeFormPayload({
-    title: els.knowledgeTitle?.value,
-    content: els.knowledgeContent?.value,
-    tags: els.knowledgeTags?.value,
-    category: els.knowledgeCategory?.value,
-    sourceUrl: els.knowledgeSource?.value,
-    language: els.knowledgeLanguage?.value,
-  });
-  if (!payload.tags.length) {
-    showToast("请至少填写一个知识标签", true);
-    els.knowledgeTags?.focus();
-    return;
-  }
-  // HTML minlength counts raw characters; a trimmed payload can fall short of
-  // the backend schema (min 2 title / 10 content). Surface it before the 422.
-  if (payload.title.length < 2) {
-    showToast("标题至少需要 2 个字符", true);
-    els.knowledgeTitle?.focus();
-    return;
-  }
-  if (payload.content.length < 10) {
-    showToast("正文至少需要 10 个字符", true);
-    els.knowledgeContent?.focus();
-    return;
-  }
-  const editingId = state.knowledgeEditingId;
-  setFormBusy(els.knowledgeForm, true);
-  try {
-    const path = editingId
-      ? `/api/knowledge/${encodeURIComponent(editingId)}`
-      : "/api/knowledge/drafts";
-    await api(path, {
-      method: editingId ? "PATCH" : "POST",
-      body: JSON.stringify(payload),
-    });
-    resetKnowledgeEditor({ close: true });
-    state.knowledgeLoadedAt = 0;
-    await loadKnowledgeView({ force: true });
-    showToast(editingId ? "知识文章已更新" : "知识草稿已创建");
-  } catch (error) {
-    showToast(`知识文章保存失败：${error.message || error}`, true);
-  } finally {
-    setFormBusy(els.knowledgeForm, false);
-  }
-}
-
-// D3 bridge: the knowledge island owns the editor DOM and validates before it
-// dispatches, so this only needs the api()/toast half of saveKnowledgeArticle.
-// The island stays busy until helix-knowledge-saved reports the outcome.
-async function saveKnowledgeFromIsland({ payload, editingId } = {}) {
-  if (!canWriteKnowledge() || !payload) return;
-  let ok = false;
-  try {
-    const path = editingId
-      ? `/api/knowledge/${encodeURIComponent(editingId)}`
-      : "/api/knowledge/drafts";
-    await api(path, { method: editingId ? "PATCH" : "POST", body: JSON.stringify(payload) });
-    ok = true;
-    state.knowledgeLoadedAt = 0;
-    showToast(editingId ? "知识文章已更新" : "知识草稿已创建");
-  } catch (error) {
-    showToast(`知识文章保存失败：${error.message || error}`, true);
-  } finally {
-    window.dispatchEvent(new CustomEvent("helix-knowledge-saved", { detail: { ok } }));
-  }
-}
-
-async function reviewKnowledgeArticle(articleId, action) {
-  if (!canWriteKnowledge() || !["publish", "retire"].includes(action)) return;
-  if (action === "retire" && !window.confirm("确认停用该知识文章？停用后将不再参与检索。")) {
-    return;
-  }
-  if (els.knowledgeList) els.knowledgeList.setAttribute("aria-busy", "true");
-  try {
-    await api(`/api/knowledge/${encodeURIComponent(articleId)}/review`, {
-      method: "POST",
-      body: JSON.stringify({ action }),
-    });
-    state.knowledgeLoadedAt = 0;
-    await loadKnowledgeView({ force: true });
-    showToast(action === "publish" ? "知识文章已发布" : "知识文章已停用");
-  } catch (error) {
-    showToast(`审核操作失败：${error.message || error}`, true);
-  } finally {
-    if (els.knowledgeList) els.knowledgeList.setAttribute("aria-busy", "false");
-  }
+  return window.HelixModules?.['knowledgeView']?.['loadKnowledgeView'](...arguments);
 }
 
 // ---- UI 升级 §17.1: 全局导航栏 -------------------------------------------
@@ -3487,6 +3093,7 @@ if (els.cannedList) {
   });
 }
 window.HelixModules?.qualityPanel?.bindQuality?.();
+window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
 window.HelixModules?.thread?.bindThread?.();
 window.HelixModules?.composer?.bindComposer?.();
 // UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
@@ -3535,65 +3142,8 @@ if (els.appNav) {
   });
 }
 
-// ROADMAP §17: knowledge operations — browse/filter for readers, lifecycle
-// mutations only when /api/me grants knowledge:write.
-if (els.knowledgeSearch) {
-  els.knowledgeSearch.addEventListener("input", () => renderKnowledgeArticles());
-}
-if (els.knowledgeStatusFilter) {
-  els.knowledgeStatusFilter.addEventListener("change", () => renderKnowledgeArticles());
-}
-if (els.knowledgeLanguageFilter) {
-  els.knowledgeLanguageFilter.addEventListener("change", () => renderKnowledgeArticles());
-}
-if (els.newKnowledgeDraft) {
-  els.newKnowledgeDraft.addEventListener("click", () => {
-    // The header button is not yielded (it sits outside the island mount), so
-    // in island mode it opens the island's editor instead of the hidden form.
-    if (window.__HELIX_ISLAND_MODE__) {
-      window.dispatchEvent(new CustomEvent("helix-knowledge-new"));
-      return;
-    }
-    resetKnowledgeEditor();
-    els.knowledgeTitle?.focus({ preventScroll: true });
-  });
-}
-if (els.refreshKnowledge) {
-  els.refreshKnowledge.addEventListener("click", () => {
-    state.knowledgeLoadedAt = 0;
-    void loadKnowledgeView({ force: true });
-  });
-}
-if (els.cancelKnowledgeEdit) {
-  els.cancelKnowledgeEdit.addEventListener("click", () => resetKnowledgeEditor({ close: true }));
-}
-if (els.resetKnowledgeForm) {
-  els.resetKnowledgeForm.addEventListener("click", () => resetKnowledgeEditor());
-}
-if (els.knowledgeForm) {
-  els.knowledgeForm.addEventListener("submit", (event) => void saveKnowledgeArticle(event));
-}
-if (els.knowledgeList) {
-  els.knowledgeList.addEventListener("click", (event) => {
-    const button = event.target.closest(".knowledge-action");
-    if (!button) return;
-    const articleId = button.dataset.articleId;
-    if (button.dataset.action === "edit") editKnowledgeArticle(articleId);
-    else void reviewKnowledgeArticle(articleId, button.dataset.action);
-  });
-}
-// D3 bridge: the React knowledge island owns the whole knowledge surface in
-// the desktop shell (the legacy list/editor above are yielded and hidden), but
-// the write lifecycle stays here — reviewKnowledgeArticle owns the retire
-// confirm() prompt, and both paths share one api()/toast/reload flow.
-window.addEventListener("helix-knowledge-action", (event) => {
-  const { action, articleId } = event.detail || {};
-  if (!articleId || !["publish", "retire"].includes(action)) return;
-  void reviewKnowledgeArticle(articleId, action);
-});
-window.addEventListener("helix-knowledge-save", (event) => {
-  void saveKnowledgeFromIsland(event.detail || {});
-});
+// Knowledge page listeners + knowledge-island bridges moved to
+// js/knowledge-view.js (bindKnowledgeView — bound at boot below).
 // D3 bridge: the React ticket island dispatches "helix-ticket-open" when a
 // row is clicked (the legacy #ticketList is yielded and hidden in the
 // desktop shell). Bridge it to the legacy detail opener so the ticket detail
