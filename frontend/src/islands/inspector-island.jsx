@@ -12,6 +12,9 @@
  *   helix-inspector-priority {priority}            → updatePriority
  *   helix-inspector-labels  {labels}               → updateLabels
  *   helix-inspector-submit  {kind, content}        → (customer/operator send)
+ * The quality tab panel is island-rendered but legacy-fed: quality-panel.js
+ * publishes the built panel HTML via helix-inspector-quality, and the
+ * 生成知识草稿 buttons inside it delegate back via helix-quality-draft.
  * Mounts into #inspectorReactIsland; the mount stays hidden in a plain
  * browser tab (legacy renders there).
  *
@@ -26,6 +29,12 @@ export const INSPECTOR_EVENTS = Object.freeze({
   TAB: "helix-inspector-tab",
   PRIORITY: "helix-inspector-priority",
   LABELS: "helix-inspector-labels",
+  // The quality panel is island-rendered but legacy-fed: quality-panel.js
+  // publishes the built panel HTML on every loadQualityPanel (island branch).
+  QUALITY: "helix-inspector-quality",
+  // 生成知识草稿 buttons inside the published HTML delegate the write back
+  // to legacy (createKnowledgeDraftFromFeedback) so api()/toast stay there.
+  QUALITY_DRAFT: "helix-quality-draft",
 });
 
 const INSPECTOR_TABS = ["overview", "evidence", "audit", "quality"];
@@ -163,6 +172,7 @@ function EvidenceSection({ citations }) {
 
 export function InspectorIsland() {
   const [state, setState] = useState({ detail: null, collapsed: false, activeTab: "overview" });
+  const [quality, setQuality] = useState(null);
   const lastStateRef = useRef(state);
 
   useEffect(() => {
@@ -171,9 +181,16 @@ export function InspectorIsland() {
       lastStateRef.current = next;
       setState(next);
     };
+    const onQuality = (event) => {
+      setQuality(event.detail || null);
+    };
     window.addEventListener(INSPECTOR_EVENTS.STATE, onState);
+    window.addEventListener(INSPECTOR_EVENTS.QUALITY, onQuality);
     window.dispatchEvent(new CustomEvent("helix-inspector-sync"));
-    return () => window.removeEventListener(INSPECTOR_EVENTS.STATE, onState);
+    return () => {
+      window.removeEventListener(INSPECTOR_EVENTS.STATE, onState);
+      window.removeEventListener(INSPECTOR_EVENTS.QUALITY, onQuality);
+    };
   }, []);
 
   const { detail, collapsed, activeTab } = { ...state, activeTab: state.activeTab || "overview" };
@@ -199,6 +216,21 @@ export function InspectorIsland() {
     window.dispatchEvent(new CustomEvent(INSPECTOR_EVENTS.LABELS, { detail: { labels } }));
   }, []);
 
+  // Delegate 生成知识草稿 clicks inside the published quality HTML back to
+  // legacy (the island never issues the write itself).
+  const handleQualityClick = useCallback((event) => {
+    const button = event.target.closest?.(".quality-gap-draft");
+    if (!button) return;
+    window.dispatchEvent(
+      new CustomEvent(INSPECTOR_EVENTS.QUALITY_DRAFT, {
+        detail: {
+          conversationId: button.dataset.conversationId,
+          messageId: button.dataset.messageId,
+        },
+      }),
+    );
+  }, []);
+
   if (collapsed) return null;
 
   return (
@@ -221,6 +253,41 @@ export function InspectorIsland() {
       </nav>
       {INSPECTOR_TABS.map((tab) => {
         const hidden = activeTab !== tab;
+        // The quality panel renders the legacy-built aggregates regardless of
+        // the selected conversation (the dashboard is conversation-independent,
+        // same as the legacy panel); the HTML arrives via helix-inspector-quality.
+        if (tab === "quality") {
+          return (
+            <div
+              key={tab}
+              id={TAB_PANEL_IDS[tab]}
+              className="quality-panel inspector-panel"
+              role="tabpanel"
+              aria-label="质量看板"
+              hidden={hidden}
+              onClick={handleQualityClick}
+            >
+              {quality ? (
+                <>
+                  <div
+                    className="quality-buckets"
+                    aria-live="polite"
+                    dangerouslySetInnerHTML={{ __html: quality.bucketsHtml || "" }}
+                  />
+                  <div className="quality-gaps-block">
+                    <div
+                      className="quality-gaps"
+                      aria-live="polite"
+                      dangerouslySetInnerHTML={{ __html: quality.gapsHtml || "" }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="inspector-empty">暂无质量数据。处理一些会话后会在此汇总。</div>
+              )}
+            </div>
+          );
+        }
         if (!conversation) {
           return <div key={tab} id={TAB_PANEL_IDS[tab]} className="inspector-panel" role="tabpanel" hidden={hidden} />;
         }
@@ -253,7 +320,7 @@ export function InspectorIsland() {
             </div>
           );
         }
-        return <div key={tab} id={TAB_PANEL_IDS[tab]} className="quality-panel inspector-panel" role="tabpanel" hidden={hidden} />;
+        return null;
       })}
     </aside>
   );

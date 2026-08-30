@@ -2014,11 +2014,19 @@ function switchAppView(view) {
   setNavActive(view);
   showAppView(view);
   if (view === "quality") {
-    // Reuse the Phase 21 aggregates; the parametrized renderer fills the
-    // standalone view containers. The fresh fetch is non-critical — the
-    // cached buckets render immediately, so it is scheduled for idle time.
-    renderQualityPanel(els.qualityViewBuckets, els.qualityViewGaps);
-    scheduleIdle(() => loadQualityPanel());
+    // Island mode: the quality island owns the buckets (yieldsLegacy) and
+    // fetches via react-query — hand the refresh over instead of fetching
+    // into the hidden legacy containers (unforced refresh reuses the
+    // island's 10s throttle; the header refresh button sends force).
+    if (window.__HELIX_ISLAND_MODE__) {
+      window.dispatchEvent(new CustomEvent("helix-quality-refresh", { detail: { force: false } }));
+    } else {
+      // Reuse the Phase 21 aggregates; the parametrized renderer fills the
+      // standalone view containers. The fresh fetch is non-critical — the
+      // cached buckets render immediately, so it is scheduled for idle time.
+      renderQualityPanel(els.qualityViewBuckets, els.qualityViewGaps);
+      scheduleIdle(() => loadQualityPanel());
+    }
   }
   if (view === "admin") {
     void loadAdminView();

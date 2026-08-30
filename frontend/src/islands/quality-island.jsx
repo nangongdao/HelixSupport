@@ -8,12 +8,13 @@
  * dual-track architecture. See DESKTOP_TAURI_PLAN.md §3.1 + §D2.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   QueryClient,
   QueryClientProvider,
   useQuery,
+  useQueryClient,
 } from "@tanstack/react-query";
 
 function escapeXml(value) {
@@ -175,7 +176,12 @@ function QualityHeatmap({ buckets }) {
   return <div dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-function QualityIsland() {
+export const QUALITY_EVENTS = Object.freeze({
+  REFRESH: "helix-quality-refresh",
+});
+
+export function QualityIsland() {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["quality-buckets"],
     queryFn: async () => {
@@ -185,8 +191,24 @@ function QualityIsland() {
       if (!res.ok) throw new Error(`quality API ${res.status}`);
       return res.json();
     },
-    staleTime: 60_000,
+    // Mirrors the legacy loadQualityPanel throttle (one fetch per 10s).
+    staleTime: 10_000,
   });
+
+  // Legacy drives the refresh cadence: a view re-open dispatches an
+  // unforced refresh (only stale data refetches, matching the legacy
+  // throttle) and the header 刷新 button dispatches force.
+  useEffect(() => {
+    const onRefresh = (event) => {
+      if (event.detail?.force) {
+        void queryClient.invalidateQueries({ queryKey: ["quality-buckets"] });
+        return;
+      }
+      void queryClient.refetchQueries({ queryKey: ["quality-buckets"], stale: true });
+    };
+    window.addEventListener(QUALITY_EVENTS.REFRESH, onRefresh);
+    return () => window.removeEventListener(QUALITY_EVENTS.REFRESH, onRefresh);
+  }, [queryClient]);
 
   const buckets = Array.isArray(data) ? data : data?.buckets || [];
 
