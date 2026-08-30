@@ -25,6 +25,7 @@ import * as inspector from "./inspector.js?v=1.4.0";
 import * as knowledge from "./knowledge.js?v=1.4.0";
 import * as knowledgeView from "./knowledge-view.js?v=1.4.0";
 import * as notes from "./notes.js?v=1.4.0";
+import * as savedViews from "./saved-views.js?v=1.4.0";
 import * as nav from "./nav.js?v=1.4.0";
 import * as queueView from "./queue-view.js?v=1.4.0";
 import * as qualityCharts from "./quality-charts.js?v=1.4.0";
@@ -122,6 +123,7 @@ export function initModules() {
     knowledge,
     knowledgeView,
     notes,
+    savedViews,
     nav,
     queueView,
     qualityCharts,

@@ -418,6 +418,16 @@ _helixModules.inspector?.configure?.({
   renderLabelChips,
   roleLabels: ROLE_LABELS,
 });
+_helixModules.savedViews?.configure?.({
+  state,
+  els,
+  api,
+  request,
+  showToast,
+  currentViewFilters,
+  applySavedView,
+  loadSavedViews,
+});
 _helixModules.knowledgeView?.configure?.({
   state,
   els,
@@ -436,6 +446,16 @@ _helixModules.notes?.configure?.({
   setFormBusy,
   escapeHtml,
   roleLabels: ROLE_LABELS,
+});
+_helixModules.savedViews?.configure?.({
+  state,
+  els,
+  api,
+  request,
+  showToast,
+  currentViewFilters,
+  applySavedView,
+  loadSavedViews,
 });
 _helixModules.conversationActions?.configure?.({
   state,
@@ -2560,73 +2580,10 @@ els.focusWaiting.addEventListener("click", () => {
  * island's helix-saved-views-save/-delete bridges. Returns the created view
  * id on save so the bridge can tell the island which entry to select.
  */
-async function saveSavedView(name) {
-  try {
-    const created = await api("/api/saved-views", {
-      method: "POST",
-      body: JSON.stringify({ name: name.trim(), filters: currentViewFilters() }),
-    });
-    await loadSavedViews();
-    if (!window.__HELIX_ISLAND_MODE__) {
-      els.savedViewSelect.value = created.id;
-      els.deleteView.disabled = false;
-    }
-    showToast("视图已保存");
-    return created.id;
-  } catch (error) {
-    showToast(error.message, true);
-    return null;
-  }
-}
+// moved to js/saved-views.js (saved-view CRUD + legacy bindings + island
+// bridges); applySavedView/loadSavedViews/currentViewFilters stay here where
+// the filter inputs and queue render live.
 
-async function deleteSavedView(viewId) {
-  if (!viewId) return false;
-  try {
-    await request(`/api/saved-views/${encodeURIComponent(viewId)}`, { method: "DELETE" });
-    await loadSavedViews();
-    showToast("视图已删除");
-    return true;
-  } catch (error) {
-    showToast(error.message, true);
-    return false;
-  }
-}
-
-els.savedViewSelect.addEventListener("change", () => {
-  const view = state.savedViews.find((item) => item.id === els.savedViewSelect.value);
-  els.deleteView.disabled = !view;
-  if (view) applySavedView(view);
-});
-els.saveView.addEventListener("click", async () => {
-  const name = window.prompt("保存视图名称");
-  if (!name?.trim()) return;
-  await saveSavedView(name);
-});
-els.deleteView.addEventListener("click", async () => {
-  await deleteSavedView(els.savedViewSelect.value);
-});
-// D3 bridge (saved views island): the island owns the select/save/delete
-// controls; apply receives the view object (the island holds the data),
-// save reads currentViewFilters() here where the filter inputs live, and
-// every mutation reports back so the island refetches and reselects.
-window.addEventListener("helix-saved-views-apply", (event) => {
-  const { view } = event.detail || {};
-  if (view) applySavedView(view);
-});
-window.addEventListener("helix-saved-views-save", async (event) => {
-  const { name } = event.detail || {};
-  if (!name) return;
-  const createdId = await saveSavedView(name);
-  window.dispatchEvent(new CustomEvent("helix-saved-views-changed", {
-    detail: { ok: createdId != null, id: createdId },
-  }));
-});
-window.addEventListener("helix-saved-views-delete", async (event) => {
-  const { id } = event.detail || {};
-  if (!id) return;
-  const ok = await deleteSavedView(id);
-  window.dispatchEvent(new CustomEvent("helix-saved-views-changed", { detail: { ok } }));
-});
 els.densityToggle.addEventListener("click", () => {
   // In low-perf the visible density is always compact (effectiveDensity);
   // cycling here would mutate the stored choice with no visible effect and
@@ -2742,6 +2699,7 @@ if (els.cannedList) {
 window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
 window.HelixModules?.queueView?.bindQueueDrawer?.();
+window.HelixModules?.savedViews?.bindSavedViews?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
