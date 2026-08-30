@@ -2671,79 +2671,10 @@ els.searchInput.addEventListener("input", () => {
   const delay = state.lowPerf ? 450 : 260;
   searchTimer = window.setTimeout(() => refreshAll({ silent: true, refreshDetail: false }), delay);
 });
-let queueScrim = null;
-
-function isQueueDrawerMode() {
-  return window.matchMedia("(max-width: 900px)").matches;
-}
-
-function setBackgroundInert(inert) {
-  const main = document.querySelector(".conversation-pane");
-  if (!main) return;
-  if (inert) main.setAttribute("inert", "");
-  else main.removeAttribute("inert");
-}
-
-function trapQueueFocus(event) {
-  if (event.key !== "Tab") return;
-  const focusable = els.queuePane.querySelectorAll(
-    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-  );
-  if (!focusable.length) return;
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-}
-
-function openQueueDrawer() {
-  els.queuePane.classList.add("is-open");
-  if (!queueScrim) {
-    queueScrim = document.createElement("button");
-    queueScrim.type = "button";
-    queueScrim.className = "queue-scrim";
-    queueScrim.setAttribute("aria-label", "关闭会话队列");
-    queueScrim.addEventListener("click", closeQueueDrawer);
-    els.queuePane.parentElement.insertBefore(queueScrim, els.queuePane);
-  }
-  queueScrim.hidden = false;
-  if (isQueueDrawerMode()) {
-    els.queuePane.setAttribute("role", "dialog");
-    els.queuePane.setAttribute("aria-modal", "true");
-    setBackgroundInert(true);
-    els.queuePane.addEventListener("keydown", trapQueueFocus);
-  }
-  els.mobileQueue.setAttribute("aria-expanded", "true");
-  document.getElementById("queueClose")?.focus({ preventScroll: true });
-}
-
+// moved to js/queue-view.js (mobile queue drawer: scrim/focus-trap/inert)
 function closeQueueDrawer(options = {}) {
-  els.queuePane.classList.remove("is-open");
-  if (queueScrim) queueScrim.hidden = true;
-  els.queuePane.removeAttribute("role");
-  els.queuePane.removeAttribute("aria-modal");
-  els.queuePane.removeEventListener("keydown", trapQueueFocus);
-  setBackgroundInert(false);
-  els.mobileQueue.setAttribute("aria-expanded", "false");
-  if (options.restoreFocus !== false) els.mobileQueue.focus({ preventScroll: true });
+  return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...arguments);
 }
-
-els.mobileQueue.addEventListener("click", () => {
-  if (els.queuePane.classList.contains("is-open")) closeQueueDrawer();
-  else openQueueDrawer();
-});
-els.backToQueue.addEventListener("click", openQueueDrawer);
-document.getElementById("queueClose")?.addEventListener("click", closeQueueDrawer);
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && els.queuePane.classList.contains("is-open") && queueScrim && !queueScrim.hidden) {
-    closeQueueDrawer();
-  }
-});
 
 document.addEventListener("keydown", (event) => {
   const target = event.target;
@@ -2810,6 +2741,7 @@ if (els.cannedList) {
 }
 window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
+window.HelixModules?.queueView?.bindQueueDrawer?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();

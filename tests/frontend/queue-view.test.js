@@ -77,3 +77,114 @@ test("reduceQueueView unknown actions return the same reference", () => {
   const state = createQueueViewState();
   assert.equal(reduceQueueView(state, { type: "nope" }), state);
 });
+
+// ── Mobile queue drawer (app.js <500 campaign slice 19) ──
+
+import {
+  configure as configureQueueView,
+  isQueueDrawerMode,
+  setBackgroundInert,
+  openQueueDrawer,
+  closeQueueDrawer,
+  bindQueueDrawer,
+} from "../../app/static/js/queue-view.js";
+
+function fakePane() {
+  return {
+    className: "queue-pane",
+    hidden: false,
+    listeners: {},
+    attrs: {},
+    classList: {
+      contains: (name) => name === "is-open" && drawerOpen,
+      add: (name) => { if (name === "is-open") drawerOpen = true; },
+      remove: (name) => { if (name === "is-open") drawerOpen = false; },
+    },
+    setAttribute(name, value) { this.attrs[name] = value; },
+    removeAttribute(name) { delete this.attrs[name]; },
+    addEventListener(name, handler) { this.listeners[name] = handler; },
+    removeEventListener(name) { delete this.listeners[name]; },
+    parentElement: { insertBefore(node) { scrimNode = node; } },
+  };
+}
+
+let drawerOpen = false;
+let scrimNode = null;
+const inertTargets = [];
+
+function installDrawerWindow({ drawerMode }) {
+  const cleanupFns = [];
+  const pane = fakePane();
+  const els = {
+    queuePane: pane,
+    mobileQueue: {
+      attrs: {},
+      listeners: {},
+      setAttribute(name, value) { this.attrs[name] = value; },
+      addEventListener(name, handler) { this.listeners[name] = handler; },
+      focus() {},
+    },
+    backToQueue: { listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; } },
+  };
+  const documentStub = {
+    activeElement: null,
+    getElementById: () => null,
+    querySelector: (selector) => {
+      if (selector === ".conversation-pane") {
+        return {
+          attrs: {},
+          setAttribute(name, value) { this.attrs[name] = value; inertTargets.push({ name, value }); },
+          removeAttribute(name) { this.attrs[name] = null; inertTargets.push({ name, value: null }); },
+        };
+      }
+      return null;
+    },
+    createElement: () => ({ type: "", className: "", attrs: {}, hidden: false, setAttribute(n, v) { this.attrs[n] = v; }, addEventListener() {} }),
+    addEventListener(name, handler) { cleanupFns.push({ name, handler }); },
+  };
+  const windowStub = new (class extends EventTarget {})();
+  windowStub.matchMedia = (query) => ({ matches: query.includes("900px") ? drawerMode : false });
+  globalThis.window = windowStub;
+  globalThis.document = documentStub;
+  configureQueueView({ state: {}, els, canOperate: () => true, isCompactDensity: () => false });
+  return { els, pane, cleanupFns, inertTargets };
+}
+
+test("isQueueDrawerMode mirrors the 900px media query", () => {
+  installDrawerWindow({ drawerMode: true });
+  assert.equal(isQueueDrawerMode(), true);
+  installDrawerWindow({ drawerMode: false });
+  assert.equal(isQueueDrawerMode(), false);
+});
+
+test("open/close toggles the pane class, scrim and dialog role in drawer mode", () => {
+  const { pane } = installDrawerWindow({ drawerMode: true });
+  openQueueDrawer();
+  assert.equal(drawerOpen, true);
+  assert.equal(pane.attrs.role, "dialog");
+  assert.equal(pane.attrs["aria-modal"], "true");
+  assert.ok(scrimNode, "scrim created");
+  assert.equal(scrimNode.hidden, false);
+  closeQueueDrawer({ restoreFocus: false });
+  assert.equal(drawerOpen, false);
+  assert.equal(pane.attrs.role, undefined);
+  assert.equal(scrimNode.hidden, true);
+});
+
+test("setBackgroundInert toggles the inert attribute on the conversation pane", () => {
+  installDrawerWindow({ drawerMode: true });
+  setBackgroundInert(true);
+  assert.deepEqual(inertTargets.at(-1), { name: "inert", value: "" });
+  setBackgroundInert(false);
+  assert.deepEqual(inertTargets.at(-1), { name: "inert", value: null });
+});
+
+test("bindQueueDrawer wires the toggle and Escape handlers exactly once", () => {
+  const { els, cleanupFns } = installDrawerWindow({ drawerMode: true });
+  assert.equal(bindQueueDrawer(), true);
+  assert.ok(els.mobileQueue.listeners.click);
+  assert.ok(els.backToQueue.listeners.click);
+  const escape = cleanupFns.find((fn) => fn.name === "keydown");
+  assert.ok(escape, "document Escape handler bound");
+  assert.equal(bindQueueDrawer(), true); // idempotent rebind allowed, handlers re-set
+});

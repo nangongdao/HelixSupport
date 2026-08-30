@@ -288,3 +288,84 @@ export function scheduleQueueWindowUpdate() {
 export function handleQueueScroll() {
   scheduleQueueWindowUpdate();
 }
+
+// ── Mobile queue drawer (≤900px): scrim, focus trap, inert background ──
+
+let queueScrim = null;
+
+export function isQueueDrawerMode() {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+export function setBackgroundInert(inert) {
+  const main = document.querySelector(".conversation-pane");
+  if (!main) return;
+  if (inert) main.setAttribute("inert", "");
+  else main.removeAttribute("inert");
+}
+
+function trapQueueFocus(event) {
+  if (event.key !== "Tab") return;
+  const focusable = ctx.els.queuePane.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+export function openQueueDrawer() {
+  ctx.els.queuePane.classList.add("is-open");
+  if (!queueScrim) {
+    queueScrim = document.createElement("button");
+    queueScrim.type = "button";
+    queueScrim.className = "queue-scrim";
+    queueScrim.setAttribute("aria-label", "关闭会话队列");
+    queueScrim.addEventListener("click", closeQueueDrawer);
+    ctx.els.queuePane.parentElement.insertBefore(queueScrim, ctx.els.queuePane);
+  }
+  queueScrim.hidden = false;
+  if (isQueueDrawerMode()) {
+    ctx.els.queuePane.setAttribute("role", "dialog");
+    ctx.els.queuePane.setAttribute("aria-modal", "true");
+    setBackgroundInert(true);
+    ctx.els.queuePane.addEventListener("keydown", trapQueueFocus);
+  }
+  ctx.els.mobileQueue.setAttribute("aria-expanded", "true");
+  document.getElementById("queueClose")?.focus({ preventScroll: true });
+}
+
+export function closeQueueDrawer(options = {}) {
+  ctx.els.queuePane.classList.remove("is-open");
+  if (queueScrim) queueScrim.hidden = true;
+  ctx.els.queuePane.removeAttribute("role");
+  ctx.els.queuePane.removeAttribute("aria-modal");
+  ctx.els.queuePane.removeEventListener("keydown", trapQueueFocus);
+  setBackgroundInert(false);
+  ctx.els.mobileQueue.setAttribute("aria-expanded", "false");
+  if (options.restoreFocus !== false) ctx.els.mobileQueue.focus({ preventScroll: true });
+}
+
+/** Bind the drawer toggle buttons and the Escape handler (exactly once). */
+export function bindQueueDrawer() {
+  if (!ctx?.els) return false;
+  ctx.els.mobileQueue.addEventListener("click", () => {
+    if (ctx.els.queuePane.classList.contains("is-open")) closeQueueDrawer();
+    else openQueueDrawer();
+  });
+  ctx.els.backToQueue.addEventListener("click", openQueueDrawer);
+  document.getElementById("queueClose")?.addEventListener("click", closeQueueDrawer);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && ctx.els.queuePane.classList.contains("is-open") && queueScrim && !queueScrim.hidden) {
+      closeQueueDrawer();
+    }
+  });
+  return true;
+}
