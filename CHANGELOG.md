@@ -119,6 +119,13 @@
 - **闭合先前缺口:helix-command 事件自 palette 岛激活以来无消费者**——桌面壳 Ctrl+K 选任何命令都无效果。app.js 新增消费者把 9 条命令映射到既有处理器:nav:* → `switchAppView`、conv:new → `helix-conversation-new`(岛对话框桥)、conv:refresh → `refreshAll`、conv:convert-ticket → ticketView 模块、diag:logs → 新增 `helix-terminal-toggle` 桥(terminal 岛监听开关抽屉)、diag:health → 新增 `checkBackendHealth()`(GET /health/ready 结果 toast)。legacy 命令路径不变(浏览器模式 palette 岛不挂载)。
 - **验证**:vitest **127**(纯接线无新增岛代码);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(app.js → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_palette_commands_desktop.py` CDP 真机验证:Ctrl+K 开面板、nav:admin 打开管理视图(admin 岛渲染)、conv:refresh 触发真实队列请求、diag:logs 打开诊断终端抽屉。脚本内置重试:palette 岛在 ISLANDS 数组末尾异步挂载,过早按键会丢失。
 
+### 前端门禁:vitest 段不再无限挂起 + 静态字节预算随抽取战役放宽(2026-08-30)
+
+- **vitest 段退出挂起修复**(`scripts/frontend_gate.py`):16 个岛测试文件全量运行时,vitest 在 ~15s 内跑完 166 例并打印通过摘要后**进程永不退出**(实测 420s 仍存活,15 个文件及以下必定正常退出)。定位为 Vite/esbuild 转换服务在 Windows 上为每个 worker 派生的 esbuild 子进程:文件数达到 16 时子进程句柄把父进程的事件循环一直挂着。修复:vitest 段以 `ESBUILD_WORKER_THREADS=1` 运行(esbuild 改走 worker thread 而非子进程),同一全量连跑 3 次均在 20s 内退出、退出码 0。
+- **门禁不再可能无限等待**:`_run()` 新增 `timeout`/`env` 参数并把 `subprocess.TimeoutExpired` 归一成返回码 124 的失败结果——一个能永久挂住的门禁比一个会红的门禁更危险。vitest 段默认上限 300s(`FRONTEND_GATE_VITEST_TIMEOUT` 可覆盖),超时即报失败并附摘要尾部。
+- **静态 JS 预算 700KB → 715KB**(`scripts/performance_gate.py`):app.js <500 战役每把一个 legacy 域搬进 ES 模块,净增 ~0.9–1.5KB 纯样板(import/export 语句、模块 JSDoc、app.js 为自用调用点保留的薄包装),被搬走的逻辑本身字节中性。第 23 片(命令面板 + saved-views,约 110 行)实测净增 880B,而旧上限只剩 1,043B 余量——再搬一片即红。15KB 余量覆盖约十片;app.js 降到 500 行以下后需重新收紧。依赖膨胀或未压缩的第三方 blob 依旧会被这道门禁拦下。
+- **验证**:`scripts/frontend_gate.py` 全绿(node **270** + vitest **166** + 语法 + 400 行上限 + 资源版本);`tests/test_frontend_gate.py`(7 例)与 `tests/test_performance_gate.py`(3 例,operator JS 699,837B/715KB)绿;ruff 对两个改动脚本干净(存量 BLE001 未触碰)。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -46,8 +46,17 @@ BASELINE = ROOT / "artifacts" / "performance-baseline.json"
 # Vite-produced React runtime under app/static/dist/assets/. React 19 +
 # ReactDOM ≈ 140 KB raw; TanStack Query + Zustand + per-island chunks keep
 # the operator JS total under the new ceiling.
+#
+# D3 (app.js <500 campaign): the ceiling is raised 700 KB -> 715 KB. Moving a
+# legacy domain out of app.js into an ES module costs ~0.9-1.5 KB per slice of
+# pure boilerplate that the monolith never paid (import/export statements,
+# module JSDoc, the thin wrappers app.js keeps for its own callers) — the
+# moved logic itself is byte-neutral. Measured on slice 23 (palette + saved
+# views, ~110 lines): +880 bytes net, and the campaign still has ~1500 lines
+# to move. 15 KB covers roughly ten more slices; revisit (and re-tighten) once
+# app.js is under 500 lines. A dependency-driven jump still fails the gate.
 BUDGETS = {
-    "operator_js_bytes": 700_000,  # app.js + js/*.js + dist/assets/*.js (React runtime)
+    "operator_js_bytes": 715_000,  # app.js + js/*.js + dist/assets/*.js (React runtime)
     "operator_css_bytes": 125_000,  # styles.css + css/tokens.css
     "widget_js_bytes": 25_000,  # widget-app.js + js/widget-core.js (zero-build, unchanged)
 }

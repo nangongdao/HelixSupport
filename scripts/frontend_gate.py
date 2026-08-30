@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -33,22 +34,46 @@ JS_DIR = ROOT / "app" / "static" / "js"
 TEST_DIR = ROOT / "tests" / "frontend"
 MAX_LINES = 400
 MIN_TESTS = 30
+# Vitest runs 16 island suites; a healthy run finishes well under a minute.
+# The bound exists so a runner that never exits fails the gate instead of
+# hanging CI (see run_vitest — ESBUILD_WORKER_THREADS keeps esbuild from
+# leaking child processes that hold the parent event loop open on Windows).
+VITEST_TIMEOUT_SECONDS = float(os.environ.get("FRONTEND_GATE_VITEST_TIMEOUT", "300"))
 STATIC_REF_RE = re.compile(r"/static/[A-Za-z0-9_./-]+(?:\?[^\"'()\s<>]+)?(?:#[^\"'()\s<>]+)?")
 LOCAL_IMPORT_RE = re.compile(r"(?:from\s+|import\s+)[\"'](\./[^\"']+\.js(?:\?v=[^\"']+)?)\1")
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    timeout: float | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     # Node's test runner emits UTF-8 progress glyphs (e.g. the pass/fail icon);
     # on Windows the default ANSI codepage cannot decode them. Force UTF-8 so
     # stdout/stderr are always captured as text.
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=cwd or ROOT,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd or ROOT,
+            timeout=timeout,
+            env={**os.environ, **(env or {})} if env else None,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as expired:
+        # A gate that can hang forever is worse than a gate that fails: report
+        # the timeout as a normal (failing) result so the caller can print it.
+        out = expired.stdout or ""
+        err = expired.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        return subprocess.CompletedProcess(cmd, 124, out, err)
 
 
 def check_syntax() -> list[str]:
@@ -158,8 +183,22 @@ def run_vitest() -> list[str]:
         vitest_bin = vitest_bin.with_suffix(".cmd")
     if not vitest_bin.exists():
         return ["vitest not installed under frontend/ — run `npm install` there"]
-    result = _run([str(vitest_bin), "run"], cwd=FRONTEND_DIR)
+    result = _run(
+        [str(vitest_bin), "run"],
+        cwd=FRONTEND_DIR,
+        timeout=VITEST_TIMEOUT_SECONDS,
+        env={"ESBUILD_WORKER_THREADS": "1"},
+    )
     if result.returncode != 0:
+        if result.returncode == 124:
+            return [
+                (
+                    "vitest did not exit within "
+                    f"{VITEST_TIMEOUT_SECONDS}s (the suite may have hung or the "
+                    "runner leaked a child process):\n"
+                    f"{result.stdout.strip()[-1500:]}\n{result.stderr.strip()[-500:]}"
+                )
+            ]
         return [f"vitest failed:\n{result.stdout.strip()}\n{result.stderr.strip()}"]
     return []
 
