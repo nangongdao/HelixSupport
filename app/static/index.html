@@ -390,6 +390,11 @@
                   <span id="threadSla" class="sla-label">SLA -</span>
                 </div>
                 <div id="messages" class="messages" aria-live="polite"></div>
+                <!-- D3 React island mount point (message thread). The legacy
+                     #messages above stays during the dual-track period; in
+                     the desktop shell the island takes it over and the
+                     loader hides the legacy container. -->
+                <div id="threadReactIsland" class="messages" aria-live="polite"></div>
                 <div id="composerNotice" class="composer-notice" hidden>
                   <svg class="icon"><use href="/static/icons.svg?v=1.4.0#shield-check" /></svg>
                   <span>人工已接管，新的客户消息会进入队列，不会触发机器人回复。</span>

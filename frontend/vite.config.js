@@ -71,6 +71,7 @@ export default defineConfig({
         mentions: resolve(__dirname, "src/islands/mentions-island.jsx"),
         inspector: resolve(__dirname, "src/islands/inspector-island.jsx"),
         composer: resolve(__dirname, "src/islands/composer-island.jsx"),
+        thread: resolve(__dirname, "src/islands/thread-island.jsx"),
         "command-palette": resolve(__dirname, "src/islands/command-palette-island.jsx"),
         "session-shell": resolve(__dirname, "src/islands/session-shell-island.jsx"),
         terminal: resolve(__dirname, "src/islands/terminal-island.jsx"),

@@ -124,6 +124,10 @@ export const ISLANDS = [
   // The composer island owns the message forms in the desktop shell; the
   // legacy draft/macro/copilot lifecycle stays legacy via event bridges.
   { name: "composer", mountId: "composerReactIsland", yieldsLegacy: ["customerForm", "operatorForm"] },
+  // The thread island owns the message transcript; the loadDetail /
+  // loadOlderMessages lifecycle and the feedback/translate writes stay
+  // legacy via helix-thread-state/-load-older/-feedback/-translate.
+  { name: "thread", mountId: "threadReactIsland", yieldsLegacy: ["messages"] },
   // The command-palette island owns the Ctrl+K palette; the legacy
   // #commandPalette dialog would otherwise double-handle the shortcut.
   { name: "command-palette", mountId: "commandPaletteReactIsland", yieldsLegacy: ["commandPalette"] },

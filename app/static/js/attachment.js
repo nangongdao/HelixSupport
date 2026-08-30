@@ -27,6 +27,16 @@ export function pendingIds(conversationId) {
   return pendingAttachmentsByConv[conversationId] || [];
 }
 
+/** Copy of the known attachment metadata for the thread island snapshot
+ * (chips render filenames after loadAttachmentNames resolves). */
+export function attachmentMetaSnapshot() {
+  const out = {};
+  for (const [id, meta] of Object.entries(attachmentMetaById)) {
+    out[id] = { filename: meta.filename, content_type: meta.content_type };
+  }
+  return out;
+}
+
 export function attachmentChips(ids) {
   return (ids || [])
     .map((id) => {

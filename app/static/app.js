@@ -341,6 +341,21 @@ _helixModules.ticketView?.configure?.({
   statusLabel,
 });
 _helixModules.qualityPanel?.configure?.({ state, els, api, showToast, escapeHtml });
+_helixModules.thread?.configure?.({
+  state,
+  els,
+  api,
+  apiWithHeaders,
+  showToast,
+  escapeHtml,
+  icon,
+  formatTime,
+  attachmentChips,
+  canWriteConversations,
+  languageNames: LANGUAGE_NAMES,
+  languageOptions: LANGUAGE_OPTIONS,
+  olderPageSize: THREAD_OLDER_PAGE_SIZE,
+});
 _helixModules.attachments?.configure?.({ state, els, api, showToast, escapeHtml, icon, canOperate });
 _helixModules.queueView?.configure?.({
   state,
@@ -992,143 +1007,19 @@ function handleQueueScroll() {
   return window.HelixModules?.['queueView']?.['handleQueueScroll'](...arguments);
 }
 
+// moved to js/thread.js (renderMessages — legacy transcript paint + island snapshot publish)
 function renderMessages(messages, { preserveAnchor = false } = {}) {
-  const oldScrollHeight = preserveAnchor ? els.messages.scrollHeight : 0;
-  if (!messages.length) {
-    els.messages.innerHTML = '<div class="thread-empty">等待第一条客户消息</div>';
-    return;
-  }
-  const roleNames = {
-    customer: "客户",
-    assistant: "自动客服",
-    operator: "人工客服",
-    internal_note: "内部备注",
-  };
-  const visibleMessages = state.lowPerf && messages.length > 80 ? messages.slice(-80) : messages;
-  const noteIds = new Set(visibleMessages.filter((m) => m.role === "internal_note").map((m) => m.id));
-  const parts = new Array(visibleMessages.length);
-  for (let index = 0; index < visibleMessages.length; index += 1) {
-    const message = visibleMessages[index];
-    const metadata = message.metadata || {};
-    const agent = message.role === "assistant" && metadata.agent
-      ? `<span class="agent-chip">${escapeHtml(metadata.agent)}</span>`
-      : "";
-    const feedback = message.role === "assistant"
-      ? `<div class="feedback-actions" aria-label="回答反馈">
-            <button class="feedback-button" type="button" data-feedback="1" data-message-id="${escapeHtml(message.id)}" title="有帮助" aria-label="有帮助" aria-pressed="false">${icon("thumbs-up")}</button>
-            <button class="feedback-button" type="button" data-feedback="-1" data-message-id="${escapeHtml(message.id)}" title="需改进" aria-label="需改进" aria-pressed="false">${icon("thumbs-down")}</button>
-          </div>`
-      : "";
-    // Backlog (多语言客服): customer messages carry a per-message translate
-    // bar. Without a configured provider the backend echoes the original text
-    // with was_translated=false and the result line degrades to a notice.
-    const translateBar = message.role === "customer" && canWriteConversations()
-      ? `<div class="translate-bar" data-message-id="${escapeHtml(message.id)}">
-            <select class="translate-lang" aria-label="翻译目标语言">${LANGUAGE_OPTIONS}</select>
-            <button class="translate-button" type="button">翻译</button>
-            <span class="translate-result"></span>
-          </div>`
-      : "";
-    const isReply = message.role === "internal_note" && message.reply_to && noteIds.has(message.reply_to);
-    const replyMark = isReply
-      ? `<span class="note-reply-mark" title="回复了 ${escapeHtml(message.reply_to)}">↳ 回复</span>`
-      : "";
-    const contentHtml = escapeHtml(message.content).replace(
-      /@([A-Za-z0-9._:@/-]{2,64})/g,
-      '<span class="mention-chip">@$1</span>',
-    );
-    const attachments = metadata.attachment_ids?.length
-      ? `<div class="message-attachments">${attachmentChips(metadata.attachment_ids)}</div>`
-      : "";
-    parts[index] = `
-        <div class="message-row ${escapeHtml(message.role)}${isReply ? " is-reply" : ""}">
-          <div class="message-card">
-            <div class="message-meta">
-              <span>${escapeHtml(roleNames[message.role] || message.role)}</span>
-              ${agent}
-              ${replyMark}
-              <time datetime="${escapeHtml(message.created_at)}">${escapeHtml(formatTime(message.created_at))}</time>
-            </div>
-            <div class="message-bubble">${contentHtml}</div>
-            ${attachments}
-            ${feedback}
-            ${translateBar}
-          </div>
-        </div>`;
-  }
-  const truncation = visibleMessages.length < messages.length
-    ? `<div class="thread-empty">低配模式仅显示最近 ${visibleMessages.length} 条消息</div>`
-    : "";
-  // ROADMAP §18.4: a thread with a live X-Prev-Cursor header can grow upward —
-  // the affordance doubles as the scroll-to-top trigger anchor.
-  const loadOlder = state.threadPrevCursor
-    ? '<div class="thread-load-older"><button class="thread-load-older-btn" type="button">加载更早消息 ↑</button></div>'
-    : "";
-  els.messages.innerHTML = loadOlder + truncation + parts.join("");
-  els.messages.querySelector(".thread-load-older-btn")?.addEventListener("click", loadOlderMessages);
-  // Preserving the anchor matters for the upward merge: keep the view where it
-  // was instead of snapping to the newest message after prepending older ones.
-  els.messages.scrollTop = preserveAnchor
-    ? els.messages.scrollHeight - oldScrollHeight
-    : els.messages.scrollHeight;
+  return window.HelixModules?.['thread']?.['renderMessages'](...arguments);
 }
 
+// moved to js/thread.js (submitFeedback + recordFeedback shared core)
 async function submitFeedback(button) {
-  if (!state.selectedId) return;
-  button.disabled = true;
-  try {
-    await api(`/api/conversations/${encodeURIComponent(state.selectedId)}/feedback`, {
-      method: "POST",
-      body: JSON.stringify({
-        message_id: button.dataset.messageId,
-        rating: Number(button.dataset.feedback),
-      }),
-    });
-    button.classList.add("is-recorded");
-    button.setAttribute("aria-pressed", "true");
-    button.title = "已记录";
-    showToast("反馈已记录");
-  } catch (error) {
-    button.disabled = false;
-    showToast(error.message, true);
-  }
+  return window.HelixModules?.['thread']?.['submitFeedback'](...arguments);
 }
 
-// Backlog (多语言客服): POST a per-message translation and inline the result.
-// was_translated=false (no provider / target == service language) degrades to
-// a notice instead of a misleading "translation".
+// moved to js/thread.js (translateMessage + requestTranslation/buildTranslateResultHtml)
 async function translateMessage(button) {
-  if (!state.selectedId) return;
-  const bar = button.closest(".translate-bar");
-  if (!bar) return;
-  const language = bar.querySelector(".translate-lang").value;
-  const result = bar.querySelector(".translate-result");
-  button.disabled = true;
-  result.textContent = "";
-  try {
-    const out = await api(
-      `/api/conversations/${encodeURIComponent(state.selectedId)}/messages/${encodeURIComponent(bar.dataset.messageId)}/translate`,
-      {
-        method: "POST",
-        body: JSON.stringify({ target_language: language }),
-      },
-    );
-    if (out.was_translated) {
-      result.innerHTML =
-        `<span class="translate-text">${escapeHtml(out.translated)}</span>` +
-        `<span class="translate-tag">已翻译为 ${escapeHtml(LANGUAGE_NAMES[language] || language)}</span>`;
-    } else if (out.source === "none") {
-      // Backlog (多语言客服): target == service language — nothing to translate,
-      // don't blame a missing model.
-      result.textContent = "目标语言与当前服务语言一致，无需翻译";
-    } else {
-      result.textContent = "当前无翻译模型，已返回原文";
-    }
-  } catch (error) {
-    result.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
+  return window.HelixModules?.['thread']?.['translateMessage'](...arguments);
 }
 
 function latestAssistant(messages) {
@@ -1284,7 +1175,15 @@ function renderDetail(detail) {
   renderSummaries(detail);
   renderCopilot(detail);
   renderAttachmentBar(detail);
-  if (conversation.id) scheduleIdle(() => loadAttachmentNames(conversation.id));
+  if (conversation.id) {
+    scheduleIdle(async () => {
+      await loadAttachmentNames(conversation.id);
+      // Island mode: the thread island renders attachment chips from the
+      // snapshot — republish so real names replace the id fallbacks.
+      if (state.selectedId !== conversation.id) return;
+      window.HelixModules?.thread?.publishThreadState?.({ messages: detail.messages });
+    });
+  }
   scheduleClaimRenewal(detail);
 }
 
@@ -1338,32 +1237,9 @@ async function loadDetail(id) {
 // them, keeping the view anchored at the message the operator was reading.
 // The base64 opaque cursor is echoed straight back from the detail response's
 // X-Prev-Cursor — never parsed or synthesized client-side.
+// moved to js/thread.js (loadOlderMessages — §18.4 upward keyset pagination)
 async function loadOlderMessages() {
-  if (!state.selectedId || state.threadLoadingOlder || !state.threadPrevCursor) return;
-  state.threadLoadingOlder = true;
-  const cursor = state.threadPrevCursor;
-  const oldScrollHeight = els.messages.scrollHeight;
-  try {
-    const { response, data } = await apiWithHeaders(
-      `/api/conversations/${encodeURIComponent(state.selectedId)}/messages?limit=${THREAD_OLDER_PAGE_SIZE}&before=true&cursor=${encodeURIComponent(cursor)}`,
-    );
-    const older = Array.isArray(data) ? data : [];
-    const merged = [...older, ...(state.detail?.messages || [])];
-    // X-Has-More is the authoritative "older messages exist" signal: a partial
-    // page (fewer than requested) means we have reached the top.
-    const hasMore = response.headers.get("X-Has-More") === "true";
-    if (older.length) {
-      state.threadPrevCursor = hasMore ? response.headers.get("X-Prev-Cursor") || null : null;
-      state.detail = { ...(state.detail || {}), messages: merged };
-    } else {
-      state.threadPrevCursor = null; // nothing older — drop the affordance
-    }
-    renderMessages(merged, { preserveAnchor: true });
-  } catch (error) {
-    showToast(error.message || "加载更早消息失败");
-  } finally {
-    state.threadLoadingOlder = false;
-  }
+  return window.HelixModules?.['thread']?.['loadOlderMessages'](...arguments);
 }
 
 // ------------------------------------------------------------- 坐席协作
@@ -1406,7 +1282,13 @@ async function selectConversation(id) {
   renderQueue();
   els.emptyState.hidden = true;
   els.conversationView.hidden = false;
-  els.messages.innerHTML = '<div class="thread-empty">正在加载会话</div>';
+  // Island mode: the thread island renders the loading state from a
+  // helix-thread-state snapshot; the legacy container is hidden.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.thread?.publishThreadState?.({ loading: true });
+  } else {
+    els.messages.innerHTML = '<div class="thread-empty">正在加载会话</div>';
+  }
   stopWatching();
   try {
     await loadDetail(id);
@@ -3042,19 +2924,8 @@ els.list.addEventListener("click", (event) => {
 // ROADMAP §18.4: virtual-mode scroll keeps the windowed render aligned.
 els.list.addEventListener("scroll", handleQueueScroll, { passive: true });
 
-// ROADMAP §18.4: the "加载更早消息" affordance above the thread is the single
-// lazy-load trigger — explicit, and free of scroll-event double-fires.
-els.messages.addEventListener("click", (event) => {
-  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  const button =
-    path.find((node) => node instanceof HTMLElement && node.classList?.contains("feedback-button")) ||
-    event.target.closest?.(".feedback-button");
-  if (button) submitFeedback(button);
-  const translateButton =
-    path.find((node) => node instanceof HTMLElement && node.classList?.contains("translate-button")) ||
-    event.target.closest?.(".translate-button");
-  if (translateButton) void translateMessage(translateButton);
-});
+// The thread's feedback/translate click routing moved to js/thread.js
+// (bindThread), which also owns the island bridges.
 
 els.list.addEventListener("change", (event) => {
   const checkbox = event.target.closest(".conversation-checkbox");
@@ -3605,6 +3476,7 @@ if (els.cannedList) {
   });
 }
 window.HelixModules?.qualityPanel?.bindQuality?.();
+window.HelixModules?.thread?.bindThread?.();
 window.HelixModules?.composer?.bindComposer?.();
 // UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
 // D3 take-over: in the desktop shell the React command-palette island owns
