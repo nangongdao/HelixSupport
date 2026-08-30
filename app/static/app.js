@@ -428,6 +428,13 @@ _helixModules.savedViews?.configure?.({
   applySavedView,
   loadSavedViews,
 });
+_helixModules.commandDispatch?.configure?.({
+  state,
+  els,
+  showToast,
+  switchAppView,
+  refreshAll,
+});
 _helixModules.knowledgeView?.configure?.({
   state,
   els,
@@ -456,6 +463,13 @@ _helixModules.savedViews?.configure?.({
   currentViewFilters,
   applySavedView,
   loadSavedViews,
+});
+_helixModules.commandDispatch?.configure?.({
+  state,
+  els,
+  showToast,
+  switchAppView,
+  refreshAll,
 });
 _helixModules.conversationActions?.configure?.({
   state,
@@ -2700,6 +2714,7 @@ window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
 window.HelixModules?.queueView?.bindQueueDrawer?.();
 window.HelixModules?.savedViews?.bindSavedViews?.();
+window.HelixModules?.commandDispatch?.bindCommandDispatch?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
@@ -2798,46 +2813,9 @@ window.addEventListener("helix-summary-sync", () => {
 // helix-command {id} for every executed command. This consumer was missing
 // since the palette was island-activated, so desktop commands were inert;
 // each id maps onto the same handlers the legacy surfaces use.
-async function checkBackendHealth() {
-  try {
-    const res = await fetch("/health/ready");
-    const body = await res.json().catch(() => ({}));
-    const ready = res.ok && body.status === "ready";
-    showToast(ready ? "健康检查：后端就绪" : `健康检查：后端异常（${body.status || res.status}）`, !ready);
-  } catch (error) {
-    showToast(`健康检查失败：${error.message || error}`, true);
-  }
-}
-window.addEventListener("helix-command", (event) => {
-  const { id } = event.detail || {};
-  switch (id) {
-    case "nav:workspace":
-    case "nav:quality":
-    case "nav:knowledge":
-    case "nav:admin":
-    case "nav:settings":
-      switchAppView(id.slice("nav:".length));
-      break;
-    case "conv:new":
-      // Island mode: route through the conversation dialog island's bridge.
-      window.dispatchEvent(new CustomEvent("helix-conversation-new"));
-      break;
-    case "conv:refresh":
-      void refreshAll();
-      break;
-    case "conv:convert-ticket":
-      void window.HelixModules?.ticketView?.convertToTicket?.();
-      break;
-    case "diag:logs":
-      window.dispatchEvent(new CustomEvent("helix-terminal-toggle"));
-      break;
-    case "diag:health":
-      void checkBackendHealth();
-      break;
-    default:
-      break;
-  }
-});
+// moved to js/command-dispatch.js (checkBackendHealth + the palette island's
+// helix-command consumer; switchAppView/refreshAll arrive via configure).
+
 // D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
 // row checkbox toggles (the legacy list is yielded in the desktop shell).
 // Mirror the legacy change handler so the bulk toolbar stays in sync.
