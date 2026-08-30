@@ -464,6 +464,16 @@ _helixModules.refresh?.configure?.({
     roleLabel,
   },
 });
+_helixModules.queueActions?.configure?.({
+  state,
+  els,
+  api,
+  apiWithHeaders,
+  showToast,
+  setFormBusy,
+  refreshAll,
+  actions: { conversationQuery, renderQueue, renderBulkToolbar },
+});
 _helixModules.knowledgeView?.configure?.({
   state,
   els,
@@ -2191,82 +2201,7 @@ function schedulePolling() {
   return window.HelixModules?.['refresh']?.['schedulePolling'](...arguments);
 }
 
-async function loadMoreConversations() {
-  if (!state.queueHasMore || !state.queueCursor || state.queueLoadingMore) return;
-  const query = new URLSearchParams(conversationQuery());
-  const queryKey = `${query.get("search") || ""}|${query.get("status") || ""}|${query.get("label") || ""}|${query.get("priority") || ""}|${els.ownershipFilter.value}|${els.channelFilter?.value || ""}|${els.sortFilter?.value || "priority"}`;
-  query.set("cursor", state.queueCursor);
-  state.queueLoadingMore = true;
-  renderQueue();
-  try {
-    const page = await apiWithHeaders(`/api/conversations?${query.toString()}`);
-    const activeQueryKey = `${els.searchInput.value.trim()}|${els.statusFilter.value}|${els.labelFilter.value}|${els.priorityFilter.value}|${els.ownershipFilter.value}|${els.channelFilter?.value || ""}|${els.sortFilter?.value || "priority"}`;
-    if (activeQueryKey !== queryKey) return;
-    const existing = new Set(state.conversations.map((conversation) => conversation.id));
-    state.conversations = [
-      ...state.conversations,
-      ...page.data.filter((conversation) => !existing.has(conversation.id)),
-    ];
-    state.queueHasMore = page.response.headers.get("X-Has-More") === "true";
-    state.queueCursor = page.response.headers.get("X-Next-Cursor");
-    renderQueue();
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    state.queueLoadingMore = false;
-    renderQueue();
-  }
-}
-
-/**
- * Bulk action lifecycle — shared by the legacy toolbar form and the
- * island's helix-queue-bulk-apply bridge. `source` carries the island's
- * {action, labels}; without it the values come from the legacy toolbar
- * inputs (browser dual-track).
- */
-async function applyBulkAction(source = null) {
-  const conversationIds = [...state.bulkSelected];
-  if (!conversationIds.length) return;
-  const selectedAction = source ? source.action : els.bulkAction.value;
-  const payload = { conversation_ids: conversationIds };
-  if (selectedAction === "priority-high" || selectedAction === "priority-normal") {
-    payload.action = "set_priority";
-    payload.priority = selectedAction === "priority-high" ? "high" : "normal";
-  } else if (selectedAction === "claim" || selectedAction === "release") {
-    payload.action = selectedAction;
-  } else {
-    const labels = source
-      ? source.labels
-      : els.bulkLabelInput.value
-          .split(/[,，]/)
-          .map((label) => label.trim())
-          .filter(Boolean);
-    if (!labels.length) {
-      showToast("请输入标签", true);
-      els.bulkLabelInput.focus();
-      return;
-    }
-    payload.action = selectedAction === "add-label" ? "add_labels" : "remove_labels";
-    payload.labels = labels;
-  }
-  setFormBusy(els.bulkToolbar, true);
-  try {
-    const result = await api("/api/conversations/bulk-actions", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    showToast(`已更新 ${result.updated} 个会话`);
-    state.bulkSelected.clear();
-    els.bulkLabelInput.value = "";
-    if (["add-label", "remove-label"].includes(selectedAction)) state.labelsLoadedAt = 0;
-    await refreshAll({ silent: true });
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setFormBusy(els.bulkToolbar, false);
-    renderBulkToolbar();
-  }
-}
+// moved to js/queue-actions.js (loadMoreConversations + applyBulkAction)
 
 els.list.addEventListener("click", (event) => {
   const item = event.target.closest(".conversation-item");
@@ -2364,11 +2299,6 @@ window.addEventListener("helix-conversation-create", async (event) => {
 });
 
 els.refreshList.addEventListener("click", () => refreshAll());
-els.loadMore.addEventListener("click", loadMoreConversations);
-// D3 bridge (queue island strip): the island's 加载更多 button dispatches
-// helix-queue-load-more; the pagination lifecycle (cursor, loading-more
-// guard, query-key staleness check) stays here.
-window.addEventListener("helix-queue-load-more", () => void loadMoreConversations());
 els.statusFilter.addEventListener("change", () => refreshAll());
 els.labelFilter.addEventListener("change", () => refreshAll());
 els.priorityFilter.addEventListener("change", () => refreshAll());
@@ -2420,9 +2350,9 @@ if (els.inspectorToggle) {
   });
 }
 els.bulkAction.addEventListener("change", renderBulkToolbar);
-// The click event must NOT leak into applyBulkAction's optional `source`
-// parameter (a MouseEvent is truthy and would shadow the island payload).
-els.applyBulk.addEventListener("click", () => void applyBulkAction());
+// The applyBulk click binding (with its no-MouseEvent-leak guard) moved to
+// js/queue-actions.js bindQueueActions.
+
 els.clearBulk.addEventListener("click", () => {
   state.bulkSelected.clear();
   renderQueue();
@@ -2484,6 +2414,7 @@ window.HelixModules?.queueView?.bindQueueDrawer?.();
 window.HelixModules?.savedViews?.bindSavedViews?.();
 window.HelixModules?.commandDispatch?.bindCommandDispatch?.();
 window.HelixModules?.refresh?.bindRefresh?.();
+window.HelixModules?.queueActions?.bindQueueActions?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
@@ -2585,30 +2516,6 @@ window.addEventListener("helix-summary-sync", () => {
 // moved to js/command-dispatch.js (checkBackendHealth + the palette island's
 // helix-command consumer; switchAppView/refreshAll arrive via configure).
 
-// D3 bridge: the React queue island dispatches "helix-queue-bulk" when a
-// row checkbox toggles (the legacy list is yielded in the desktop shell).
-// Mirror the legacy change handler so the bulk toolbar stays in sync.
-window.addEventListener("helix-queue-bulk", (event) => {
-  const { id, on } = event.detail || {};
-  if (!id) return;
-  if (on) state.bulkSelected.add(id);
-  else state.bulkSelected.delete(id);
-  renderBulkToolbar();
-});
-// D3 bridge (queue island bulk toolbar): apply/clear arrive with the
-// island's toolbar state; the bulk lifecycle (payload build, POST, toast,
-// selection reset, refresh) stays here and reports completion so the
-// island can release its busy state.
-window.addEventListener("helix-queue-bulk-apply", async (event) => {
-  const { action, labels } = event.detail || {};
-  if (!action) return;
-  await applyBulkAction({ action, labels });
-  window.dispatchEvent(new CustomEvent("helix-queue-bulk-applied"));
-});
-window.addEventListener("helix-queue-bulk-clear", () => {
-  state.bulkSelected.clear();
-  renderQueue();
-});
 // D3 bridge: on mount the React queue island asks for the current queue
 // snapshot (helix-conversations-sync); re-render in island mode so the
 // freshly mounted island receives the latest list via renderQueue().
