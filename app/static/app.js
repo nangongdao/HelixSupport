@@ -443,23 +443,16 @@ _helixModules.detail?.configure?.({
     stopWatching,
   },
 });
+// The saved-views domain (filter snapshot, select render, list reload, apply
+// and CRUD) now lives in js/saved-views.js.
 _helixModules.savedViews?.configure?.({
   state,
   els,
   api,
   request,
   showToast,
-  currentViewFilters,
-  applySavedView,
-  loadSavedViews,
-});
-_helixModules.commandDispatch?.configure?.({
-  state,
-  els,
-  showToast,
-  switchAppView,
+  escapeHtml,
   refreshAll,
-  actions: { closeCommandPalette, loadDetail },
 });
 _helixModules.adminActions?.configure?.({
   state,
@@ -536,23 +529,15 @@ _helixModules.notes?.configure?.({
   escapeHtml,
   roleLabels: ROLE_LABELS,
 });
-_helixModules.savedViews?.configure?.({
-  state,
-  els,
-  api,
-  request,
-  showToast,
-  currentViewFilters,
-  applySavedView,
-  loadSavedViews,
-});
 _helixModules.commandDispatch?.configure?.({
   state,
   els,
+  api,
   showToast,
+  escapeHtml,
   switchAppView,
   refreshAll,
-  actions: { closeCommandPalette, loadDetail },
+  actions: { loadDetail },
 });
 _helixModules.conversationActions?.configure?.({
   state,
@@ -826,53 +811,11 @@ function canWriteConversations() {
   return state.me?.permissions?.includes("conversation:write") === true;
 }
 
-function currentViewFilters() {
-  return {
-    ...(els.searchInput.value.trim() ? { search: els.searchInput.value.trim() } : {}),
-    ...(els.statusFilter.value ? { status: els.statusFilter.value } : {}),
-    ...(els.labelFilter.value ? { label: els.labelFilter.value } : {}),
-    ...(els.priorityFilter.value ? { priority: els.priorityFilter.value } : {}),
-    ...(els.channelFilter?.value ? { channel: els.channelFilter.value } : {}),
-    ...(els.sortFilter?.value && els.sortFilter.value !== "priority"
-      ? { sort: els.sortFilter.value }
-      : {}),
-    ...(els.ownershipFilter.value ? { ownership: els.ownershipFilter.value } : {}),
-  };
-}
-
-function renderSavedViews() {
-  const selected = els.savedViewSelect.value;
-  els.savedViewSelect.innerHTML = `<option value="">保存的视图</option>${state.savedViews
-    .map((view) => `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name)}</option>`)
-    .join("")}`;
-  els.savedViewSelect.value = state.savedViews.some((view) => view.id === selected) ? selected : "";
-  els.deleteView.disabled = !els.savedViewSelect.value;
-}
-
+// moved to js/saved-views.js (filter snapshot, select render, list reload
+// and apply — the whole saved-views domain lives with the CRUD lifecycle).
+// Only the boot-time reload still needs a name in this scope.
 async function loadSavedViews() {
-  // Island mode: the saved-views island fetches /api/saved-views itself and
-  // the yielded legacy select stays empty; apply receives the view object
-  // through the bridge, so state.savedViews is not needed.
-  if (window.__HELIX_ISLAND_MODE__) return;
-  try {
-    state.savedViews = await api("/api/saved-views");
-  } catch {
-    state.savedViews = [];
-  }
-  renderSavedViews();
-}
-
-function applySavedView(view) {
-  const filters = view?.filters || {};
-  els.searchInput.value = filters.search || "";
-  els.statusFilter.value = filters.status || "";
-  els.labelFilter.value = filters.label || "";
-  els.priorityFilter.value = filters.priority || "";
-  if (els.channelFilter) els.channelFilter.value = filters.channel || "";
-  if (els.sortFilter) els.sortFilter.value = filters.sort || "priority";
-  els.ownershipFilter.value = filters.ownership || "";
-  els.focusWaiting.setAttribute("aria-pressed", String(filters.ownership === "needs_response"));
-  refreshAll();
+  return window.HelixModules?.['savedViews']?.['loadSavedViews'](...arguments);
 }
 
 function renderLabelFilter() {
@@ -1369,94 +1312,10 @@ function currentAppView() {
 
 // ---- UI 升级 §17.1: 命令面板 (Ctrl+K) ------------------------------------
 
-const commandModule = window.HelixModules?.commands || {
-  buildStaticCommands: () => [],
-  conversationCommand: () => ({}),
-  filterCommands: (list) => list,
-};
-const { buildStaticCommands, conversationCommand, filterCommands } = commandModule;
-
-let commandItems = [];
-let commandIndex = 0;
-let conversationCommands = [];
-let conversationCommandsLoadedAt = 0;
-
-async function loadConversationCommands({ force = false } = {}) {
-  if (!force && conversationCommandsLoadedAt && Date.now() - conversationCommandsLoadedAt < 60000) {
-    return conversationCommands;
-  }
-  try {
-    const rows = await api("/api/conversations?limit=50");
-    conversationCommands = (Array.isArray(rows) ? rows : []).map(conversationCommand);
-    conversationCommandsLoadedAt = Date.now();
-  } catch {
-    conversationCommands = [];
-  }
-  return conversationCommands;
-}
-
-function renderCommandResults() {
-  if (!els.commandResults) return;
-  const query = els.commandInput ? els.commandInput.value : "";
-  const filtered = filterCommands([...buildStaticCommands(), ...conversationCommands], query);
-  commandItems = filtered;
-  commandIndex = Math.min(commandIndex, Math.max(0, filtered.length - 1));
-  if (!filtered.length) {
-    els.commandResults.innerHTML = '<div class="command-empty">没有匹配的命令或会话</div>';
-    return;
-  }
-  const groups = new Map();
-  for (const command of filtered) {
-    const list = groups.get(command.group) || [];
-    list.push(command);
-    groups.set(command.group, list);
-  }
-  let html = "";
-  let flatIndex = 0;
-  for (const [group, commands] of groups.entries()) {
-    html += `<div class="command-group-label">${escapeHtml(group)}</div>`;
-    for (const command of commands) {
-      const selected = flatIndex === commandIndex;
-      html += `<button type="button" class="command-item${selected ? " is-selected" : ""}" role="option" aria-selected="${selected}" data-command-index="${flatIndex}">${escapeHtml(command.label)}</button>`;
-      flatIndex += 1;
-    }
-  }
-  els.commandResults.innerHTML = html;
-  els.commandResults
-    .querySelectorAll(".command-item")
-    .forEach((item) => item.addEventListener("click", () => runCommand(commandItems[Number(item.dataset.commandIndex)])));
-}
-
-async function openCommandPalette() {
-  if (!els.commandPalette) return;
-  // Always re-arm the conversation jump list: loadConversationCommands has a
-  // 60s TTL of its own, so the palette shows fresh conversations instead of
-  // freezing on the first fetch for the whole session (audit D1).
-  await loadConversationCommands();
-  if (els.commandInput) els.commandInput.value = "";
-  commandIndex = 0;
-  renderCommandResults();
-  if (typeof els.commandPalette.showModal === "function") {
-    els.commandPalette.showModal();
-  } else {
-    els.commandPalette.setAttribute("open", "");
-  }
-  if (els.commandInput) els.commandInput.focus();
-}
-
-function closeCommandPalette() {
-  if (!els.commandPalette) return;
-  if (typeof els.commandPalette.close === "function") {
-    els.commandPalette.close();
-  } else {
-    els.commandPalette.removeAttribute("open");
-  }
-}
-
-// moved to js/command-dispatch.js (runCommand — palette command routing).
-function runCommand(command) {
-  return window.HelixModules?.['commandDispatch']?.['runCommand'](...arguments);
-}
+// js/command-dispatch.js imports buildStaticCommands/conversationCommand/
+// filterCommands straight from js/commands.js and owns the whole legacy
+// palette dialog (state, load, render, open/close, Ctrl+K — bindCommandPalette,
+// runCommand). Nothing of §17.1 stays in this scope.
 
 
 // ---- UI 升级 §17.2: 三档密度 (comfortable/compact/dense) --------------------
@@ -1844,8 +1703,7 @@ els.focusWaiting.addEventListener("click", () => {
  * id on save so the bridge can tell the island which entry to select.
  */
 // moved to js/saved-views.js (saved-view CRUD + legacy bindings + island
-// bridges); applySavedView/loadSavedViews/currentViewFilters stay here where
-// the filter inputs and queue render live.
+// bridges, plus the filter snapshot / select render / reload / apply).
 
 els.densityToggle.addEventListener("click", () => {
   // In low-perf the visible density is always compact (effectiveDensity);
@@ -1953,41 +1811,10 @@ window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
 window.HelixModules?.composer?.bindComposer?.();
-// UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
-// D3 take-over: in the desktop shell the React command-palette island owns
-// Ctrl+K (window.__HELIX_ISLAND_MODE__ is set by main.js). Yield here so the
-// legacy <dialog> never opens on top of the island overlay. In a browser
-// tab the flag is never set and the legacy palette stays the handler.
-document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    if (window.__HELIX_ISLAND_MODE__) return; // island owns the palette
-    event.preventDefault();
-    void openCommandPalette();
-    return;
-  }
-  if (!els.commandPalette?.open) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    closeCommandPalette();
-  } else if (event.key === "ArrowDown") {
-    event.preventDefault();
-    commandIndex = Math.min(commandIndex + 1, commandItems.length - 1);
-    renderCommandResults();
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault();
-    commandIndex = Math.max(commandIndex - 1, 0);
-    renderCommandResults();
-  } else if (event.key === "Enter") {
-    event.preventDefault();
-    runCommand(commandItems[commandIndex]);
-  }
-});
-if (els.commandInput) {
-  els.commandInput.addEventListener("input", () => {
-    commandIndex = 0;
-    renderCommandResults();
-  });
-}
+// §17.1 palette: the shell island owns Ctrl+K (__HELIX_ISLAND_MODE__) so the
+// legacy <dialog> never stacks on top of it; in a browser tab the flag is
+// never set and js/command-dispatch.js bindCommandPalette is the handler.
+window.HelixModules?.commandDispatch?.bindCommandPalette?.();
 
 window.HelixModules?.ticketView?.bindTickets?.();
 window.HelixModules?.attachments?.bindAttachments?.();
