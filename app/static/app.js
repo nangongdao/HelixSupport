@@ -428,6 +428,15 @@ _helixModules.knowledgeView?.configure?.({
   formatTime,
   languageNames: LANGUAGE_NAMES,
 });
+_helixModules.notes?.configure?.({
+  state,
+  els,
+  api,
+  canOperate,
+  setFormBusy,
+  escapeHtml,
+  roleLabels: ROLE_LABELS,
+});
 _helixModules.conversationActions?.configure?.({
   state,
   els,
@@ -657,110 +666,13 @@ let searchTimer = null;
 // @-mention autocomplete in the note composer: type @<prefix> and pick a
 // colleague from the tenant roster (backlog M18 — orbiting the already-wired
 // ``/api/mentions`` inbox with the missing input-side UX).
-let mentionIndex = -1;
-const MENTION_PATTERN = /(?:^|\s)@([A-Za-z0-9._:@/-]*)$/;
+// moved to js/notes.js (mention suggest, collaborators, note composer)
+function hideMentionSuggest() {
+  return window.HelixModules?.['notes']?.['hideMentionSuggest'](...arguments);
+}
 
 async function loadCollaborators() {
-  if (!state.me) {
-    state.collaborators = [];
-    return;
-  }
-  try {
-    const payload = await api("/api/collaborators");
-    state.collaborators = Array.isArray(payload) ? payload : [];
-    state.collaboratorsLoadedAt = Date.now();
-    // roster 迟到达时若候选已打开,重渲染一次补上(修复与输入竞态的窗口)。
-    if (window.__HELIX_ISLAND_MODE__) {
-      // Island mode: the note composer renders mention candidates from the
-      // inspector state snapshot — republish so a late roster lands.
-      window.HelixModules?.inspector?.publishInspectorState?.();
-    } else if (state.mentionOpen && els.mentionSuggest) {
-      renderMentionSuggest(state.mentionToken);
-    }
-  } catch (error) {
-    // roster is best-effort; the composer still accepts plain @actor text.
-    // 不设 collaboratorsLoadedAt → 下个刷新周期会重试(HIGH-2 修复)。
-    state.collaborators = [];
-  }
-}
-
-function hideMentionSuggest() {
-  state.mentionOpen = false;
-  state.mentionToken = "";
-  mentionIndex = -1;
-  if (els.mentionSuggest) {
-    els.mentionSuggest.hidden = true;
-    els.mentionSuggest.innerHTML = "";
-  }
-}
-
-function renderMentionSuggest(token) {
-  if (!els.mentionSuggest || !canOperate()) {
-    hideMentionSuggest();
-    return;
-  }
-  const needle = (token || "").toLowerCase();
-  const me = state.me ? state.me.actor_id : "";
-  const matches = state.collaborators
-    .filter(
-      (c) =>
-        c.actor_id !== me &&
-        (!needle || (c.actor_id || "").toLowerCase().includes(needle)),
-    )
-    .slice(0, 8);
-  if (!matches.length) {
-    hideMentionSuggest();
-    return;
-  }
-  state.mentionToken = token;
-  state.mentionOpen = true;
-  els.mentionSuggest.hidden = false;
-  mentionIndex = -1;
-  els.mentionSuggest.innerHTML = matches
-    .map(
-      (c, i) =>
-        `<button class="macro-option" type="button" role="option" data-mention-actor="${escapeHtml(
-          c.actor_id,
-        )}" data-mention-index="${i}">` +
-        `<strong>${escapeHtml(c.actor_id)}</strong>` +
-        `<span>${escapeHtml(ROLE_LABELS[c.role] || c.role)}</span></button>`,
-    )
-    .join("");
-}
-
-function setMentionActive(i) {
-  if (!state.mentionOpen || !els.mentionSuggest) return;
-  const options = [...els.mentionSuggest.querySelectorAll(".macro-option")];
-  if (!options.length) return;
-  mentionIndex = (i + options.length) % options.length;
-  options.forEach((el, idx) => {
-    el.classList.toggle("is-active", idx === mentionIndex);
-    if (idx === mentionIndex) el.scrollIntoView({ block: "nearest" });
-  });
-}
-
-function applyMentionFromSuggest(actorId) {
-  const ta = els.noteInput;
-  if (!ta) return;
-  // apply 时以当前 value + caret 重新推导 @token 段,不信任 input 时捕获的
-  // 位置——用户可能已用鼠标移动光标(WARNING-3 修复)。
-  const caret = ta.selectionStart ?? ta.value.length;
-  const head = ta.value.slice(0, caret);
-  const match = head.match(MENTION_PATTERN);
-  if (!match) {
-    hideMentionSuggest();
-    return;
-  }
-  const start = caret - match[0].length + match[0].lastIndexOf("@");
-  if (start < 0) {
-    hideMentionSuggest();
-    return;
-  }
-  ta.value = `${ta.value.slice(0, start)}@${actorId} ${ta.value.slice(caret)}`;
-  const pos = start + actorId.length + 2;
-  ta.setSelectionRange(pos, pos);
-  hideMentionSuggest();
-  ta.focus();
+  return window.HelixModules?.['notes']?.['loadCollaborators'](...arguments);
 }
 
 async function request(path, options = {}) {
@@ -2890,12 +2802,6 @@ if (els.macroSuggest) {
     if (button?.dataset.macroId) applyMacroFromSuggest(button.dataset.macroId);
   });
 }
-if (els.mentionSuggest) {
-  els.mentionSuggest.addEventListener("click", (event) => {
-    const button = event.target.closest(".macro-option");
-    if (button?.dataset.mentionActor) applyMentionFromSuggest(button.dataset.mentionActor);
-  });
-}
 if (els.cannedList) {
   els.cannedList.addEventListener("click", (event) => {
     const button = event.target.closest(".canned-chip");
@@ -2905,6 +2811,7 @@ if (els.cannedList) {
 window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
+window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
 window.HelixModules?.composer?.bindComposer?.();
 // UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
@@ -2953,85 +2860,8 @@ if (els.appNav) {
   });
 }
 
-els.operatorInput.addEventListener("input", () => {
-  const conversationId = state.selectedId;
-  if (conversationId) {
-    window.clearTimeout(state.draftTimer);
-    state.draftTimer = window.setTimeout(() => {
-      saveDraft(conversationId, els.operatorInput.value);
-    }, 300);
-  }
-  const match = els.operatorInput.value.match(/(^|\s)\/([^\s]*)$/);
-  if (match) renderMacroSuggest(match[2] || "");
-  else hideMacroSuggest();
-});
-
-els.operatorInput.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    event.preventDefault();
-    els.operatorForm.requestSubmit();
-    return;
-  }
-  if (event.key === "Escape" && state.macroOpen) {
-    event.preventDefault();
-    hideMacroSuggest();
-  }
-});
-
-els.noteInput.addEventListener("input", (event) => {
-  // IME 组合期间(input 事件带中间拼音/片假名)不渲染也不收起;避免候选
-  // 列表干扰选字(中文客服台第一优先,HIGH-1 修复)。
-  if (event.isComposing) return;
-  const ta = els.noteInput;
-  const caret = ta.selectionStart ?? ta.value.length;
-  const head = ta.value.slice(0, caret);
-  const match = head.match(MENTION_PATTERN);
-  if (match) {
-    mentionIndex = -1;
-    renderMentionSuggest(match[1]);
-  } else {
-    hideMentionSuggest();
-  }
-});
-
-els.noteInput.addEventListener("keydown", (event) => {
-  if (event.isComposing) return;
-  if (!state.mentionOpen) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    hideMentionSuggest();
-    return;
-  }
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    event.preventDefault();
-    const options = els.mentionSuggest ? els.mentionSuggest.querySelectorAll(".macro-option") : [];
-    const delta = event.key === "ArrowDown" ? 1 : -1;
-    setMentionActive(mentionIndex < 0 ? (delta > 0 ? 0 : options.length - 1) : mentionIndex + delta);
-    return;
-  }
-  if (event.key === "Enter" || event.key === "Tab") {
-    const active = els.mentionSuggest ? els.mentionSuggest.querySelector(".macro-option.is-active") : null;
-    if (active?.dataset.mentionActor) {
-      event.preventDefault();
-      applyMentionFromSuggest(active.dataset.mentionActor);
-    }
-  }
-});
-
-els.noteForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!state.selectedId) return;
-  const content = els.noteInput.value.trim();
-  if (!content) return;
-  setFormBusy(els.noteForm, true);
-  const ok = await window.HelixModules?.inspector?.submitNote?.({ content });
-  if (ok) {
-    els.noteInput.value = "";
-    hideMentionSuggest();
-  }
-  setFormBusy(els.noteForm, false);
-});
-
+// moved to js/notes.js (note composer listeners) and
+// js/composer-island-bridge.js (operator draft/macro typing).
 // Knowledge page listeners + knowledge-island bridges moved to
 // js/knowledge-view.js (bindKnowledgeView — bound at boot below).
 // D3 bridge: the React ticket island dispatches "helix-ticket-open" when a
