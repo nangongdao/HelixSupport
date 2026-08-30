@@ -435,6 +435,35 @@ _helixModules.commandDispatch?.configure?.({
   switchAppView,
   refreshAll,
 });
+_helixModules.refresh?.configure?.({
+  state,
+  els,
+  api,
+  apiWithHeaders,
+  showToast,
+  escapeHtml,
+  TENANT,
+  BASE_HEADERS,
+  actions: {
+    pollInterval,
+    renderLoadingQueue,
+    renderQueue,
+    conversationQuery,
+    queueSignature,
+    loadLabelCatalog,
+    pruneExpiredDrafts,
+    scheduleIdle,
+    loadMentions,
+    loadCollaborators,
+    loadCannedResponses,
+    renderLabelFilter,
+    renderMetrics,
+    loadDetail,
+    selectConversation,
+    clearSelection,
+    roleLabel,
+  },
+});
 _helixModules.knowledgeView?.configure?.({
   state,
   els,
@@ -522,141 +551,6 @@ function applyWorkspacePreferences() {
     els.inspectorSurface.setAttribute("aria-hidden", String(state.inspectorCollapsed));
   }
 }
-
-function relayClientId() {
-  if (window.crypto?.randomUUID) return `tab-${window.crypto.randomUUID()}`;
-  return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-// ROADMAP §18.4: stand for leadership of the shared SSE connection. Only the
-// leader opens /api/events/queue; followers refresh through relayed events.
-// Without BroadcastChannel (or in low-perf mode) each tab keeps its own SSE.
-function initQueueRelay() {
-  if (state.lowPerf || !broadcastModule?.createLeaderElector || !window.BroadcastChannel) {
-    // No shared connection available — stand down any existing relay and
-    // fall back to each tab opening its own stream (legacy behaviour).
-    if (state.queueRelay?.isRunning()) {
-      state.queueRelay.abandon("no-relay");
-    }
-    state.queueRelay = null;
-    connectQueueEvents();
-    return;
-  }
-  if (state.queueRelay?.isRunning()) return;
-  const { PROTOCOL, createLeaderElector } = broadcastModule;
-  const channel = new BroadcastChannel(PROTOCOL.channelName);
-  const elector = createLeaderElector({
-    channel: {
-      postMessage: (message) => channel.postMessage(message),
-      addListener: (fn) => {
-        const handler = (event) => fn(event.data);
-        channel.addEventListener("message", handler);
-        return () => channel.removeEventListener("message", handler);
-      },
-    },
-    clientId: relayClientId(),
-    now: () => Date.now(),
-    setTimer: (fn, ms) => window.setTimeout(fn, ms),
-    clearTimer: (handle) => window.clearTimeout(handle),
-    onBecomeLeader: () => connectQueueEvents(),
-    onSteppedDown: () => {
-      if (state.queueEventSource?.abort) state.queueEventSource.abort();
-      setLiveStatus("poll");
-    },
-    onEvent: () => {
-      if (!document.hidden) {
-        void refreshAll({ silent: true, background: true, refreshDetail: false });
-      }
-    },
-  });
-  elector.start();
-  state.queueRelay = elector;
-}
-
-function schedulePolling() {
-  if (state.pollTimer) window.clearInterval(state.pollTimer);
-  state.pollTimer = window.setInterval(() => {
-    if (!document.hidden) {
-      refreshAll({ silent: true, background: true, refreshDetail: false });
-    }
-  }, pollInterval());
-  initQueueRelay();
-}
-
-function setLiveStatus(mode) {
-  if (!els.liveStatus) return;
-  els.liveStatus.textContent = mode === "live" ? "LIVE" : mode === "poll" ? "POLL" : "…";
-  els.liveStatus.classList.toggle("is-poll", mode === "poll");
-  els.liveStatus.classList.toggle("is-connecting", mode === "connecting");
-}
-
-function connectQueueEvents() {
-  if (state.queueEventSource?.abort) {
-    state.queueEventSource.abort();
-    state.queueEventSource = null;
-  }
-  if (state.queueReconnectTimer) {
-    window.clearTimeout(state.queueReconnectTimer);
-    state.queueReconnectTimer = null;
-  }
-  if (state.lowPerf || document.hidden) {
-    setLiveStatus("poll");
-    return;
-  }
-  setLiveStatus("connecting");
-  const controller = new AbortController();
-  state.queueEventSource = controller;
-  void (async () => {
-    try {
-      const response = await fetch("/api/events/queue?timeout=45", {
-        headers: BASE_HEADERS,
-        signal: controller.signal,
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`queue stream failed (${response.status})`);
-      }
-      setLiveStatus("live");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() || "";
-        for (const chunk of chunks) {
-          const lines = chunk.split("\n");
-          let eventName = "message";
-          for (const line of lines) {
-            if (line.startsWith("event:")) eventName = line.slice(6).trim();
-          }
-          if (eventName === "queue") {
-            if (!document.hidden) {
-              void refreshAll({ silent: true, background: true, refreshDetail: false });
-              // Single shared connection: the leader tells every follower to
-              // refresh too (ROADMAP §18.4).
-              if (state.queueRelay?.isLeader()) {
-                state.queueRelay.relay({ type: "queue" });
-              }
-            }
-          } else if (eventName === "timeout") {
-            break;
-          }
-        }
-      }
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      setLiveStatus("poll");
-    } finally {
-      if (state.queueEventSource === controller) state.queueEventSource = null;
-      if (!document.hidden && !state.lowPerf) {
-        state.queueReconnectTimer = window.setTimeout(() => connectQueueEvents(), 4000);
-      }
-    }
-  })();
-}
-
 
 // moved to js/composer.js (draftKey)
 
@@ -2283,122 +2177,18 @@ function queueSignature(conversations) {
     .join("|");
 }
 
+// moved to js/refresh.js (refreshAll dedup + runRefresh fan-out; the
+// SSE/relay/polling stream lifecycle and tab visibility live there too).
 async function refreshAll({ silent = false, refreshDetail = true, background = false } = {}) {
-  if (state.refreshPromise) return state.refreshPromise;
-  const refreshTask = runRefresh({ silent, refreshDetail, background });
-  state.refreshPromise = refreshTask;
-  try {
-    return await refreshTask;
-  } finally {
-    if (state.refreshPromise === refreshTask) state.refreshPromise = null;
-  }
+  return window.HelixModules?.['refresh']?.['refreshAll'](...arguments);
 }
 
-async function runRefresh({ silent = false, refreshDetail = true, background = false } = {}) {
-  if (!silent) {
-    els.refreshList.classList.add("is-spinning");
-    if (!state.conversations.length) renderLoadingQueue();
-  }
-  try {
-    const meRequest = state.me ? Promise.resolve(state.me) : api("/api/me");
-    const queueOnly = background;
-    const staleDashboard = !state.dashboard || !background;
-    // Island mode: the dashboard island owns /api/dashboard. Legacy only
-    // refetched on foreground cycles (background polls reuse the cached
-    // readout), so hand the refresh over on exactly those cycles and never
-    // touch the yielded #metrics strip.
-    const islandDashboard = window.__HELIX_ISLAND_MODE__;
-    if (islandDashboard && !background) {
-      window.dispatchEvent(new CustomEvent("helix-dashboard-refresh", { detail: { force: true } }));
-    }
-    const requests = [
-      meRequest,
-      staleDashboard && !islandDashboard
-        ? api("/api/dashboard")
-        : Promise.resolve(state.dashboard),
-      apiWithHeaders(`/api/conversations?${conversationQuery()}`),
-      queueOnly
-        ? Promise.resolve(state.labelCatalog)
-        : loadLabelCatalog({ force: !state.labelsLoadedAt }),
-    ];
-    const [me, dashboard, conversationPage, labelCatalog] = await Promise.all(requests);
-    const conversations = conversationPage.data;
-    const signature = queueSignature(conversations);
-    const queueChanged = signature !== state.lastQueueSignature;
-    const firstMe = !state.me;
-    state.me = me;
-    // Expose the operator identity so the desktop React islands (knowledge
-    // canWrite gate, admin admin:manage gate, terminal §4.1 RBAC) can read
-    // it without re-fetching /api/me. The helix-identity event closes the
-    // mount race: islands that mount before /api/me returns keep every
-    // privileged query disabled until this dispatch lands. In a browser
-    // tab the islands never mount and all of this is inert.
-    if (typeof window !== "undefined") {
-      window.__HELIX_ROLE__ = me?.role || "guest";
-      window.__HELIX_PERMISSIONS__ = me?.permissions || [];
-      window.__HELIX_ACTOR__ = me?.actor_id || "";
-      window.dispatchEvent(new CustomEvent("helix-identity", {
-        detail: {
-          role: window.__HELIX_ROLE__,
-          permissions: window.__HELIX_PERMISSIONS__,
-          actorId: window.__HELIX_ACTOR__,
-          tenantId: me?.tenant_id || TENANT,
-        },
-      }));
-    }
-    if (firstMe) pruneExpiredDrafts();
-    if (firstMe) scheduleIdle(() => loadMentions());
-    // roster 节流刷新:首次失败下个周期重试,成功后在后台周期更新,
-    // 新邀请的同事最多 ~2 分钟出现在 @ 候选(HIGH-2 修复)。
-    if (firstMe || !state.collaboratorsLoadedAt || Date.now() - state.collaboratorsLoadedAt > 120000) {
-      scheduleIdle(() => loadCollaborators());
-    }
-    if (dashboard) state.dashboard = dashboard;
-    if (labelCatalog) state.labelCatalog = labelCatalog;
-    state.conversations = conversations;
-    state.lastQueueSignature = signature;
-    if (!queueOnly) await loadCannedResponses({ force: !state.cannedLoadedAt });
-    const visibleIds = new Set(conversations.map((conversation) => conversation.id));
-    state.bulkSelected = new Set(
-      [...state.bulkSelected].filter((conversationId) => visibleIds.has(conversationId)),
-    );
-    state.queueHasMore = conversationPage.response.headers.get("X-Has-More") === "true";
-    state.queueCursor = conversationPage.response.headers.get("X-Next-Cursor");
-    // Island mode: the identity island owns the readout (yielded span) and
-    // subscribes to the helix-identity dispatch below — skip painting the
-    // hidden legacy span.
-    if (!window.__HELIX_ISLAND_MODE__) {
-      els.operatorIdentity.textContent = `${me.actor_id} · ${roleLabel(me.role)}`;
-    }
-    if (!queueOnly) renderLabelFilter();
-    els.focusWaiting.setAttribute("aria-pressed", String(els.ownershipFilter.value === "needs_response"));
-    if (state.dashboard && (!background || staleDashboard)) renderMetrics(state.dashboard);
-    if (!background || queueChanged || !els.list.children.length) renderQueue();
+function setLiveStatus(mode) {
+  return window.HelixModules?.['refresh']?.['setLiveStatus'](...arguments);
+}
 
-    const selected = state.selectedId
-      ? conversations.find((conversation) => conversation.id === state.selectedId)
-      : null;
-    if (selected) {
-      const detailStale =
-        !state.detail ||
-        state.detail.conversation?.id !== selected.id ||
-        state.detail.conversation?.version !== selected.version ||
-        state.detail.conversation?.updated_at !== selected.updated_at;
-      if (refreshDetail && !background && detailStale) await loadDetail(state.selectedId);
-      else if (refreshDetail && background && detailStale) void loadDetail(state.selectedId);
-    } else if (conversations.length) {
-      if (!background && !window.HelixModules?.ticketView?.autoSelectSuppressed?.()) await selectConversation(conversations[0].id);
-    } else if (!background) {
-      clearSelection();
-    }
-  } catch (error) {
-    if (!background) showToast(error.message, true);
-    if (!state.conversations.length) {
-      els.list.innerHTML = `<div class="queue-empty">${escapeHtml(error.message)}</div>`;
-    }
-  } finally {
-    els.refreshList.classList.remove("is-spinning");
-  }
+function schedulePolling() {
+  return window.HelixModules?.['refresh']?.['schedulePolling'](...arguments);
 }
 
 async function loadMoreConversations() {
@@ -2674,29 +2464,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("unhandledrejection", (event) => {
-  showToast(event.reason?.message || "操作失败", true);
-});
-
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    // Abort our own stream and release group leadership so a visible tab
-    // (which still needs queue updates) can take over immediately instead of
-    // waiting out our lease.
-    if (state.queueEventSource?.abort) state.queueEventSource.abort();
-    if (state.queueRelay?.isRunning()) {
-      state.queueRelay.abandon("hidden"); // also fires onSteppedDown -> clean-up
-      state.queueEventSource = null;
-    }
-    return;
-  }
-  if (state.queueRelay) {
-    state.queueRelay.start(); // no-op when still running; re-joins after abandon
-  } else {
-    connectQueueEvents();
-  }
-  refreshAll({ silent: true, background: true, refreshDetail: false });
-});
+// Tab lifecycle (unhandledrejection/visibilitychange) moved to js/refresh.js bindRefresh.
 
 if (els.macroSuggest) {
   els.macroSuggest.addEventListener("click", (event) => {
@@ -2715,6 +2483,7 @@ window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
 window.HelixModules?.queueView?.bindQueueDrawer?.();
 window.HelixModules?.savedViews?.bindSavedViews?.();
 window.HelixModules?.commandDispatch?.bindCommandDispatch?.();
+window.HelixModules?.refresh?.bindRefresh?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
