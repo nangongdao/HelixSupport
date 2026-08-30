@@ -540,7 +540,9 @@ _helixModules.conversationActions?.configure?.({
   renderLanguagePicker,
   scheduleIdle,
   languageNames: LANGUAGE_NAMES,
+  actions: { renderQueue },
 });
+window.HelixModules?.conversationActions?.bindConversationDialog?.();
 
 function queuePageSize() {
   return state.lowPerf ? QUEUE_PAGE_SIZE_LOW : QUEUE_PAGE_SIZE_NORMAL;
@@ -1916,76 +1918,8 @@ document.querySelectorAll(".inspector-tab").forEach((button) => {
   button.addEventListener("click", () => switchInspectorTab(button.dataset.tab));
 });
 
-els.newConversation.addEventListener("click", () => {
-  // Island mode: the conversation dialog island owns the <dialog>; hand the
-  // open over and let the island dispatch helix-conversation-create.
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.dispatchEvent(new CustomEvent("helix-conversation-new"));
-    return;
-  }
-  els.newConversationForm.reset();
-  els.newConversationDialog.showModal();
-  window.setTimeout(() => els.newCustomerName.focus(), 0);
-});
-
-function closeConversationDialog() {
-  els.newConversationDialog.close();
-}
-
-els.closeDialog.addEventListener("click", closeConversationDialog);
-els.cancelDialog.addEventListener("click", closeConversationDialog);
-
-/**
- * D3 bridge: the create lifecycle behind the new-conversation dialog —
- * shared verbatim by the legacy form submit and the island's
- * helix-conversation-create bridge so api()/selection/detail/refresh stay
- * in one place.
- */
-async function createConversation(payload) {
-  setFormBusy(els.newConversationForm, true);
-  try {
-    const created = await api("/api/conversations", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    if (!window.__HELIX_ISLAND_MODE__) closeConversationDialog();
-    state.selectedId = created.id;
-    state.conversations = [
-      created,
-      ...state.conversations.filter((conversation) => conversation.id !== created.id),
-    ];
-    renderQueue();
-    await loadDetail(created.id);
-    void refreshAll({ silent: true, refreshDetail: false });
-    return true;
-  } catch (error) {
-    showToast(error.message, true);
-    return false;
-  } finally {
-    setFormBusy(els.newConversationForm, false);
-  }
-}
-
-els.newConversationForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const payload = {
-    customer_name: els.newCustomerName.value.trim(),
-    channel: els.newChannel.value,
-  };
-  const customerRef = els.newCustomerRef.value.trim();
-  if (customerRef) payload.customer_ref = customerRef;
-  if (!payload.customer_name) return;
-  await createConversation(payload);
-});
-
-// D3 bridge (conversation dialog island): the island reports the form
-// outcome via helix-conversation-created so it can close on success.
-window.addEventListener("helix-conversation-create", async (event) => {
-  const { payload } = event.detail || {};
-  if (!payload) return;
-  const ok = await createConversation(payload);
-  window.dispatchEvent(new CustomEvent("helix-conversation-created", { detail: { ok } }));
-});
+// moved to js/conversation-actions.js (new-conversation dialog lifecycle:
+// open/close/createConversation + legacy form binding + island bridge).
 
 els.refreshList.addEventListener("click", () => refreshAll());
 els.statusFilter.addEventListener("change", () => refreshAll());
@@ -2051,6 +1985,11 @@ els.searchInput.addEventListener("input", () => {
   const delay = state.lowPerf ? 450 : 260;
   searchTimer = window.setTimeout(() => refreshAll({ silent: true, refreshDetail: false }), delay);
 });
+// moved to js/conversation-actions.js (new-conversation dialog lifecycle)
+async function createConversation(payload) {
+  return window.HelixModules?.['conversationActions']?.['createConversation'](...arguments);
+}
+
 // moved to js/queue-view.js (mobile queue drawer: scrim/focus-trap/inert)
 function closeQueueDrawer(options = {}) {
   return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...arguments);

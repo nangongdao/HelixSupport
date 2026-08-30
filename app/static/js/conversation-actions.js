@@ -151,6 +151,80 @@ export function bindConversationActions() {
 
 export default {
   sendCustomerMessage,
-  performConversationAction,
+  performConversationActions: performConversationAction,
   bindConversationActions,
+  openNewConversationDialog,
+  closeConversationDialog,
+  createConversation,
+  bindConversationDialog,
 };
+
+// ── New-conversation dialog lifecycle (app.js <500 slice 26) ──
+
+export function openNewConversationDialog() {
+  // Island mode: the conversation dialog island owns the <dialog>; hand the
+  // open over and let the island dispatch helix-conversation-create.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent("helix-conversation-new"));
+    return;
+  }
+  ctx.els.newConversationForm.reset();
+  ctx.els.newConversationDialog.showModal();
+  window.setTimeout(() => ctx.els.newCustomerName.focus(), 0);
+}
+
+export function closeConversationDialog() {
+  ctx.els.newConversationDialog.close();
+}
+
+export async function createConversation(payload) {
+  ctx.setFormBusy(ctx.els.newConversationForm, true);
+  try {
+    const created = await ctx.api("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!window.__HELIX_ISLAND_MODE__) closeConversationDialog();
+    ctx.state.selectedId = created.id;
+    ctx.state.conversations = [
+      created,
+      ...ctx.state.conversations.filter((conversation) => conversation.id !== created.id),
+    ];
+    ctx.actions.renderQueue();
+    await ctx.loadDetail(created.id);
+    void ctx.refreshAll({ silent: true, refreshDetail: false });
+    return true;
+  } catch (error) {
+    ctx.showToast(error.message, true);
+    return false;
+  } finally {
+    ctx.setFormBusy(ctx.els.newConversationForm, false);
+  }
+}
+
+export function bindConversationDialog() {
+  if (!ctx?.els) return false;
+  ctx.els.newConversation.addEventListener("click", openNewConversationDialog);
+  ctx.els.closeDialog.addEventListener("click", closeConversationDialog);
+  ctx.els.cancelDialog.addEventListener("click", closeConversationDialog);
+  ctx.els.newConversationForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+      customer_name: ctx.els.newCustomerName.value.trim(),
+      channel: ctx.els.newChannel.value,
+    };
+    const customerRef = ctx.els.newCustomerRef.value.trim();
+    if (customerRef) payload.customer_ref = customerRef;
+    if (!payload.customer_name) return;
+    await createConversation(payload);
+  });
+  // D3 bridge (conversation dialog island): the island reports the form
+  // outcome via helix-conversation-created so it can close on success.
+  window.addEventListener("helix-conversation-create", async (event) => {
+    const { payload } = event.detail || {};
+    if (!payload) return;
+    const ok = await createConversation(payload);
+    window.dispatchEvent(new CustomEvent("helix-conversation-created", { detail: { ok } }));
+  });
+  return true;
+}

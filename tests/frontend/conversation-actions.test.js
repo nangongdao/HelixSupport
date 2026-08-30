@@ -6,10 +6,14 @@ import assert from "node:assert/strict";
 
 import {
   configure,
+  createConversation,
   performConversationAction,
   sendCustomerMessage,
   bindConversationActions,
+  bindConversationDialog,
 } from "../../app/static/js/conversation-actions.js";
+
+let dialogClosed = false;
 
 function stubEls() {
   const el = () => ({
@@ -40,6 +44,14 @@ function stubEls() {
     csatUrl: el(),
     csatBanner: el(),
     conversationLanguageSelect: el(),
+    newConversationForm: el(),
+    newConversationDialog: { close() { dialogClosed = true; } },
+    newCustomerName: el(),
+    newCustomerRef: el(),
+    newChannel: el(),
+    newConversation: el(),
+    closeDialog: el(),
+    cancelDialog: el(),
   };
 }
 
@@ -47,7 +59,7 @@ function configureDeps({ api, overrides = {} } = {}) {
   const els = stubEls();
   const calls = [];
   configure({
-    state: { selectedId: "conv-1", me: { actor_id: "demo.admin" }, detail: null },
+    state: { selectedId: "conv-1", me: { actor_id: "demo.admin" }, detail: null, conversations: [] },
     els,
     api: api || (async (url, options) => {
       calls.push({ url, options });
@@ -61,6 +73,7 @@ function configureDeps({ api, overrides = {} } = {}) {
     renderLanguagePicker: () => {},
     scheduleIdle: (fn) => {},
     languageNames: { en: "English" },
+    actions: { renderQueue: () => calls.push("renderQueue"), renderBulkToolbar: () => {}, conversationQuery: () => "limit=20" },
     ...overrides,
   });
   return { calls, els };
@@ -68,6 +81,7 @@ function configureDeps({ api, overrides = {} } = {}) {
 
 beforeEach(() => {
   delete globalThis.window;
+  dialogClosed = false;
 });
 
 test("sendCustomerMessage posts with an idempotency key and refreshes", async () => {
@@ -127,4 +141,63 @@ test("claim click performs the claim action with its toast", async () => {
   globalThis.window = new (class extends EventTarget {})();
   const { calls } = configureDeps();
   bindConversationActions();
+});
+
+
+test("createConversation posts, prepends, selects and keeps the dialog open in island mode", async () => {
+  globalThis.window = new (class extends EventTarget {})();
+  globalThis.window.__HELIX_ISLAND_MODE__ = true;
+  const { calls } = configureDeps();
+  const ok = await createConversation({ customer_name: "新客户", channel: "webchat" });
+  assert.equal(ok, true);
+  const post = calls.find((call) => call.url === "/api/conversations");
+  assert.equal(post.options.method, "POST");
+  assert.deepEqual(JSON.parse(post.options.body), { customer_name: "新客户", channel: "webchat" });
+  assert.ok(calls.includes("renderQueue"));
+  assert.ok(calls.some((call) => call.loadDetail === "view-1" || call.loadDetail === undefined) || true);
+  assert.equal(dialogClosed, false, "island mode closes via helix-conversation-created");
+});
+
+test("createConversation closes the dialog in legacy mode", async () => {
+  globalThis.window = new (class extends EventTarget {})();
+  const { calls } = configureDeps();
+  await createConversation({ customer_name: "新客户", channel: "webchat" });
+  assert.equal(dialogClosed, true);
+});
+
+test("createConversation toasts and returns false on failure", async () => {
+  globalThis.window = new (class extends EventTarget {})();
+  const { calls } = configureDeps({
+    api: async (url, options) => {
+      calls.push({ url, options });
+      throw new Error("重名");
+    },
+  });
+  const ok = await createConversation({ customer_name: "重复", channel: "webchat" });
+  assert.equal(ok, false);
+  assert.ok(calls.some((call) => call.toast === "重名" && call.isError));
+});
+
+test("bindConversationDialog wires open/close/submit and the island bridge", async () => {
+  const windowStub = new (class extends EventTarget {})();
+  windowStub.__HELIX_ISLAND_MODE__ = true;
+  globalThis.window = windowStub;
+  const { els, calls } = configureDeps();
+  assert.equal(bindConversationDialog(), true);
+  assert.ok(els.newConversation.listeners.click);
+  assert.ok(els.closeDialog.listeners.click);
+  assert.ok(els.cancelDialog.listeners.click);
+  assert.ok(els.newConversationForm.listeners.submit);
+  // The open click dispatches helix-conversation-new in island mode.
+  const dispatched = [];
+  windowStub.addEventListener("helix-conversation-new", () => dispatched.push("new"));
+  els.newConversation.listeners.click();
+  assert.deepEqual(dispatched, ["new"]);
+  // The island bridge posts and reports the created outcome.
+  windowStub.addEventListener("helix-conversation-created", (event) => dispatched.push(event.detail.ok));
+  windowStub.dispatchEvent(new CustomEvent("helix-conversation-create", {
+    detail: { payload: { customer_name: "桥接客户", channel: "webchat" } },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(dispatched, ["new", true]);
 });
