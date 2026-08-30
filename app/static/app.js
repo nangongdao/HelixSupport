@@ -428,6 +428,19 @@ _helixModules.knowledgeView?.configure?.({
   formatTime,
   languageNames: LANGUAGE_NAMES,
 });
+_helixModules.conversationActions?.configure?.({
+  state,
+  els,
+  api,
+  showToast,
+  setFormBusy,
+  loadDetail,
+  refreshAll,
+  renderSubtitle,
+  renderLanguagePicker,
+  scheduleIdle,
+  languageNames: LANGUAGE_NAMES,
+});
 
 function queuePageSize() {
   return state.lowPerf ? QUEUE_PAGE_SIZE_LOW : QUEUE_PAGE_SIZE_NORMAL;
@@ -2469,30 +2482,6 @@ async function loadMoreConversations() {
   }
 }
 
-async function performConversationAction(action, successMessage) {
-  if (!state.selectedId) return;
-  const conversationId = state.selectedId;
-  try {
-    const result = await api(`/api/conversations/${encodeURIComponent(conversationId)}/${action}`, {
-      method: "POST",
-    });
-    if (action === "resolve") {
-      const surveyUrl = result && result.survey_url;
-      if (surveyUrl) {
-        els.csatUrl.textContent = surveyUrl;
-        els.csatBanner.hidden = false;
-      } else {
-        els.csatBanner.hidden = true;
-      }
-    }
-    showToast(successMessage);
-    await loadDetail(conversationId);
-    await refreshAll({ refreshDetail: false });
-  } catch (error) {
-    showToast(error.message, true);
-  }
-}
-
 /**
  * Bulk action lifecycle — shared by the legacy toolbar form and the
  * island's helix-queue-bulk-apply bridge. `source` carries the island's
@@ -2566,185 +2555,6 @@ els.list.addEventListener("change", (event) => {
 document.querySelectorAll(".inspector-tab").forEach((button) => {
   button.addEventListener("click", () => switchInspectorTab(button.dataset.tab));
 });
-
-async function sendCustomerMessage(content) {
-  if (!state.selectedId) return;
-  const conversationId = state.selectedId;
-  const text = String(content || "").trim();
-  if (!text) return;
-  setFormBusy(els.customerForm, true);
-  try {
-    const result = await api(
-      `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
-      {
-        method: "POST",
-        headers: { "Idempotency-Key": newIdempotencyKey() },
-        body: JSON.stringify({ content: text }),
-      },
-    );
-    els.customerInput.value = "";
-    if (!result.assistant_message) showToast("客户消息已进入人工队列");
-    await loadDetail(conversationId);
-    void refreshAll({ silent: true, refreshDetail: false });
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setFormBusy(els.customerForm, false);
-  }
-}
-
-els.customerForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  void sendCustomerMessage(els.customerInput.value);
-});
-// D3 bridge: the React composer island submits customer messages from the
-// desktop shell (legacy #customerForm is yielded + hidden) via this event.
-window.addEventListener("helix-composer-submit", (event) => {
-  const { kind, content } = event.detail || {};
-  if (!content || !kind) return;
-  if (kind === "customer") void sendCustomerMessage(content);
-});
-
-
-
-els.operatorInput.addEventListener("input", () => {
-  const conversationId = state.selectedId;
-  if (conversationId) {
-    window.clearTimeout(state.draftTimer);
-    state.draftTimer = window.setTimeout(() => {
-      saveDraft(conversationId, els.operatorInput.value);
-    }, 300);
-  }
-  const match = els.operatorInput.value.match(/(^|\s)\/([^\s]*)$/);
-  if (match) renderMacroSuggest(match[2] || "");
-  else hideMacroSuggest();
-});
-
-els.operatorInput.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    event.preventDefault();
-    els.operatorForm.requestSubmit();
-    return;
-  }
-  if (event.key === "Escape" && state.macroOpen) {
-    event.preventDefault();
-    hideMacroSuggest();
-  }
-});
-
-els.noteInput.addEventListener("input", (event) => {
-  // IME 组合期间(input 事件带中间拼音/片假名)不渲染也不收起;避免候选
-  // 列表干扰选字(中文客服台第一优先,HIGH-1 修复)。
-  if (event.isComposing) return;
-  const ta = els.noteInput;
-  const caret = ta.selectionStart ?? ta.value.length;
-  const head = ta.value.slice(0, caret);
-  const match = head.match(MENTION_PATTERN);
-  if (match) {
-    mentionIndex = -1;
-    renderMentionSuggest(match[1]);
-  } else {
-    hideMentionSuggest();
-  }
-});
-
-els.noteInput.addEventListener("keydown", (event) => {
-  if (event.isComposing) return;
-  if (!state.mentionOpen) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    hideMentionSuggest();
-    return;
-  }
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    event.preventDefault();
-    const options = els.mentionSuggest ? els.mentionSuggest.querySelectorAll(".macro-option") : [];
-    const delta = event.key === "ArrowDown" ? 1 : -1;
-    setMentionActive(mentionIndex < 0 ? (delta > 0 ? 0 : options.length - 1) : mentionIndex + delta);
-    return;
-  }
-  if (event.key === "Enter" || event.key === "Tab") {
-    const active = els.mentionSuggest ? els.mentionSuggest.querySelector(".macro-option.is-active") : null;
-    if (active?.dataset.mentionActor) {
-      event.preventDefault();
-      applyMentionFromSuggest(active.dataset.mentionActor);
-    }
-  }
-});
-
-els.noteForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!state.selectedId) return;
-  const content = els.noteInput.value.trim();
-  if (!content) return;
-  setFormBusy(els.noteForm, true);
-  const ok = await window.HelixModules?.inspector?.submitNote?.({ content });
-  if (ok) {
-    els.noteInput.value = "";
-    hideMentionSuggest();
-  }
-  setFormBusy(els.noteForm, false);
-});
-
-els.claimBtn.addEventListener("click", () => performConversationAction("claim", "会话已认领"));
-if (els.conversationLanguageSelect) {
-  // Backlog (多语言客服): PATCH the manual override; the select rolls back on
-  // failure and a background refresh re-syncs the whole view.
-  els.conversationLanguageSelect.addEventListener("change", async () => {
-    if (!state.selectedId) return;
-    const language = els.conversationLanguageSelect.value || null;
-    try {
-      await api(`/api/conversations/${encodeURIComponent(state.selectedId)}/language`, {
-        method: "PATCH",
-        body: JSON.stringify({ language }),
-      });
-      if (state.detail) state.detail.conversation.language = language;
-      renderSubtitle(state.detail.conversation);
-      renderLanguagePicker(state.detail.conversation);
-      showToast(
-        language
-          ? `会话语言已设为 ${LANGUAGE_NAMES[language] || language}`
-          : "会话语言已恢复自动检测",
-      );
-      scheduleIdle(() => refreshAll());
-    } catch (error) {
-      if (state.detail) renderLanguagePicker(state.detail.conversation);
-      showToast(error.message, true);
-    }
-  });
-}
-els.releaseBtn.addEventListener("click", () => performConversationAction("release", "认领已释放"));
-if (els.assignBtn) {
-  els.assignBtn.addEventListener("click", async () => {
-    if (!state.selectedId || !state.me?.actor_id) return;
-    const conversationId = state.selectedId;
-    try {
-      await api(`/api/conversations/${encodeURIComponent(conversationId)}/assign`, {
-        method: "POST",
-        body: JSON.stringify({ assignee_id: state.me.actor_id }),
-      });
-      showToast("会话已转派给自己");
-      await loadDetail(conversationId);
-      await refreshAll({ refreshDetail: false });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-}
-els.acceptBtn.addEventListener("click", () => performConversationAction("accept", "会话已接入"));
-els.resolveBtn.addEventListener("click", () => performConversationAction("resolve", "会话已解决"));
-
-els.csatCopyBtn.addEventListener("click", async () => {
-  const url = els.csatUrl.textContent;
-  if (!url) return;
-  try {
-    await navigator.clipboard.writeText(url);
-    showToast("满意度链接已复制");
-  } catch (error) {
-    window.prompt("请手动复制满意度链接：", url);
-  }
-});
-els.reopenBtn.addEventListener("click", () => performConversationAction("reopen", "会话已重开"));
 
 els.newConversation.addEventListener("click", () => {
   // Island mode: the conversation dialog island owns the <dialog>; hand the
@@ -3094,6 +2904,7 @@ if (els.cannedList) {
 }
 window.HelixModules?.qualityPanel?.bindQuality?.();
 window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
+window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.thread?.bindThread?.();
 window.HelixModules?.composer?.bindComposer?.();
 // UI 升级 §17.1: 命令面板 — Ctrl+K opens anywhere; arrows/Enter navigate.
@@ -3141,6 +2952,85 @@ if (els.appNav) {
     if (button?.dataset.view) switchAppView(button.dataset.view);
   });
 }
+
+els.operatorInput.addEventListener("input", () => {
+  const conversationId = state.selectedId;
+  if (conversationId) {
+    window.clearTimeout(state.draftTimer);
+    state.draftTimer = window.setTimeout(() => {
+      saveDraft(conversationId, els.operatorInput.value);
+    }, 300);
+  }
+  const match = els.operatorInput.value.match(/(^|\s)\/([^\s]*)$/);
+  if (match) renderMacroSuggest(match[2] || "");
+  else hideMacroSuggest();
+});
+
+els.operatorInput.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    els.operatorForm.requestSubmit();
+    return;
+  }
+  if (event.key === "Escape" && state.macroOpen) {
+    event.preventDefault();
+    hideMacroSuggest();
+  }
+});
+
+els.noteInput.addEventListener("input", (event) => {
+  // IME 组合期间(input 事件带中间拼音/片假名)不渲染也不收起;避免候选
+  // 列表干扰选字(中文客服台第一优先,HIGH-1 修复)。
+  if (event.isComposing) return;
+  const ta = els.noteInput;
+  const caret = ta.selectionStart ?? ta.value.length;
+  const head = ta.value.slice(0, caret);
+  const match = head.match(MENTION_PATTERN);
+  if (match) {
+    mentionIndex = -1;
+    renderMentionSuggest(match[1]);
+  } else {
+    hideMentionSuggest();
+  }
+});
+
+els.noteInput.addEventListener("keydown", (event) => {
+  if (event.isComposing) return;
+  if (!state.mentionOpen) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    hideMentionSuggest();
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const options = els.mentionSuggest ? els.mentionSuggest.querySelectorAll(".macro-option") : [];
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    setMentionActive(mentionIndex < 0 ? (delta > 0 ? 0 : options.length - 1) : mentionIndex + delta);
+    return;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    const active = els.mentionSuggest ? els.mentionSuggest.querySelector(".macro-option.is-active") : null;
+    if (active?.dataset.mentionActor) {
+      event.preventDefault();
+      applyMentionFromSuggest(active.dataset.mentionActor);
+    }
+  }
+});
+
+els.noteForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.selectedId) return;
+  const content = els.noteInput.value.trim();
+  if (!content) return;
+  setFormBusy(els.noteForm, true);
+  const ok = await window.HelixModules?.inspector?.submitNote?.({ content });
+  if (ok) {
+    els.noteInput.value = "";
+    hideMentionSuggest();
+  }
+  setFormBusy(els.noteForm, false);
+});
 
 // Knowledge page listeners + knowledge-island bridges moved to
 // js/knowledge-view.js (bindKnowledgeView — bound at boot below).
