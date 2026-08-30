@@ -435,6 +435,24 @@ _helixModules.commandDispatch?.configure?.({
   switchAppView,
   refreshAll,
 });
+_helixModules.adminActions?.configure?.({
+  state,
+  els,
+  api,
+  showToast,
+  escapeHtml,
+  TENANT,
+  roleLabels: ROLE_LABELS,
+  canManage,
+  actions: {
+    renderReportWebhookOptions,
+    loadReportSubscriptions,
+    loadRuleGroups,
+    loadSlaPolicies,
+    loadRoutingRules,
+    loadCsatSummary,
+  },
+});
 _helixModules.refresh?.configure?.({
   state,
   els,
@@ -1576,384 +1594,55 @@ const DENSITY_LABELS = { comfortable: "舒适", compact: "紧凑", dense: "密�
 
 // ---- UI 升级 §17.3: 管理页 (tenant quota / members / webhooks) ------------
 
-const WEBHOOK_EVENTS = [
-  ["conversation.created", "会话创建"],
-  ["conversation.escalated", "升级人工"],
-  ["conversation.resolved", "会话解决"],
-  ["conversation.sla_breached", "SLA 违约"],
-  ["conversation.sla_impending", "SLA 临近"],
-  ["report.generated", "报表生成"],
-];
-
+// moved to js/admin-actions.js (quota/member/webhook CRUD + render + island
+// bridge handlers); thin wrappers keep the bridge table and legacy bindings.
 function canManage() {
-  // The page includes Webhook/report/routing operations whose backend
-  // contract requires admin:manage. A tenant:manage-only principal may use
-  // the API's quota/member routes directly but must see the page denial
-  // rather than enter a partially forbidden workspace.
-  return state.me?.permissions?.includes("admin:manage") === true;
+  return window.HelixModules?.['adminActions']?.['canManage'](...arguments);
 }
-
-function adminTenantId() {
-  return state.me?.tenant_id || TENANT;
-}
-
-function renderWebhookEventCheckboxes() {
-  if (!els.webhookEvents) return;
-  els.webhookEvents.innerHTML = WEBHOOK_EVENTS
-    .map(([event, label]) => `<label><input type="checkbox" value="${escapeHtml(event)}" />${escapeHtml(label)}</label>`)
-    .join("");
-}
-
-function renderQuota(quota) {
-  if (!els.quotaReadout) return;
-  const storageMb = quota.storage_quota_bytes != null
-    ? Math.round(quota.storage_quota_bytes / (1024 * 1024))
-    : "—";
-  els.quotaReadout.innerHTML = `
-    <dt>租户</dt><dd>${escapeHtml(quota.name || quota.tenant_id)}</dd>
-    <dt>会话配额</dt><dd>${quota.conversation_quota ?? "—"}</dd>
-    <dt>存储配额</dt><dd>${storageMb} MB</dd>
-    <dt>每日 turn 预算</dt><dd>${quota.daily_turn_budget ?? "—"}</dd>
-    <dt>允许模型</dt><dd>${(quota.allowed_models || []).join(", ") || "全部"}</dd>`;
-}
-
 async function loadCsatSummary() {
   return window.HelixModules?.['qualityPanel']?.['loadCsatSummary'](...arguments);
 }
-
-// moved to js/qualityPanel.js (renderCsatSummary)
-
-function renderMembers(members) {
-  if (!els.memberList) return;
-  if (!members.length) {
-    els.memberList.innerHTML = '<li class="admin-empty">暂无成员</li>';
-    return;
-  }
-  const selfActor = state.me?.actor_id || "";
-  els.memberList.innerHTML = members
-    .map((member) => {
-      const isSelf = member.actor_id === selfActor;
-      // Phase 32.1 audit: self-deactivation guard mirrors the backend. The
-      // role select and deactivate button are disabled for the current
-      // admin so the last tenant:manage holder cannot lock the tenant.
-      const selfGuard = isSelf ? " disabled" : "";
-      const selfHint = isSelf ? "（你）" : "";
-      return `
-      <li class="admin-member">
-        <span class="admin-member-actor">${escapeHtml(member.actor_id)}${selfHint}</span>
-        <span class="admin-member-role">${escapeHtml(ROLE_LABELS[member.role] || member.role)}</span>
-        <span class="admin-member-actions">
-          <select class="admin-ghost-button member-role-select" data-actor="${escapeHtml(member.actor_id)}" aria-label="变更角色"${selfGuard}>
-            ${Object.entries(ROLE_LABELS).map(([value, label]) => `<option value="${value}"${value === member.role ? " selected" : ""}>${label}</option>`).join("")}
-          </select>
-          ${member.status !== "deactivated"
-            ? `<button type="button" class="admin-ghost-button member-deactivate" data-actor="${escapeHtml(member.actor_id)}"${selfGuard}>停用</button>`
-            : '<span class="admin-member-role">已停用</span>'}
-        </span>
-      </li>`;
-    })
-    .join("");
+function loadAdminView() {
+  return window.HelixModules?.['adminActions']?.['loadAdminView'](...arguments);
 }
-
-function renderWebhooks(webhooks) {
-  if (!els.webhookList) return;
-  if (!webhooks.length) {
-    els.webhookList.innerHTML = '<li class="admin-empty">暂无 Webhook</li>';
-    return;
-  }
-  els.webhookList.innerHTML = webhooks
-    .map((hook) => `
-      <li class="admin-webhook">
-        <span class="admin-webhook-url" title="${escapeHtml(hook.url)}">${escapeHtml(hook.url)}</span>
-        <span class="admin-webhook-events">${escapeHtml(hook.events.join(" · "))}</span>
-        <button type="button" class="admin-ghost-button webhook-delete" data-id="${escapeHtml(hook.id)}">删除</button>
-      </li>`)
-    .join("");
+function renderWebhookEventCheckboxes() {
+  return window.HelixModules?.['adminActions']?.['renderWebhookEventCheckboxes'](...arguments);
 }
-
-async function loadAdminView() {
-  if (!els.adminView || !canManage()) {
-    if (els.adminDenied) els.adminDenied.hidden = false;
-    if (els.adminContent) els.adminContent.hidden = true;
-    return;
-  }
-  if (els.adminDenied) els.adminDenied.hidden = true;
-  if (els.adminContent) els.adminContent.hidden = false;
-  // Island mode: the admin island owns the whole card grid and fetches via
-  // react-query. Fetching here would only fill the yielded legacy cards and
-  // double every request, so hand the refresh over. The denied/content
-  // toggling above stays legacy on purpose — the denial panel lives outside
-  // the yielded cards and the island renders nothing for non-admins.
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.dispatchEvent(new CustomEvent("helix-admin-refresh", { detail: { force: false } }));
-    return;
-  }
-  const tenantId = adminTenantId();
-  try {
-    const [quota, members, webhooks] = await Promise.all([
-      api(`/api/admin/tenants/${encodeURIComponent(tenantId)}/quota`),
-      api(`/api/admin/tenants/${encodeURIComponent(tenantId)}/members`),
-      api("/api/webhooks"),
-    ]);
-    renderQuota(quota);
-    renderMembers(Array.isArray(members) ? members : []);
-    renderWebhooks(Array.isArray(webhooks) ? webhooks : []);
-    renderReportWebhookOptions(webhooks);
-    await loadReportSubscriptions();
-    // 先填充 agent-groups cache 再渲染路由规则,否则首屏每条规则
-    // group_id 落入 id fallback(组名不可解析)。
-    await loadRuleGroups();
-    await loadSlaPolicies();
-    await loadRoutingRules();
-    await loadCsatSummary();
-  } catch (error) {
-    showToast(`管理数据加载失败：${error.message || error}`, true);
-  }
-}
-
 async function saveQuota(event) {
-  event.preventDefault();
-  const body = {};
-  if (els.quotaConversations?.value !== "") body.conversation_quota = Number(els.quotaConversations.value);
-  if (els.quotaStorageMb?.value !== "") body.storage_quota_bytes = Number(els.quotaStorageMb.value) * 1024 * 1024;
-  if (!Object.keys(body).length) return;
-  try {
-    const quota = await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/quota`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
-    renderQuota(quota);
-    if (els.quotaConversations) els.quotaConversations.value = "";
-    if (els.quotaStorageMb) els.quotaStorageMb.value = "";
-    showToast("配额已更新");
-  } catch (error) {
-    showToast(`配额保存失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['saveQuota'](...arguments);
 }
-
 async function inviteMember(event) {
-  event.preventDefault();
-  const actorId = els.memberActorId?.value.trim();
-  if (!actorId) return;
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members`, {
-      method: "POST",
-      body: JSON.stringify({ actor_id: actorId, role: els.memberRole?.value || "operator" }),
-    });
-    if (els.memberActorId) els.memberActorId.value = "";
-    await loadAdminView();
-    showToast("成员已邀请");
-  } catch (error) {
-    showToast(`邀请失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['inviteMember'](...arguments);
 }
-
 async function changeMemberRole(actorId, role) {
-  // Phase 32.1 audit (client-side self-guard): the backend rejects demoting
-  // yourself; surface the message before the round-trip so the UX is clear.
-  if (actorId === (state.me?.actor_id || "") && role !== "admin") {
-    showToast("不能把自己的角色降级——至少保留一位管理员", true);
-    return;
-  }
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ role }),
-    });
-    await loadAdminView();
-  } catch (error) {
-    showToast(`角色变更失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['changeMemberRole'](...arguments);
 }
-
 async function deactivateMember(actorId) {
-  // Phase 32.1 audit (client-side self-guard): the backend rejects this.
-  if (actorId === (state.me?.actor_id || "")) {
-    showToast("不能停用自己——请先指派另一位管理员", true);
-    return;
-  }
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}/deactivate`, {
-      method: "POST",
-      body: "{}",
-    });
-    await loadAdminView();
-  } catch (error) {
-    showToast(`停用失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['deactivateMember'](...arguments);
 }
-
 async function registerWebhook(event) {
-  event.preventDefault();
-  const url = els.webhookUrl?.value.trim();
-  const secret = els.webhookSecret?.value.trim();
-  const events = Array.from(els.webhookEvents?.querySelectorAll('input[type="checkbox"]:checked') || [])
-    .map((input) => input.value);
-  if (!url || !secret || !events.length) {
-    showToast("请填写 URL、密钥并至少选择一个事件", true);
-    return;
-  }
-  try {
-    await api("/api/webhooks", {
-      method: "POST",
-      body: JSON.stringify({ url, events, secret }),
-    });
-    if (els.webhookUrl) els.webhookUrl.value = "";
-    if (els.webhookSecret) els.webhookSecret.value = "";
-    if (els.webhookEvents) {
-      els.webhookEvents.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
-    }
-    await loadAdminView();
-    showToast("Webhook 已注册");
-  } catch (error) {
-    showToast(`Webhook 注册失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['registerWebhook'](...arguments);
 }
-
 async function deleteWebhook(id) {
-  // Phase 32.1 audit: destructive action — confirm before sending. Avoids
-  // accidental double-clicks wiping an active delivery target.
-  if (!window.confirm("确认删除该 Webhook 端点？已注册的待投递事件将进入死信。")) return;
-  try {
-    await api(`/api/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
-    await loadAdminView();
-  } catch (error) {
-    showToast(`删除失败：${error.message || error}`, true);
-  }
+  return window.HelixModules?.['adminActions']?.['deleteWebhook'](...arguments);
 }
-
-/* ── D3 bridge (admin island) ──────────────────────────────────────────
- * The React admin island owns the whole card grid in the desktop shell and
- * dispatches helix-admin-* events with form payloads instead of writing
- * through the yielded legacy forms. Each bridge below keeps the legacy
- * api()/toast/confirm contract for its domain and reports the outcome via
- * helix-admin-saved {ok, domains} so the island refetches exactly the
- * queries a write touched. */
-
-const ADMIN_REPORT_TYPE_LABELS = { quality: "质量报表", usage: "使用量报表" };
-
-function dispatchAdminSaved(ok, domains) {
-  window.dispatchEvent(new CustomEvent("helix-admin-saved", { detail: { ok, domains } }));
+async function saveQuotaFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['saveQuotaFromIsland'](detail);
 }
-
-async function saveQuotaFromIsland({ conversation_quota: conversations, storage_quota_bytes: storage } = {}) {
-  const body = {};
-  if (conversations != null) body.conversation_quota = Number(conversations);
-  if (storage != null) body.storage_quota_bytes = Number(storage);
-  if (!Object.keys(body).length) return;
-  let ok = false;
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/quota`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
-    ok = true;
-    showToast("配额已更新");
-  } catch (error) {
-    showToast(`配额保存失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["quota"]);
-  }
+async function inviteMemberFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['inviteMemberFromIsland'](detail);
 }
-
-async function inviteMemberFromIsland({ actorId, role } = {}) {
-  if (!actorId) return;
-  let ok = false;
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members`, {
-      method: "POST",
-      body: JSON.stringify({ actor_id: actorId, role: role || "operator" }),
-    });
-    ok = true;
-    showToast("成员已邀请");
-  } catch (error) {
-    showToast(`邀请失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["members"]);
-  }
+async function changeMemberRoleFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['changeMemberRoleFromIsland'](detail);
 }
-
-async function changeMemberRoleFromIsland({ actorId, role } = {}) {
-  if (!actorId || !role) return;
-  // Phase 32.1 audit (client-side self-guard): the backend rejects demoting
-  // yourself; surface the message before the round-trip so the UX is clear.
-  if (actorId === (state.me?.actor_id || "") && role !== "admin") {
-    showToast("不能把自己的角色降级——至少保留一位管理员", true);
-    return;
-  }
-  let ok = false;
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ role }),
-    });
-    ok = true;
-  } catch (error) {
-    showToast(`角色变更失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["members"]);
-  }
+async function deactivateMemberFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['deactivateMemberFromIsland'](detail);
 }
-
-async function deactivateMemberFromIsland({ actorId } = {}) {
-  if (!actorId) return;
-  // Phase 32.1 audit (client-side self-guard): the backend rejects this.
-  if (actorId === (state.me?.actor_id || "")) {
-    showToast("不能停用自己——请先指派另一位管理员", true);
-    return;
-  }
-  let ok = false;
-  try {
-    await api(`/api/admin/tenants/${encodeURIComponent(adminTenantId())}/members/${encodeURIComponent(actorId)}/deactivate`, {
-      method: "POST",
-      body: "{}",
-    });
-    ok = true;
-  } catch (error) {
-    showToast(`停用失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["members"]);
-  }
+async function registerWebhookFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['registerWebhookFromIsland'](detail);
 }
-
-async function registerWebhookFromIsland({ url, secret, events } = {}) {
-  const hookUrl = (url || "").trim();
-  const hookSecret = (secret || "").trim();
-  const hookEvents = Array.isArray(events) ? events : [];
-  if (!hookUrl || !hookSecret || !hookEvents.length) {
-    showToast("请填写 URL、密钥并至少选择一个事件", true);
-    return;
-  }
-  let ok = false;
-  try {
-    await api("/api/webhooks", {
-      method: "POST",
-      body: JSON.stringify({ url: hookUrl, events: hookEvents, secret: hookSecret }),
-    });
-    ok = true;
-    showToast("Webhook 已注册");
-  } catch (error) {
-    showToast(`Webhook 注册失败：${error.message || error}`, true);
-  } finally {
-    // 报表订阅的下拉选项来自 active webhooks — 两者一起失效。
-    dispatchAdminSaved(ok, ["webhooks", "subscriptions"]);
-  }
-}
-
-async function deleteWebhookFromIsland({ id } = {}) {
-  if (!id) return;
-  // Phase 32.1 audit: the confirm() prompt stays in legacy, exactly like
-  // the knowledge island's retire flow.
-  if (!window.confirm("确认删除该 Webhook 端点？已注册的待投递事件将进入死信。")) return;
-  let ok = false;
-  try {
-    await api(`/api/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
-    ok = true;
-  } catch (error) {
-    showToast(`删除失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["webhooks", "subscriptions"]);
-  }
+async function deleteWebhookFromIsland(detail) {
+  return window.HelixModules?.['adminActions']?.['deleteWebhookFromIsland'](detail);
 }
 
 async function createSubscriptionFromIsland({ reportType, schedule, windowDays, webhookEndpointId } = {}) {
