@@ -32,6 +32,15 @@ function configureModules(b) {
   m("http")?.configure?.({ baseHeaders: b.BASE_HEADERS });
   m("summary")?.configure?.({ els: b.els });
   m("helpers")?.configure?.({ els: b.els });
+  m("operatorSettings")?.configure?.({
+    state: b.state,
+    els: b.els,
+    QUEUE_PAGE_SIZE_NORMAL: b.QUEUE_PAGE_SIZE_NORMAL,
+    QUEUE_PAGE_SIZE_LOW: b.QUEUE_PAGE_SIZE_LOW,
+    POLL_INTERVAL_NORMAL: b.POLL_INTERVAL_NORMAL,
+    POLL_INTERVAL_LOW: b.POLL_INTERVAL_LOW,
+    PREF_DENSITY: b.PREF_DENSITY,
+  });
   m("composer")?.configure?.({
     state: b.state,
     els: b.els,

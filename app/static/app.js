@@ -45,6 +45,10 @@ const wiring = {
   LANGUAGE_OPTIONS,
   THREAD_PAGE_LIMIT,
   THREAD_OLDER_PAGE_SIZE,
+  QUEUE_PAGE_SIZE_NORMAL,
+  QUEUE_PAGE_SIZE_LOW,
+  POLL_INTERVAL_NORMAL,
+  POLL_INTERVAL_LOW,
   PREF_LOW_PERF,
   PREF_INSPECTOR,
   PREF_DENSITY,
@@ -159,43 +163,13 @@ window.HelixModules?.wire?.wireModules?.(wiring);
 
 window.HelixModules?.conversationActions?.bindConversationDialog?.();
 
-function queuePageSize() {
-  return state.lowPerf ? QUEUE_PAGE_SIZE_LOW : QUEUE_PAGE_SIZE_NORMAL;
-}
+function queuePageSize(...args) { return window.HelixModules?.['operatorSettings']?.['queuePageSize'](...args); }
 
-function pollInterval() {
-  return state.lowPerf ? POLL_INTERVAL_LOW : POLL_INTERVAL_NORMAL;
-}
+function pollInterval(...args) { return window.HelixModules?.['operatorSettings']?.['pollInterval'](...args); }
 
-function detectConstrainedDevice() {
-  const cores = navigator.hardwareConcurrency || 8;
-  const memory = navigator.deviceMemory || 8;
-  const saveData = navigator.connection?.saveData === true;
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  return cores <= 4 || memory <= 4 || saveData || reducedMotion;
-}
+function detectConstrainedDevice(...args) { return window.HelixModules?.['operatorSettings']?.['detectConstrainedDevice'](...args); }
 
-function applyWorkspacePreferences() {
-  document.body.classList.toggle("is-low-perf", state.lowPerf);
-  document.body.classList.toggle("is-inspector-collapsed", state.inspectorCollapsed);
-  if (els.lowPerfToggle) {
-    els.lowPerfToggle.setAttribute("aria-pressed", String(state.lowPerf));
-    els.lowPerfToggle.title = state.lowPerf ? "关闭低配模式" : "开启低配模式";
-    els.lowPerfToggle.setAttribute("aria-label", state.lowPerf ? "关闭低配模式" : "开启低配模式");
-  }
-  if (els.inspectorToggle) {
-    els.inspectorToggle.setAttribute("aria-pressed", String(state.inspectorCollapsed));
-    els.inspectorToggle.title = state.inspectorCollapsed ? "展开检查器" : "折叠检查器";
-    els.inspectorToggle.setAttribute(
-      "aria-label",
-      state.inspectorCollapsed ? "展开检查器" : "折叠检查器",
-    );
-  }
-  if (els.inspectorSurface) {
-    els.inspectorSurface.hidden = state.inspectorCollapsed;
-    els.inspectorSurface.setAttribute("aria-hidden", String(state.inspectorCollapsed));
-  }
-}
+function applyWorkspacePreferences(...args) { return window.HelixModules?.['operatorSettings']?.['applyWorkspacePreferences'](...args); }
 
 function loadDraft(...args) { return window.HelixModules?.['composer']?.['loadDraft'](...args); }
 
@@ -255,16 +229,12 @@ function setFormBusy(...args) { return window.HelixModules?.helpers?.setFormBusy
 
 function renderMetrics(...args) { return window.HelixModules?.['refresh']?.['renderMetrics'](...args); }
 
-function canOperate() {
-  return state.me?.permissions?.includes("operator:act") === true;
-}
+function canOperate(...args) { return window.HelixModules?.['operatorSettings']?.['canOperate'](...args); }
 
 // Backlog (多语言客服): language override + translate both require
 // conversation:write (the console's write gate, distinct from canOperate's
 // operator:act so channel/operator roles can still act).
-function canWriteConversations() {
-  return state.me?.permissions?.includes("conversation:write") === true;
-}
+function canWriteConversations(...args) { return window.HelixModules?.['operatorSettings']?.['canWriteConversations'](...args); }
 
 // and apply — the whole saved-views domain lives with the CRUD lifecycle).
 // Only the boot-time reload still needs a name in this scope.
@@ -296,9 +266,7 @@ async function submitFeedback(...args) { return window.HelixModules?.['thread']?
 
 async function translateMessage(...args) { return window.HelixModules?.['thread']?.['translateMessage'](...args); }
 
-function latestAssistant(messages) {
-  return [...messages].reverse().find((message) => message.role === "assistant") || null;
-}
+function latestAssistant(...args) { return window.HelixModules?.['operatorSettings']?.['latestAssistant'](...args); }
 
 async function updateLabels(...args) { return window.HelixModules?.['inspector']?.['updateLabels'](...args); }
 
@@ -359,9 +327,7 @@ async function loadOlderMessages(...args) { return window.HelixModules?.['thread
 // ------------------------------------------------------------- 坐席协作
 // Mentions inbox, internal discussion threads, and the supervisor live view.
 
-function canReadConversations() {
-  return Boolean(state.me && state.me.permissions && state.me.permissions.includes("conversation:read"));
-}
+function canReadConversations(...args) { return window.HelixModules?.['operatorSettings']?.['canReadConversations'](...args); }
 
 async function loadMentions(...args) { return window.HelixModules?.['session']?.['loadMentions'](...args); }
 
@@ -436,44 +402,8 @@ function switchAppView(...args) { return window.HelixModules?.['appNav']?.['swit
 
 // ---- UI 升级 §17.2: 三档密度 (comfortable/compact/dense) --------------------
 
-const densityModule = window.HelixModules?.density || {
-  normalizeDensity: (value) => (["comfortable", "compact", "dense"].includes(value) ? value : "comfortable"),
-  nextDensity: (level) => {
-    const levels = ["comfortable", "compact", "dense"];
-    const index = Math.max(0, levels.indexOf(level));
-    return levels[(index + 1) % levels.length];
-  },
-  effectiveDensity: (level, lowPerf) => (lowPerf ? "compact" : level),
-  isCompactDensity: (level, lowPerf) => {
-    const effective = lowPerf ? "compact" : level;
-    return effective === "compact" || effective === "dense";
-  },
-};
-const { normalizeDensity, nextDensity, effectiveDensity, isCompactDensity } = densityModule;
+// ---- UI 升级 §17.2/§17.3: density/prefs/permissions live in js/operator-settings.js ----
 
-// ROADMAP §18.4: queue virtualization helpers (pure module, fallback keeps the
-// legacy column rendering working if the module entry has not loaded).
-const vqueueModule = window.HelixModules?.vqueue || {
-  VIRTUAL_THRESHOLD: 200,
-  computeWindow: ({ total, scrollTop = 0, viewport = 0, rowHeight = 118, overscan = 4 }) => {
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-    const last = Math.min(total - 1, Math.ceil((scrollTop + viewport) / rowHeight) + overscan - 1);
-    return { first, last, count: Math.max(0, last - first + 1), topPad: first * rowHeight, bottomPad: Math.max(0, (total - 1 - last) * rowHeight) };
-  },
-  estimatedRowHeight: () => 118,
-  signatureOf: (c) => `${c.id}:${c.status}:${c.updated_at}:${c.version ?? 0}`,
-  diffRows: () => ({ updates: [], adds: [], removes: [], keeps: [] }),
-  rowHeightFromElement: () => 118,
-};
-const { VIRTUAL_THRESHOLD, computeWindow, estimatedRowHeight, signatureOf, rowHeightFromElement } =
-  vqueueModule;
-
-// ROADMAP §18.4: single-SSE multi-tab relay (pure module). Null fallback keeps
-// per-tab SSE when the module entry has not loaded or the browser lacks
-// BroadcastChannel — each tab then opens its own stream as before.
-const broadcastModule = window.HelixModules?.broadcast || null;
-
-const DENSITY_LABELS = { comfortable: "舒适", compact: "紧凑", dense: "密集" };
 
 // ---- UI 升级 §17.3: 管理页 (tenant quota / members / webhooks) ------------
 
@@ -521,24 +451,7 @@ async function loadRuleGroups(...args) { return window.HelixModules?.['adminRepo
 
 async function loadRoutingRules(...args) { return window.HelixModules?.['adminReport']?.['loadRoutingRules'](...args); }
 
-function setDensity(level, { persist = true } = {}) {
-  state.density = normalizeDensity(level);
-  // Row heights change with density — force a live re-measure next render.
-  state.queueRowHeight = 0;
-  const effective = effectiveDensity(state.density, state.lowPerf);
-  document.body.setAttribute("data-density", effective);
-  if (persist) window.localStorage.setItem(PREF_DENSITY, state.density);
-  if (els.densityToggle) {
-    const i18n = window.HelixModules?.i18n;
-    const label = DENSITY_LABELS[effective] || effective;
-    const title = i18n?.t
-      ? i18n.t("density.toggle", { level: label })
-      : `密度:${label}（点击切换）`;
-    els.densityToggle.setAttribute("aria-pressed", String(effective !== "comfortable"));
-    els.densityToggle.title = title;
-    els.densityToggle.setAttribute("aria-label", title);
-  }
-}
+function setDensity(...args) { return window.HelixModules?.['operatorSettings']?.['setDensity'](...args); }
 
 function renderCopilot(...args) { return window.HelixModules?.['composer']?.['renderCopilot'](...args); }
 
