@@ -21,6 +21,7 @@ import * as density from "./density.js?v=1.4.0";
 import * as desktopInfo from "./desktop-info.js?v=1.4.0";
 import * as drafts from "./drafts.js?v=1.4.0";
 import * as format from "./format.js?v=1.4.0";
+import * as helpers from "./helpers.js?v=1.4.0";
 import * as i18n from "./i18n.js?v=1.4.0";
 import * as http from "./http.js?v=1.4.0";
 import * as inspector from "./inspector.js?v=1.4.0";
@@ -128,6 +129,7 @@ export function initModules() {
     desktopInfo,
     drafts,
     format,
+    helpers,
     i18n,
     http,
     inspector,

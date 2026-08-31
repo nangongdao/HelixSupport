@@ -310,6 +310,7 @@ const els = {
 const _helixModules = window.HelixModules || {};
 _helixModules.http?.configure?.({ baseHeaders: BASE_HEADERS });
 _helixModules.summary?.configure?.({ els });
+_helixModules.helpers?.configure?.({ els });
 _helixModules.composer?.configure?.({
   state,
   els,
@@ -644,8 +645,8 @@ function applyMacroFromSuggest(responseId) {
   return window.HelixModules?.['composer']?.['applyMacroFromSuggest'](...arguments);
 }
 
-let toastTimer = null;
-// The search debounce timer moved to js/queue-filters.js with its listener.
+// The toast timer and the search debounce timer moved to js/helpers.js and
+// js/queue-filters.js respectively.
 
 // @-mention autocomplete in the note composer: type @<prefix> and pick a
 // colleague from the tenant roster (backlog M18 — orbiting the already-wired
@@ -675,115 +676,46 @@ async function apiWithHeaders(path, options = {}) {
   return window.HelixModules?.http?.apiWithHeaders(...arguments);
 }
 
+// moved to js/helpers.js (escapeHtml/icon/statusLabel/roleLabel/formatTime/
+// formatSla/showToast/scheduleIdle/setFormBusy/newIdempotencyKey — the shared
+// UI/format helpers; els is injected via configure). Thin wrappers keep every
+// call site and every configure-injected module unchanged. newIdempotencyKey
+// was already dead in app.js (defined but never called/injected), so it is
+// exported from the module without a wrapper here.
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return window.HelixModules?.helpers?.escapeHtml(...arguments);
 }
 
 function icon(name) {
-  return `<svg class="icon" aria-hidden="true"><use href="/static/icons.svg?v=1.4.0#${name}"></use></svg>`;
+  return window.HelixModules?.helpers?.icon(...arguments);
 }
 
 function statusLabel(status) {
-  // Phase 26.3: prefer the i18n pack when the module layer has loaded.
-  const i18n = window.HelixModules?.i18n;
-  if (i18n) {
-    const translated = i18n.t(`status.${status}`);
-    return translated || status || "未知";
-  }
-  return (
-    {
-      open: "自动处理中",
-      waiting_human: "等待人工",
-      human_active: "人工处理中",
-      resolved: "已解决",
-    }[status] || status || "未知"
-  );
+  return window.HelixModules?.helpers?.statusLabel(...arguments);
 }
 
 function roleLabel(role) {
-  const i18n = window.HelixModules?.i18n;
-  if (i18n) return i18n.t(`role.${role}`);
-  return (
-    {
-      admin: "管理员",
-      supervisor: "主管",
-      operator: "客服",
-      channel: "渠道",
-      viewer: "只读",
-      auditor: "审计员",
-    }[role] || role
-  );
+  return window.HelixModules?.helpers?.roleLabel(...arguments);
 }
 
 function formatTime(value, includeDate = false) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    ...(includeDate ? { month: "2-digit", day: "2-digit" } : {}),
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+  return window.HelixModules?.helpers?.formatTime(...arguments);
 }
 
 function formatSla(conversation) {
-  if (conversation.status === "resolved") return { text: "已完成", breached: false };
-  if (!conversation.sla_due_at) return { text: "SLA -", breached: false };
-  const milliseconds = new Date(conversation.sla_due_at).getTime() - Date.now();
-  const minutes = Math.ceil(Math.abs(milliseconds) / 60000);
-  if (milliseconds < 0 || conversation.sla_breached) {
-    return { text: `超时 ${minutes} 分钟`, breached: true };
-  }
-  if (minutes < 60) return { text: `剩余 ${minutes} 分钟`, breached: false };
-  return { text: `剩余 ${Math.ceil(minutes / 60)} 小时`, breached: false };
+  return window.HelixModules?.helpers?.formatSla(...arguments);
 }
 
 function showToast(message, isError = false) {
-  window.clearTimeout(toastTimer);
-  els.toast.textContent = message;
-  els.toast.classList.toggle("is-error", isError);
-  els.toast.hidden = false;
-  toastTimer = window.setTimeout(() => {
-    els.toast.hidden = true;
-  }, 3600);
+  return window.HelixModules?.helpers?.showToast(...arguments);
 }
 
-// ROADMAP §18.4 渲染预算: run non-critical background work when the browser
-// is idle so operator interactions stay under budget; a short timeout is the
-// fallback where requestIdleCallback is unavailable. Deferred work must be
-// self-contained (the wrapped functions already guard their own state).
 function scheduleIdle(fn, timeoutMs = 2000) {
-  const run = () => {
-    try {
-      fn();
-    } catch (error) {
-      console.error("idle task failed", error);
-    }
-  };
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(run, { timeout: timeoutMs });
-  } else {
-    window.setTimeout(run, 250);
-  }
+  return window.HelixModules?.helpers?.scheduleIdle(...arguments);
 }
 
 function setFormBusy(form, busy) {
-  form.dataset.busy = String(busy);
-  form.setAttribute("aria-busy", String(busy));
-  form.querySelectorAll("button, input, textarea, select").forEach((control) => {
-    control.disabled = busy;
-  });
-}
-
-function newIdempotencyKey() {
-  if (window.crypto?.randomUUID) return `ui-${window.crypto.randomUUID()}`;
-  return `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return window.HelixModules?.helpers?.setFormBusy(...arguments);
 }
 
 // moved to js/refresh.js (metric tiles painter)
