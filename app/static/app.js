@@ -978,17 +978,9 @@ function renderSummaries(detail) {
   return window.HelixModules?.summary?.renderSummaries(...arguments);
 }
 
-function clearSelection() {
-  state.detailSequence += 1;
-  state.selectedId = null;
-  state.detail = null;
-  hideMentionSuggest();
-  els.emptyState.hidden = false;
-  els.conversationView.hidden = true;
-  els.noteForm.hidden = true;
-  renderQueue();
-}
-
+// A duplicate clearSelection shadowed the live one below (the later function
+// declaration wins in a classic script); it was removed — selectConversation
+// and refresh call the surviving copy that also stopWatching/resetCopilot.
 async function loadDetail(id) {
   const sequence = ++state.detailSequence;
   // ROADMAP §18.4: always load the newest tail of the transcript, then lazily
