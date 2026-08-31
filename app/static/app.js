@@ -510,6 +510,18 @@ _helixModules.queueActions?.configure?.({
   refreshAll,
   actions: { conversationQuery, renderQueue, renderBulkToolbar },
 });
+_helixModules.queueFilters?.configure?.({
+  state,
+  els,
+  refreshAll,
+  escapeHtml,
+});
+_helixModules.shortcuts?.configure?.({
+  state,
+  els,
+  refreshAll,
+  selectConversation,
+});
 _helixModules.knowledgeView?.configure?.({
   state,
   els,
@@ -630,7 +642,7 @@ function applyMacroFromSuggest(responseId) {
 }
 
 let toastTimer = null;
-let searchTimer = null;
+// The search debounce timer moved to js/queue-filters.js with its listener.
 
 // @-mention autocomplete in the note composer: type @<prefix> and pick a
 // colleague from the tenant roster (backlog M18 — orbiting the already-wired
@@ -818,16 +830,10 @@ async function loadSavedViews() {
   return window.HelixModules?.['savedViews']?.['loadSavedViews'](...arguments);
 }
 
+// moved to js/queue-filters.js (label filter options + the queue filter
+// controls and debounced search box — bindQueueFilters).
 function renderLabelFilter() {
-  const selected = els.labelFilter.value;
-  const options = state.labelCatalog.map(
-    (item) => `<option value="${escapeHtml(item.label)}">${escapeHtml(item.label)} · ${escapeHtml(item.conversation_count)}</option>`,
-  );
-  if (selected && !state.labelCatalog.some((item) => item.label === selected)) {
-    options.unshift(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)}</option>`);
-  }
-  els.labelFilter.innerHTML = `<option value="">全部标签</option>${options.join("")}`;
-  els.labelFilter.value = selected;
+  return window.HelixModules?.['queueFilters']?.['renderLabelFilter'](...arguments);
 }
 
 function renderBulkToolbar() {
@@ -1686,22 +1692,7 @@ document.querySelectorAll(".inspector-tab").forEach((button) => {
 // moved to js/conversation-actions.js (new-conversation dialog lifecycle:
 // open/close/createConversation + legacy form binding + island bridge).
 
-els.refreshList.addEventListener("click", () => refreshAll());
-els.statusFilter.addEventListener("change", () => refreshAll());
-els.labelFilter.addEventListener("change", () => refreshAll());
-els.priorityFilter.addEventListener("change", () => refreshAll());
-els.ownershipFilter.addEventListener("change", () => refreshAll());
-if (els.channelFilter) els.channelFilter.addEventListener("change", () => refreshAll());
-if (els.sortFilter) els.sortFilter.addEventListener("change", () => refreshAll());
-els.focusWaiting.addEventListener("click", () => {
-  els.ownershipFilter.value = els.ownershipFilter.value === "needs_response" ? "" : "needs_response";
-  refreshAll();
-});
-/**
- * Saved-view data lifecycle — shared by the legacy controls and the
- * island's helix-saved-views-save/-delete bridges. Returns the created view
- * id on save so the bridge can tell the island which entry to select.
- */
+// moved to js/queue-filters.js (queue filter controls + debounced search).
 // moved to js/saved-views.js (saved-view CRUD + legacy bindings + island
 // bridges, plus the filter snapshot / select render / reload / apply).
 
@@ -1744,11 +1735,7 @@ els.clearBulk.addEventListener("click", () => {
   state.bulkSelected.clear();
   renderQueue();
 });
-els.searchInput.addEventListener("input", () => {
-  window.clearTimeout(searchTimer);
-  const delay = state.lowPerf ? 450 : 260;
-  searchTimer = window.setTimeout(() => refreshAll({ silent: true, refreshDetail: false }), delay);
-});
+// moved to js/queue-filters.js (debounced search input).
 // moved to js/conversation-actions.js (new-conversation dialog lifecycle)
 async function createConversation(payload) {
   return window.HelixModules?.['conversationActions']?.['createConversation'](...arguments);
@@ -1759,32 +1746,7 @@ function closeQueueDrawer(options = {}) {
   return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...arguments);
 }
 
-document.addEventListener("keydown", (event) => {
-  const target = event.target;
-  const editing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
-  if (editing || event.ctrlKey || event.metaKey || event.altKey) return;
-  if (event.key === "/") {
-    event.preventDefault();
-    els.searchInput.focus();
-  } else if (event.key === "c") {
-    event.preventDefault();
-    els.newConversation.click();
-  } else if (event.key === "r") {
-    event.preventDefault();
-    refreshAll();
-  } else if (event.key === "i") {
-    event.preventDefault();
-    els.inspectorToggle?.click();
-  } else if (event.key === "l") {
-    event.preventDefault();
-    els.lowPerfToggle?.click();
-  } else if (["j", "k"].includes(event.key) && state.conversations.length) {
-    event.preventDefault();
-    const index = Math.max(0, state.conversations.findIndex((item) => item.id === state.selectedId));
-    const next = Math.max(0, Math.min(state.conversations.length - 1, index + (event.key === "j" ? 1 : -1)));
-    selectConversation(state.conversations[next].id);
-  }
-});
+// moved to js/shortcuts.js (§17.3 single-key shortcuts: / c r i l j/k).
 
 // Tab lifecycle (unhandledrejection/visibilitychange) moved to js/refresh.js bindRefresh.
 
@@ -1807,6 +1769,8 @@ window.HelixModules?.savedViews?.bindSavedViews?.();
 window.HelixModules?.commandDispatch?.bindCommandDispatch?.();
 window.HelixModules?.refresh?.bindRefresh?.();
 window.HelixModules?.queueActions?.bindQueueActions?.();
+window.HelixModules?.queueFilters?.bindQueueFilters?.();
+window.HelixModules?.shortcuts?.bindShortcuts?.();
 window.HelixModules?.conversationActions?.bindConversationActions?.();
 window.HelixModules?.notes?.bindNotes?.();
 window.HelixModules?.thread?.bindThread?.();
