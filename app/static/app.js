@@ -204,35 +204,21 @@ function applyWorkspacePreferences() {
 
 // moved to js/composer.js (draftTtlMs)
 
-function loadDraft(conversationId) {
-  return window.HelixModules?.['composer']?.['loadDraft'](...arguments);
-}
+function loadDraft(...args) { return window.HelixModules?.['composer']?.['loadDraft'](...args); }
 
-function saveDraft(conversationId, value) {
-  return window.HelixModules?.['composer']?.['saveDraft'](...arguments);
-}
+function saveDraft(...args) { return window.HelixModules?.['composer']?.['saveDraft'](...args); }
 
 // moved to js/composer.js (clearDraft)
 
-function pruneExpiredDrafts() {
-  return window.HelixModules?.['composer']?.['pruneExpiredDrafts'](...arguments);
-}
+function pruneExpiredDrafts(...args) { return window.HelixModules?.['composer']?.['pruneExpiredDrafts'](...args); }
 
-function scheduleClaimRenewal(detail) {
-  return window.HelixModules?.['composer']?.['scheduleClaimRenewal'](...arguments);
-}
+function scheduleClaimRenewal(...args) { return window.HelixModules?.['composer']?.['scheduleClaimRenewal'](...args); }
 
-function hideMacroSuggest() {
-  return window.HelixModules?.['composer']?.['hideMacroSuggest'](...arguments);
-}
+function hideMacroSuggest(...args) { return window.HelixModules?.['composer']?.['hideMacroSuggest'](...args); }
 
-function renderMacroSuggest(query) {
-  return window.HelixModules?.['composer']?.['renderMacroSuggest'](...arguments);
-}
+function renderMacroSuggest(...args) { return window.HelixModules?.['composer']?.['renderMacroSuggest'](...args); }
 
-function applyMacroFromSuggest(responseId) {
-  return window.HelixModules?.['composer']?.['applyMacroFromSuggest'](...arguments);
-}
+function applyMacroFromSuggest(...args) { return window.HelixModules?.['composer']?.['applyMacroFromSuggest'](...args); }
 
 // The toast timer and the search debounce timer moved to js/helpers.js and
 // js/queue-filters.js respectively.
@@ -241,29 +227,19 @@ function applyMacroFromSuggest(responseId) {
 // colleague from the tenant roster (backlog M18 — orbiting the already-wired
 // ``/api/mentions`` inbox with the missing input-side UX).
 // moved to js/notes.js (mention suggest, collaborators, note composer)
-function hideMentionSuggest() {
-  return window.HelixModules?.['notes']?.['hideMentionSuggest'](...arguments);
-}
+function hideMentionSuggest(...args) { return window.HelixModules?.['notes']?.['hideMentionSuggest'](...args); }
 
-async function loadCollaborators() {
-  return window.HelixModules?.['notes']?.['loadCollaborators'](...arguments);
-}
+async function loadCollaborators(...args) { return window.HelixModules?.['notes']?.['loadCollaborators'](...args); }
 
 // moved to js/http.js (request/api/apiWithHeaders — the request transport
 // with the 15s timeout, FormData pass-through and X-Tenant-Id/Accept headers;
 // baseHeaders arrive via configure). Thin wrappers keep every call site and
 // every configure-injected module unchanged.
-async function request(path, options = {}) {
-  return window.HelixModules?.http?.request(...arguments);
-}
+async function request(...args) { return window.HelixModules?.http?.request(...args); }
 
-async function api(path, options = {}) {
-  return window.HelixModules?.http?.api(...arguments);
-}
+async function api(...args) { return window.HelixModules?.http?.api(...args); }
 
-async function apiWithHeaders(path, options = {}) {
-  return window.HelixModules?.http?.apiWithHeaders(...arguments);
-}
+async function apiWithHeaders(...args) { return window.HelixModules?.http?.apiWithHeaders(...args); }
 
 // moved to js/helpers.js (escapeHtml/icon/statusLabel/roleLabel/formatTime/
 // formatSla/showToast/scheduleIdle/setFormBusy/newIdempotencyKey — the shared
@@ -271,46 +247,26 @@ async function apiWithHeaders(path, options = {}) {
 // call site and every configure-injected module unchanged. newIdempotencyKey
 // was already dead in app.js (defined but never called/injected), so it is
 // exported from the module without a wrapper here.
-function escapeHtml(value) {
-  return window.HelixModules?.helpers?.escapeHtml(...arguments);
-}
+function escapeHtml(...args) { return window.HelixModules?.helpers?.escapeHtml(...args); }
 
-function icon(name) {
-  return window.HelixModules?.helpers?.icon(...arguments);
-}
+function icon(...args) { return window.HelixModules?.helpers?.icon(...args); }
 
-function statusLabel(status) {
-  return window.HelixModules?.helpers?.statusLabel(...arguments);
-}
+function statusLabel(...args) { return window.HelixModules?.helpers?.statusLabel(...args); }
 
-function roleLabel(role) {
-  return window.HelixModules?.helpers?.roleLabel(...arguments);
-}
+function roleLabel(...args) { return window.HelixModules?.helpers?.roleLabel(...args); }
 
-function formatTime(value, includeDate = false) {
-  return window.HelixModules?.helpers?.formatTime(...arguments);
-}
+function formatTime(...args) { return window.HelixModules?.helpers?.formatTime(...args); }
 
-function formatSla(conversation) {
-  return window.HelixModules?.helpers?.formatSla(...arguments);
-}
+function formatSla(...args) { return window.HelixModules?.helpers?.formatSla(...args); }
 
-function showToast(message, isError = false) {
-  return window.HelixModules?.helpers?.showToast(...arguments);
-}
+function showToast(...args) { return window.HelixModules?.helpers?.showToast(...args); }
 
-function scheduleIdle(fn, timeoutMs = 2000) {
-  return window.HelixModules?.helpers?.scheduleIdle(...arguments);
-}
+function scheduleIdle(...args) { return window.HelixModules?.helpers?.scheduleIdle(...args); }
 
-function setFormBusy(form, busy) {
-  return window.HelixModules?.helpers?.setFormBusy(...arguments);
-}
+function setFormBusy(...args) { return window.HelixModules?.helpers?.setFormBusy(...args); }
 
 // moved to js/refresh.js (metric tiles painter)
-function renderMetrics(data) {
-  return window.HelixModules?.['refresh']?.['renderMetrics'](...arguments);
-}
+function renderMetrics(...args) { return window.HelixModules?.['refresh']?.['renderMetrics'](...args); }
 
 function canOperate() {
   return state.me?.permissions?.includes("operator:act") === true;
@@ -326,29 +282,19 @@ function canWriteConversations() {
 // moved to js/saved-views.js (filter snapshot, select render, list reload
 // and apply — the whole saved-views domain lives with the CRUD lifecycle).
 // Only the boot-time reload still needs a name in this scope.
-async function loadSavedViews() {
-  return window.HelixModules?.['savedViews']?.['loadSavedViews'](...arguments);
-}
+async function loadSavedViews(...args) { return window.HelixModules?.['savedViews']?.['loadSavedViews'](...args); }
 
 // moved to js/queue-filters.js (label filter options + the queue filter
 // controls and debounced search box — bindQueueFilters).
-function renderLabelFilter() {
-  return window.HelixModules?.['queueFilters']?.['renderLabelFilter'](...arguments);
-}
+function renderLabelFilter(...args) { return window.HelixModules?.['queueFilters']?.['renderLabelFilter'](...args); }
 
-function renderBulkToolbar() {
-  return window.HelixModules?.['queueView']?.['renderBulkToolbar'](...arguments);
-}
+function renderBulkToolbar(...args) { return window.HelixModules?.['queueView']?.['renderBulkToolbar'](...args); }
 
 // moved to js/queue-view.js (renderLabelChips)
-function renderLabelChips(labels, emptyText) {
-  return window.HelixModules?.['queueView']?.['renderLabelChips'](...arguments);
-}
+function renderLabelChips(...args) { return window.HelixModules?.['queueView']?.['renderLabelChips'](...args); }
 
 // ROADMAP §18.4: build one queue row (shared by full and windowed modes).
-function queueRowHtml(conversation, opts) {
-  return window.HelixModules?.['queueView']?.['queueRowHtml'](...arguments);
-}
+function queueRowHtml(...args) { return window.HelixModules?.['queueView']?.['queueRowHtml'](...args); }
 
 // moved to js/queue-view.js (renderFullQueue)
 
@@ -358,38 +304,24 @@ function windowedRowHeight() {
 
 // moved to js/queue-view.js (currentQueueWindow)
 
-function renderWindowedQueue(win, rowHeight, opts) {
-  return window.HelixModules?.['queueView']?.['renderWindowedQueue'](...arguments);
-}
+function renderWindowedQueue(...args) { return window.HelixModules?.['queueView']?.['renderWindowedQueue'](...args); }
 
-function renderQueue() {
-  return window.HelixModules?.['queueView']?.['renderQueue'](...arguments);
-}
+function renderQueue(...args) { return window.HelixModules?.['queueView']?.['renderQueue'](...args); }
 
-function renderLoadingQueue() {
-  return window.HelixModules?.['queueView']?.['renderLoadingQueue'](...arguments);
-}
+function renderLoadingQueue(...args) { return window.HelixModules?.['queueView']?.['renderLoadingQueue'](...args); }
 
 // moved to js/queue-view.js (scheduleQueueWindowUpdate)
 
-function handleQueueScroll() {
-  return window.HelixModules?.['queueView']?.['handleQueueScroll'](...arguments);
-}
+function handleQueueScroll(...args) { return window.HelixModules?.['queueView']?.['handleQueueScroll'](...args); }
 
 // moved to js/thread.js (renderMessages — legacy transcript paint + island snapshot publish)
-function renderMessages(messages, { preserveAnchor = false } = {}) {
-  return window.HelixModules?.['thread']?.['renderMessages'](...arguments);
-}
+function renderMessages(...args) { return window.HelixModules?.['thread']?.['renderMessages'](...args); }
 
 // moved to js/thread.js (submitFeedback + recordFeedback shared core)
-async function submitFeedback(button) {
-  return window.HelixModules?.['thread']?.['submitFeedback'](...arguments);
-}
+async function submitFeedback(...args) { return window.HelixModules?.['thread']?.['submitFeedback'](...args); }
 
 // moved to js/thread.js (translateMessage + requestTranslation/buildTranslateResultHtml)
-async function translateMessage(button) {
-  return window.HelixModules?.['thread']?.['translateMessage'](...arguments);
-}
+async function translateMessage(...args) { return window.HelixModules?.['thread']?.['translateMessage'](...args); }
 
 function latestAssistant(messages) {
   return [...messages].reverse().find((message) => message.role === "assistant") || null;
@@ -397,13 +329,9 @@ function latestAssistant(messages) {
 
 // moved to js/inspector.js (renderOverview/updateLabels/updatePriority/renderEvidence/renderAudit/renderInspector/switchInspectorTab)
 
-async function updateLabels(event) {
-  return window.HelixModules?.['inspector']?.['updateLabels'](...arguments);
-}
+async function updateLabels(...args) { return window.HelixModules?.['inspector']?.['updateLabels'](...args); }
 
-async function updatePriority(button) {
-  return window.HelixModules?.['inspector']?.['updatePriority'](...arguments);
-}
+async function updatePriority(...args) { return window.HelixModules?.['inspector']?.['updatePriority'](...args); }
 
 function safeCitationUrl(value) {
   return window.HelixModules?.inspector?.safeCitationUrl
@@ -411,37 +339,21 @@ function safeCitationUrl(value) {
     : "#";
 }
 
-function renderOverview(detail) {
-  return window.HelixModules?.['inspector']?.['renderOverview'](...arguments);
-}
+function renderOverview(...args) { return window.HelixModules?.['inspector']?.['renderOverview'](...args); }
 
-function renderEvidence(detail) {
-  return window.HelixModules?.['inspector']?.['renderEvidence'](...arguments);
-}
+function renderEvidence(...args) { return window.HelixModules?.['inspector']?.['renderEvidence'](...args); }
 
-function renderAudit(detail) {
-  return window.HelixModules?.['inspector']?.['renderAudit'](...arguments);
-}
+function renderAudit(...args) { return window.HelixModules?.['inspector']?.['renderAudit'](...args); }
 
-function resetInspectorRenderFlags() {
-  return window.HelixModules?.['inspector']?.['resetInspectorRenderFlags'](...arguments);
-}
+function resetInspectorRenderFlags(...args) { return window.HelixModules?.['inspector']?.['resetInspectorRenderFlags'](...args); }
 
-function ensureInspectorTab(tab, detail = state.detail) {
-  return window.HelixModules?.['inspector']?.['ensureInspectorTab'](...arguments);
-}
+function ensureInspectorTab(...args) { return window.HelixModules?.['inspector']?.['ensureInspectorTab'](...args); }
 
-function renderInspector(detail) {
-  return window.HelixModules?.['inspector']?.['renderInspector'](...arguments);
-}
+function renderInspector(...args) { return window.HelixModules?.['inspector']?.['renderInspector'](...args); }
 
-function switchInspectorTab(tab) {
-  return window.HelixModules?.['inspector']?.['switchInspectorTab'](...arguments);
-}
+function switchInspectorTab(...args) { return window.HelixModules?.['inspector']?.['switchInspectorTab'](...args); }
 
-async function loadQualityPanel() {
-  return window.HelixModules?.['qualityPanel']?.['loadQualityPanel'](...arguments);
-}
+async function loadQualityPanel(...args) { return window.HelixModules?.['qualityPanel']?.['loadQualityPanel'](...args); }
 
 // moved to js/qualityPanel.js (renderQualityViewIfVisible)
 
@@ -450,9 +362,7 @@ async function loadQualityPanel() {
 // there is not enough data to draw either chart.
 // moved to js/qualityPanel.js (renderQualityCharts)
 
-function renderQualityPanel(targetBuckets = els.qualityBuckets, targetGaps = els.qualityGaps) {
-  return window.HelixModules?.['qualityPanel']?.['renderQualityPanel'](...arguments);
-}
+function renderQualityPanel(...args) { return window.HelixModules?.['qualityPanel']?.['renderQualityPanel'](...args); }
 
 // moved to js/qualityPanel.js (createKnowledgeDraftFromFeedback)
 
@@ -469,18 +379,14 @@ function renderLanguagePicker(conversation) {
 
 // moved to js/detail.js (renderDetail — the conversation-detail assembly
 // across header/actions/composer/thread/inspector/attachments).
-function renderDetail(detail) {
-  return window.HelixModules?.['detail']?.['renderDetail'](...arguments);
-}
+function renderDetail(...args) { return window.HelixModules?.['detail']?.['renderDetail'](...args); }
 
 
 
 
 // moved to js/summary.js (renderSummaries — legacy banner paint + island
 // model publish; summaryModel is the single source for both tracks).
-function renderSummaries(detail) {
-  return window.HelixModules?.summary?.renderSummaries(...arguments);
-}
+function renderSummaries(...args) { return window.HelixModules?.summary?.renderSummaries(...args); }
 
 // A duplicate clearSelection shadowed the live one below (the later function
 // declaration wins in a classic script); it was removed — selectConversation
@@ -496,9 +402,7 @@ async function loadDetail(id) {
 // The base64 opaque cursor is echoed straight back from the detail response's
 // X-Prev-Cursor — never parsed or synthesized client-side.
 // moved to js/thread.js (loadOlderMessages — §18.4 upward keyset pagination)
-async function loadOlderMessages() {
-  return window.HelixModules?.['thread']?.['loadOlderMessages'](...arguments);
-}
+async function loadOlderMessages(...args) { return window.HelixModules?.['thread']?.['loadOlderMessages'](...args); }
 
 // ------------------------------------------------------------- 坐席协作
 // Mentions inbox, internal discussion threads, and the supervisor live view.
@@ -507,9 +411,7 @@ function canReadConversations() {
   return Boolean(state.me && state.me.permissions && state.me.permissions.includes("conversation:read"));
 }
 
-async function loadMentions() {
-  return window.HelixModules?.['session']?.['loadMentions'](...arguments);
-}
+async function loadMentions(...args) { return window.HelixModules?.['session']?.['loadMentions'](...args); }
 
 // moved to js/session.js (renderMentionsPanel)
 
@@ -521,9 +423,7 @@ async function loadMentions() {
 
 // moved to js/session.js (startWatching)
 
-function stopWatching() {
-  return window.HelixModules?.['session']?.['stopWatching'](...arguments);
-}
+function stopWatching(...args) { return window.HelixModules?.['session']?.['stopWatching'](...args); }
 
 // moved to js/session.js (isWatching)
 
@@ -550,9 +450,7 @@ function conversationQuery() {
 }
 
 // moved to js/composer.js (renderCannedResponses — island republish +
-function renderCannedResponses() {
-  return window.HelixModules?.['composer']?.['renderCannedResponses'](...arguments);
-}
+function renderCannedResponses(...args) { return window.HelixModules?.['composer']?.['renderCannedResponses'](...args); }
 
 // legacy chip paint); insertCannedResponse stays with its binding.
 
@@ -569,9 +467,7 @@ async function insertCannedResponse(responseId) {
   }
 }
 
-async function loadCannedResponses({ force = false } = {}) {
-  return window.HelixModules?.['composer']?.['loadCannedResponses'](...arguments);
-}
+async function loadCannedResponses(...args) { return window.HelixModules?.['composer']?.['loadCannedResponses'](...args); }
 
 
 
@@ -583,14 +479,10 @@ async function loadCannedResponses({ force = false } = {}) {
 
 // moved to js/composer.js (applyCopilotTone)
 
-function resetCopilot() {
-  return window.HelixModules?.['composer']?.['resetCopilot'](...arguments);
-}
+function resetCopilot(...args) { return window.HelixModules?.['composer']?.['resetCopilot'](...args); }
 
 
-async function enrichTicketBadge(ticketId) {
-  return window.HelixModules?.['ticketView']?.['enrichTicketBadge'](...arguments);
-}
+async function enrichTicketBadge(...args) { return window.HelixModules?.['ticketView']?.['enrichTicketBadge'](...args); }
 
 // moved to js/ticketView.js (convertToTicket)
 
@@ -622,15 +514,11 @@ async function enrichTicketBadge(ticketId) {
 // moved to js/ticketView.js (jumpToTicketConversation)
 
 
-function attachmentChips(ids) {
-  return window.HelixModules?.['attachments']?.['attachmentChips'](...arguments);
-}
+function attachmentChips(...args) { return window.HelixModules?.['attachments']?.['attachmentChips'](...args); }
 
 // moved to js/attachments.js (patchAttachmentChips)
 
-async function loadAttachmentNames(conversationId) {
-  return window.HelixModules?.['attachments']?.['loadAttachmentNames'](...arguments);
-}
+async function loadAttachmentNames(...args) { return window.HelixModules?.['attachments']?.['loadAttachmentNames'](...args); }
 
 // moved to js/attachments.js (uploadPendingAttachment)
 
@@ -638,9 +526,7 @@ async function loadAttachmentNames(conversationId) {
 
 // moved to js/attachments.js (clearPendingAttachments)
 
-function renderAttachmentBar(detail) {
-  return window.HelixModules?.['attachments']?.['renderAttachmentBar'](...arguments);
-}
+function renderAttachmentBar(...args) { return window.HelixModules?.['attachments']?.['renderAttachmentBar'](...args); }
 
 // ---- ROADMAP §17: 知识运营页 ---------------------------------------------
 // moved to js/knowledge-view.js (knowledge lifecycle + listeners + island
@@ -652,9 +538,7 @@ function loadDesktopInfo() {
 }
 
 // moved to js/knowledge-view.js (loadKnowledgeView — dual-track fetch/cache)
-async function loadKnowledgeView({ force = false } = {}) {
-  return window.HelixModules?.['knowledgeView']?.['loadKnowledgeView'](...arguments);
-}
+async function loadKnowledgeView(...args) { return window.HelixModules?.['knowledgeView']?.['loadKnowledgeView'](...args); }
 
 // ---- UI 升级 §17.1: 全局导航栏 -------------------------------------------
 
@@ -719,36 +603,16 @@ const DENSITY_LABELS = { comfortable: "舒适", compact: "紧凑", dense: "密�
 
 // moved to js/admin-actions.js (quota/member/webhook CRUD + render + island
 // bridge handlers); thin wrappers keep the bridge table and legacy bindings.
-function canManage() {
-  return window.HelixModules?.['adminActions']?.['canManage'](...arguments);
-}
-async function loadCsatSummary() {
-  return window.HelixModules?.['qualityPanel']?.['loadCsatSummary'](...arguments);
-}
-function loadAdminView() {
-  return window.HelixModules?.['adminActions']?.['loadAdminView'](...arguments);
-}
-function renderWebhookEventCheckboxes() {
-  return window.HelixModules?.['adminActions']?.['renderWebhookEventCheckboxes'](...arguments);
-}
-async function saveQuota(event) {
-  return window.HelixModules?.['adminActions']?.['saveQuota'](...arguments);
-}
-async function inviteMember(event) {
-  return window.HelixModules?.['adminActions']?.['inviteMember'](...arguments);
-}
-async function changeMemberRole(actorId, role) {
-  return window.HelixModules?.['adminActions']?.['changeMemberRole'](...arguments);
-}
-async function deactivateMember(actorId) {
-  return window.HelixModules?.['adminActions']?.['deactivateMember'](...arguments);
-}
-async function registerWebhook(event) {
-  return window.HelixModules?.['adminActions']?.['registerWebhook'](...arguments);
-}
-async function deleteWebhook(id) {
-  return window.HelixModules?.['adminActions']?.['deleteWebhook'](...arguments);
-}
+function canManage(...args) { return window.HelixModules?.['adminActions']?.['canManage'](...args); }
+async function loadCsatSummary(...args) { return window.HelixModules?.['qualityPanel']?.['loadCsatSummary'](...args); }
+function loadAdminView(...args) { return window.HelixModules?.['adminActions']?.['loadAdminView'](...args); }
+function renderWebhookEventCheckboxes(...args) { return window.HelixModules?.['adminActions']?.['renderWebhookEventCheckboxes'](...args); }
+async function saveQuota(...args) { return window.HelixModules?.['adminActions']?.['saveQuota'](...args); }
+async function inviteMember(...args) { return window.HelixModules?.['adminActions']?.['inviteMember'](...args); }
+async function changeMemberRole(...args) { return window.HelixModules?.['adminActions']?.['changeMemberRole'](...args); }
+async function deactivateMember(...args) { return window.HelixModules?.['adminActions']?.['deactivateMember'](...args); }
+async function registerWebhook(...args) { return window.HelixModules?.['adminActions']?.['registerWebhook'](...args); }
+async function deleteWebhook(...args) { return window.HelixModules?.['adminActions']?.['deleteWebhook'](...args); }
 async function saveQuotaFromIsland(detail) {
   return window.HelixModules?.['adminActions']?.['saveQuotaFromIsland'](detail);
 }
@@ -771,42 +635,24 @@ async function deleteWebhookFromIsland(detail) {
 // moved to js/admin-report-bridge.js (report subscriptions, report
 // generation, SLA policies and routing-rule island bridges — api/toast
 // lifecycle plus helix-admin-saved / helix-admin-report-generated receipts).
-async function createSubscriptionFromIsland({ reportType, schedule, windowDays, webhookEndpointId } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['createSubscriptionFromIsland'](...arguments);
-}
+async function createSubscriptionFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['createSubscriptionFromIsland'](...args); }
 
-async function toggleSubscriptionFromIsland({ id, active } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['toggleSubscriptionFromIsland'](...arguments);
-}
+async function toggleSubscriptionFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['toggleSubscriptionFromIsland'](...args); }
 
-async function deleteSubscriptionFromIsland({ id } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['deleteSubscriptionFromIsland'](...arguments);
-}
+async function deleteSubscriptionFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['deleteSubscriptionFromIsland'](...args); }
 
-async function generateReportFromIsland({ reportType, windowDays } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['generateReportFromIsland'](...arguments);
-}
+async function generateReportFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['generateReportFromIsland'](...args); }
 
-async function saveSlaFromIsland({ priority, channel, firstResponseMinutes, resolveMinutes } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['saveSlaFromIsland'](...arguments);
-}
+async function saveSlaFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['saveSlaFromIsland'](...args); }
 
-async function createRuleFromIsland({ intent, label, channel, groupId, priority } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['createRuleFromIsland'](...arguments);
-}
+async function createRuleFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['createRuleFromIsland'](...args); }
 
-async function deleteRuleFromIsland({ id } = {}) {
-  return window.HelixModules?.['adminReportBridge']?.['deleteRuleFromIsland'](...arguments);
-}
+async function deleteRuleFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['deleteRuleFromIsland'](...args); }
 
 
-function renderReportWebhookOptions(webhooks) {
-  return window.HelixModules?.['adminReport']?.['renderReportWebhookOptions'](...arguments);
-}
+function renderReportWebhookOptions(...args) { return window.HelixModules?.['adminReport']?.['renderReportWebhookOptions'](...args); }
 
-async function loadReportSubscriptions() {
-  return window.HelixModules?.['adminReport']?.['loadReportSubscriptions'](...arguments);
-}
+async function loadReportSubscriptions(...args) { return window.HelixModules?.['adminReport']?.['loadReportSubscriptions'](...args); }
 
 // moved to js/adminReport.js (renderReportSubscriptions)
 
@@ -825,9 +671,7 @@ async function loadReportSubscriptions() {
 
 // moved to js/adminReport.js (renderSlaPolicies)
 
-async function loadSlaPolicies() {
-  return window.HelixModules?.['adminReport']?.['loadSlaPolicies'](...arguments);
-}
+async function loadSlaPolicies(...args) { return window.HelixModules?.['adminReport']?.['loadSlaPolicies'](...args); }
 
 // moved to js/adminReport.js (fillSlaPolicyForm)
 
@@ -835,17 +679,13 @@ async function loadSlaPolicies() {
 
 // moved to js/adminReport.js (renderRuleGroups)
 
-async function loadRuleGroups() {
-  return window.HelixModules?.['adminReport']?.['loadRuleGroups'](...arguments);
-}
+async function loadRuleGroups(...args) { return window.HelixModules?.['adminReport']?.['loadRuleGroups'](...args); }
 
 // moved to js/adminReport.js (routingRuleLabel)
 
 // moved to js/adminReport.js (renderRoutingRules)
 
-async function loadRoutingRules() {
-  return window.HelixModules?.['adminReport']?.['loadRoutingRules'](...arguments);
-}
+async function loadRoutingRules(...args) { return window.HelixModules?.['adminReport']?.['loadRoutingRules'](...args); }
 
 // moved to js/adminReport.js (createRoutingRule)
 
@@ -870,9 +710,7 @@ function setDensity(level, { persist = true } = {}) {
   }
 }
 
-function renderCopilot(detail) {
-  return window.HelixModules?.['composer']?.['renderCopilot'](...arguments);
-}
+function renderCopilot(...args) { return window.HelixModules?.['composer']?.['renderCopilot'](...args); }
 
 async function loadLabelCatalog({ force = false } = {}) {
   return window.HelixModules?.['queueHelpers']?.['loadLabelCatalog']({ force });
@@ -884,17 +722,11 @@ function queueSignature(conversations) {
 
 // moved to js/refresh.js (refreshAll dedup + runRefresh fan-out; the
 // SSE/relay/polling stream lifecycle and tab visibility live there too).
-async function refreshAll({ silent = false, refreshDetail = true, background = false } = {}) {
-  return window.HelixModules?.['refresh']?.['refreshAll'](...arguments);
-}
+async function refreshAll(...args) { return window.HelixModules?.['refresh']?.['refreshAll'](...args); }
 
-function setLiveStatus(mode) {
-  return window.HelixModules?.['refresh']?.['setLiveStatus'](...arguments);
-}
+function setLiveStatus(...args) { return window.HelixModules?.['refresh']?.['setLiveStatus'](...args); }
 
-function schedulePolling() {
-  return window.HelixModules?.['refresh']?.['schedulePolling'](...arguments);
-}
+function schedulePolling(...args) { return window.HelixModules?.['refresh']?.['schedulePolling'](...args); }
 
 // moved to js/queue-actions.js (loadMoreConversations + applyBulkAction)
 
@@ -903,8 +735,6 @@ function schedulePolling() {
 // lives in js/boot.js — a single bindLegacyBoot() call (configure-injected).
 
 // moved to js/queue-view.js (mobile queue drawer: scrim/focus-trap/inert)
-function closeQueueDrawer(options = {}) {
-  return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...arguments);
-}
+function closeQueueDrawer(...args) { return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...args); }
 
 window.HelixModules?.boot?.bindLegacyBoot();
