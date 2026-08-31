@@ -309,6 +309,7 @@ const els = {
 // singletons through configure(); bindX() calls wire the DOM they own.
 const _helixModules = window.HelixModules || {};
 _helixModules.http?.configure?.({ baseHeaders: BASE_HEADERS });
+_helixModules.summary?.configure?.({ els });
 _helixModules.composer?.configure?.({
   state,
   els,
@@ -971,22 +972,10 @@ function renderDetail(detail) {
 
 
 
+// moved to js/summary.js (renderSummaries — legacy banner paint + island
+// model publish; summaryModel is the single source for both tracks).
 function renderSummaries(detail) {
-  // Single model source (js/summary.js): the legacy banner paints from it in
-  // a plain browser tab; island mode publishes it to the summary island.
-  const model = window.HelixModules?.summary?.summaryModel?.(detail.summaries) || {
-    visible: false,
-    title: "",
-    text: "",
-  };
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.dispatchEvent(new CustomEvent(window.HelixModules?.summary?.SUMMARY_EVENT || "helix-summary-state", { detail: model }));
-    return;
-  }
-  els.summaryBanner.hidden = !model.visible;
-  if (!model.visible) return;
-  els.summaryTitle.textContent = model.title;
-  els.summaryText.textContent = model.text;
+  return window.HelixModules?.summary?.renderSummaries(...arguments);
 }
 
 function clearSelection() {

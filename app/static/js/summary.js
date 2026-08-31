@@ -1,15 +1,23 @@
 /**
- * Helix Support — summary banner model (D3 long tail slice 15).
+ * Helix Support — summary banner model + legacy paint (D3 long tail slice 15,
+ * app.js <500 campaign).
  *
  * Derives the conversation summary banner content from the detail payload's
  * summaries list (context/disposition kinds, model vs projected source).
- * Pure and framework-free: js/renderSummaries paints the legacy banner from
- * it in a plain browser tab, and the summary island renders the same model
- * from the helix-summary-state event in the desktop shell — a single source
- * of truth for both render paths.
+ * summaryModel is pure and framework-free; renderSummaries paints the legacy
+ * banner from it in a plain browser tab and publishes the same model on the
+ * SUMMARY_EVENT in the desktop shell — a single source of truth for both
+ * render paths.
  */
 
 export const SUMMARY_EVENT = "helix-summary-state";
+
+let els = null;
+
+/** Inject the legacy app.js DOM elements for the legacy banner paint. */
+export function configure(deps) {
+  els = deps.els;
+}
 
 /** Derive {visible, title, text} from a detail.summaries list. */
 export function summaryModel(summaries) {
@@ -24,4 +32,17 @@ export function summaryModel(summaries) {
   return { visible: true, title, text: `${entry.content}${badge}` };
 }
 
-export default { SUMMARY_EVENT, summaryModel };
+/** Paint the summary banner (legacy) or publish the model (island). */
+export function renderSummaries(detail) {
+  const model = summaryModel(detail.summaries);
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(new CustomEvent(SUMMARY_EVENT, { detail: model }));
+    return;
+  }
+  els.summaryBanner.hidden = !model.visible;
+  if (!model.visible) return;
+  els.summaryTitle.textContent = model.title;
+  els.summaryText.textContent = model.text;
+}
+
+export default { SUMMARY_EVENT, summaryModel, configure, renderSummaries };
