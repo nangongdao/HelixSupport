@@ -26,329 +26,110 @@ const {
 
 // ROADMAP §41.6 (ARC-001): the extracted js/ modules read the legacy app.js
 // singletons through configure(); bindX() calls wire the DOM they own.
-const _helixModules = window.HelixModules || {};
-_helixModules.http?.configure?.({ baseHeaders: BASE_HEADERS });
-_helixModules.summary?.configure?.({ els });
-_helixModules.helpers?.configure?.({ els });
-_helixModules.composer?.configure?.({
+// ---- legacy wiring -------------------------------------------------------
+// All 26 configure() calls for the extracted js/ domain modules now live in
+// js/wire.js (wireModules). We build one flat bundle of the app.js-scoped
+// names and hand it over; each module reads only the keys it needs via its
+// configure(). vqueue/density accessors are read live from HelixModules so
+// the late consts are never touched at bundle-build time. bindConversationDialog
+// stays here (it is a one-time activation, not a wiring dependency).
+const wiring = {
+  window,
+  document,
   state,
   els,
-  api,
-  loadDetail,
-  refreshAll,
-  canOperate,
-  setFormBusy,
-  showToast,
-  escapeHtml,
-});
-_helixModules.composerIslandBridge?.configure?.({
-  state,
-  els,
-  canOperate,
-});
-_helixModules.drafts?.configure?.({ state });
-_helixModules.composerIslandBridge?.bindIslandBridge?.();
-_helixModules.session?.configure?.({
-  state,
-  els,
-  api,
-  baseHeaders: BASE_HEADERS,
-  loadDetail,
-  selectConversation,
-  showToast,
-  escapeHtml,
-  formatTime,
-  icon,
-});
-_helixModules.adminReport?.configure?.({ state, els, api, showToast, escapeHtml, formatTime });
-_helixModules.adminReportBridge?.configure?.({ api, showToast });
-_helixModules.ticketView?.configure?.({
-  state,
-  els,
-  api,
-  loadDetail,
-  selectConversation,
-  refreshAll,
-  canOperate,
-  showToast,
-  escapeHtml,
-  formatTime,
-  statusLabel,
-});
-_helixModules.qualityPanel?.configure?.({ state, els, api, showToast, escapeHtml });
-_helixModules.thread?.configure?.({
-  state,
-  els,
-  api,
-  apiWithHeaders,
-  showToast,
-  escapeHtml,
-  icon,
-  formatTime,
-  attachmentChips,
-  canWriteConversations,
-  languageNames: LANGUAGE_NAMES,
-  languageOptions: LANGUAGE_OPTIONS,
-  olderPageSize: THREAD_OLDER_PAGE_SIZE,
-});
-_helixModules.attachments?.configure?.({ state, els, api, showToast, escapeHtml, icon, canOperate });
-_helixModules.queueView?.configure?.({
-  state,
-  els,
-  canOperate,
-  escapeHtml,
-  statusLabel,
-  formatSla,
-  // vqueue/density helpers come straight from the module namespaces — the
-  // destructured locals are declared further down this file and would be
-  // TDZ-dead at configure time.
-  estimatedRowHeight: (density, lowPerf) =>
-    (_helixModules.vqueue || fallbackVqueueHelpers).estimatedRowHeight(density, lowPerf),
-  signatureOf: (c) => (_helixModules.vqueue || fallbackVqueueHelpers).signatureOf(c),
-  rowHeightFromElement: (el) =>
-    (_helixModules.vqueue || fallbackVqueueHelpers).rowHeightFromElement(el),
-  isCompactDensity: (level, lowPerf) =>
-    (_helixModules.density || fallbackDensityHelpers).isCompactDensity(level, lowPerf),
-  VIRTUAL_THRESHOLD: 200,
-});
-
-// Minimal fallbacks mirroring the legacy inline definitions so configure-time
-// references stay safe even if the module entry has not loaded yet.
-const fallbackVqueueHelpers = {
-  estimatedRowHeight: () => 118,
-  signatureOf: (c) => `${c.id}:${c.status}:${c.updated_at}:${c.version ?? 0}`,
-  rowHeightFromElement: () => 118,
-};
-const fallbackDensityHelpers = {
-  isCompactDensity: (level, lowPerf) => {
-    const effective = lowPerf ? "compact" : level;
-    return effective === "compact" || effective === "dense";
-  },
-};
-_helixModules.inspector?.configure?.({
-  state,
-  els,
-  api,
-  loadDetail,
-  refreshAll,
-  loadQualityPanel,
-  canOperate,
-  setFormBusy,
-  showToast,
-  escapeHtml,
-  formatTime,
-  latestAssistant,
-  renderLabelChips,
-  roleLabels: ROLE_LABELS,
-});
-_helixModules.detail?.configure?.({
-  state,
-  els,
-  canOperate,
-  canReadConversations,
-  escapeHtml,
-  actions: {
-    formatSla,
-    statusLabel,
-    renderSubtitle,
-    renderLanguagePicker,
-    renderCannedResponses,
-    loadDraft,
-    renderMessages,
-    renderInspector,
-    renderSummaries,
-    renderCopilot,
-    renderAttachmentBar,
-    loadAttachmentNames,
-    scheduleClaimRenewal,
-    scheduleIdle,
-    enrichTicketBadge,
-    stopWatching,
-  },
-});
-// The saved-views domain (filter snapshot, select render, list reload, apply
-// and CRUD) now lives in js/saved-views.js.
-_helixModules.savedViews?.configure?.({
-  state,
-  els,
-  api,
-  request,
-  showToast,
-  escapeHtml,
-  refreshAll,
-});
-_helixModules.adminActions?.configure?.({
-  state,
-  els,
-  api,
-  showToast,
-  escapeHtml,
-  TENANT,
-  roleLabels: ROLE_LABELS,
-  canManage,
-  actions: {
-    renderReportWebhookOptions,
-    loadReportSubscriptions,
-    loadRuleGroups,
-    loadSlaPolicies,
-    loadRoutingRules,
-    loadCsatSummary,
-  },
-});
-_helixModules.refresh?.configure?.({
-  state,
-  els,
-  api,
-  apiWithHeaders,
-  showToast,
-  escapeHtml,
+  // app-core constants
   TENANT,
   BASE_HEADERS,
-  actions: {
-    pollInterval,
-    renderLoadingQueue,
-    renderQueue,
-    conversationQuery,
-    queueSignature,
-    loadLabelCatalog,
-    pruneExpiredDrafts,
-    scheduleIdle,
-    loadMentions,
-    loadCollaborators,
-    loadCannedResponses,
-    renderLabelFilter,
-    loadDetail,
-    selectConversation,
-    clearSelection,
-    roleLabel,
-  },
-});
-_helixModules.queueActions?.configure?.({
-  state,
-  els,
+  ROLE_LABELS,
+  LANGUAGE_NAMES,
+  LANGUAGE_OPTIONS,
+  THREAD_PAGE_LIMIT,
+  THREAD_OLDER_PAGE_SIZE,
+  PREF_LOW_PERF,
+  PREF_INSPECTOR,
+  PREF_DENSITY,
+  // transport
+  request,
   api,
   apiWithHeaders,
-  showToast,
-  setFormBusy,
-  refreshAll,
-  actions: { conversationQuery, renderQueue, renderBulkToolbar },
-});
-_helixModules.queueHelpers?.configure?.({
-  state,
-  els,
-  api,
-  queuePageSize,
-});
-_helixModules.queueFilters?.configure?.({
-  state,
-  els,
-  refreshAll,
+  // helper wrappers (app-core + helpers module)
   escapeHtml,
-});
-_helixModules.shortcuts?.configure?.({
-  state,
-  els,
-  refreshAll,
-  selectConversation,
-});
-_helixModules.knowledgeView?.configure?.({
-  state,
-  els,
-  api,
-  showToast,
-  setFormBusy,
-  escapeHtml,
+  icon,
+  statusLabel,
+  roleLabel,
   formatTime,
-  languageNames: LANGUAGE_NAMES,
-});
-_helixModules.appNav?.configure?.({
-  els,
-  loadDesktopInfo,
-  renderQualityPanel,
-  loadQualityPanel,
-  loadAdminView,
-  loadKnowledgeView,
+  formatSla,
+  showToast,
   scheduleIdle,
-});
-_helixModules.notes?.configure?.({
-  state,
-  els,
-  api,
+  setFormBusy,
+  // queue / view helpers
+  queuePageSize,
+  pollInterval,
+  handleQueueScroll,
+  renderQueue,
+  renderBulkToolbar,
+  renderLoadingQueue,
+  renderMetrics,
+  conversationQuery,
+  queueSignature,
+  loadLabelCatalog,
+  renderLabelFilter,
+  // permission gates
   canOperate,
-  setFormBusy,
-  escapeHtml,
-  roleLabels: ROLE_LABELS,
-});
-_helixModules.commandDispatch?.configure?.({
-  state,
-  els,
-  api,
-  showToast,
-  escapeHtml,
-  switchAppView,
-  refreshAll,
-  actions: { loadDetail },
-});
-_helixModules.conversationActions?.configure?.({
-  state,
-  els,
-  api,
-  showToast,
-  setFormBusy,
+  canWriteConversations,
+  canReadConversations,
+  canManage,
+  // conversation lifecycle
   loadDetail,
-  refreshAll,
+  selectConversation,
+  clearSelection,
   renderSubtitle,
   renderLanguagePicker,
-  scheduleIdle,
-  languageNames: LANGUAGE_NAMES,
-  actions: { renderQueue },
-});
-_helixModules.conversationDetail?.configure?.({
-  state,
-  els,
-  apiWithHeaders,
   renderDetail,
-  renderQueue,
-  stopWatching,
+  renderSummaries,
+  renderMessages,
+  renderInspector,
+  renderCannedResponses,
+  renderAttachmentBar,
+  renderCopilot,
   resetCopilot,
   hideMentionSuggest,
+  stopWatching,
   windowedRowHeight,
   closeQueueDrawer,
-  canWriteConversations,
-  showToast,
-  languageNames: LANGUAGE_NAMES,
-  languageOptions: LANGUAGE_OPTIONS,
-  threadPageLimit: THREAD_PAGE_LIMIT,
-});
-_helixModules.boot?.configure?.({
-  state,
-  els,
-  document,
-  window,
-  selectConversation,
-  handleQueueScroll,
-  renderBulkToolbar,
-  switchInspectorTab,
+  latestAssistant,
+  insertCannedResponse,
+  loadCannedResponses,
+  loadAttachmentNames,
+  enrichTicketBadge,
+  scheduleClaimRenewal,
+  pruneExpiredDrafts,
+  loadDraft,
+  loadMentions,
+  loadCollaborators,
+  switchAppView,
+  renderLabelChips,
+  // density / prefs
   setDensity,
-  // nextDensity/normalizeDensity are const-destructured from the density
-  // module further down this file — defer the reference so configure-time is
-  // TDZ-safe (same reason the queueView block uses arrow functions).
-  nextDensity: (level) => nextDensity(level),
-  renderQueue,
+  detectConstrainedDevice,
   applyWorkspacePreferences,
   schedulePolling,
-  showToast,
   refreshAll,
-  renderInspector,
-  applyMacroFromSuggest,
-  insertCannedResponse,
-  switchAppView,
-  renderSummaries,
+  loadSavedViews,
+  // admin
+  loadAdminView,
+  loadQualityPanel,
+  renderQualityPanel,
+  loadKnowledgeView,
+  loadDesktopInfo,
   renderWebhookEventCheckboxes,
   saveQuota,
   inviteMember,
   registerWebhook,
-  loadAdminView,
+  changeMemberRole,
+  deactivateMember,
+  deleteWebhook,
   saveQuotaFromIsland,
   inviteMemberFromIsland,
   changeMemberRoleFromIsland,
@@ -362,18 +143,21 @@ _helixModules.boot?.configure?.({
   saveSlaFromIsland,
   createRuleFromIsland,
   deleteRuleFromIsland,
-  changeMemberRole,
-  deactivateMember,
-  deleteWebhook,
-  renderMetrics,
-  renderLoadingQueue,
-  detectConstrainedDevice,
-  normalizeDensity: (level) => normalizeDensity(level),
-  loadSavedViews,
-  PREF_LOW_PERF,
-  PREF_INSPECTOR,
-  PREF_DENSITY,
-});
+  applyMacroFromSuggest,
+  switchInspectorTab,
+  renderReportWebhookOptions,
+  loadReportSubscriptions,
+  loadRuleGroups,
+  loadSlaPolicies,
+  loadRoutingRules,
+  loadCsatSummary,
+  // live module namespaces for deferred helper access (avoid TDZ on consts)
+  vqueue: window.HelixModules?.vqueue || undefined,
+  density: window.HelixModules?.density || undefined,
+};
+
+window.HelixModules?.wire?.wireModules?.(wiring);
+
 window.HelixModules?.conversationActions?.bindConversationDialog?.();
 
 function queuePageSize() {

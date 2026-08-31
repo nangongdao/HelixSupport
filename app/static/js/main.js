@@ -52,6 +52,7 @@ import * as summary from "./summary.js?v=1.4.0";
 import * as thread from "./thread.js?v=1.4.0";
 import * as ticketView from "./ticket-view.js?v=1.4.0";
 import * as vqueue from "./vqueue.js?v=1.4.0";
+import * as wire from "./wire.js?v=1.4.0";
 
 const THEME_STORAGE_KEY = "helix-theme";
 
@@ -165,6 +166,7 @@ export function initModules() {
     thread,
     ticketView,
     vqueue,
+    wire,
     theme,
     locale,
     applyTheme,
