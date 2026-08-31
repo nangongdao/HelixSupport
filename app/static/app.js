@@ -340,6 +340,7 @@ _helixModules.session?.configure?.({
   icon,
 });
 _helixModules.adminReport?.configure?.({ state, els, api, showToast, escapeHtml, formatTime });
+_helixModules.adminReportBridge?.configure?.({ api, showToast });
 _helixModules.ticketView?.configure?.({
   state,
   els,
@@ -1395,142 +1396,35 @@ async function deleteWebhookFromIsland(detail) {
   return window.HelixModules?.['adminActions']?.['deleteWebhookFromIsland'](detail);
 }
 
+// moved to js/admin-report-bridge.js (report subscriptions, report
+// generation, SLA policies and routing-rule island bridges — api/toast
+// lifecycle plus helix-admin-saved / helix-admin-report-generated receipts).
 async function createSubscriptionFromIsland({ reportType, schedule, windowDays, webhookEndpointId } = {}) {
-  if (!webhookEndpointId) {
-    showToast("请先选择 Webhook 端点", true);
-    return;
-  }
-  let ok = false;
-  try {
-    await api("/api/admin/report-subscriptions", {
-      method: "POST",
-      body: JSON.stringify({
-        report_type: reportType || "quality",
-        schedule: schedule || "daily",
-        window_days: Number(windowDays || 7),
-        webhook_endpoint_id: webhookEndpointId,
-      }),
-    });
-    ok = true;
-    showToast("报表订阅已创建");
-  } catch (error) {
-    showToast(`创建订阅失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["subscriptions"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['createSubscriptionFromIsland'](...arguments);
 }
 
 async function toggleSubscriptionFromIsland({ id, active } = {}) {
-  if (!id) return;
-  let ok = false;
-  try {
-    await api(`/api/admin/report-subscriptions/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ active: Boolean(active) }),
-    });
-    ok = true;
-  } catch (error) {
-    showToast(`订阅状态变更失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["subscriptions"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['toggleSubscriptionFromIsland'](...arguments);
 }
 
 async function deleteSubscriptionFromIsland({ id } = {}) {
-  if (!id) return;
-  let ok = false;
-  try {
-    await api(`/api/admin/report-subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" });
-    ok = true;
-    showToast("订阅已删除");
-  } catch (error) {
-    showToast(`删除订阅失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["subscriptions"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['deleteSubscriptionFromIsland'](...arguments);
 }
 
 async function generateReportFromIsland({ reportType, windowDays } = {}) {
-  const type = reportType || "quality";
-  try {
-    const report = await api("/api/admin/reports/generate", {
-      method: "POST",
-      body: JSON.stringify({ report_type: type, window_days: Number(windowDays || 7) }),
-    });
-    // 预览文案与 js/admin-report.js generateReportPreview 逐字一致。
-    const rows = Array.isArray(report.rows) ? report.rows : [];
-    const header = `${ADMIN_REPORT_TYPE_LABELS[type] || type} ${report.from_date} → ${report.to_date}：${rows.length} 行`;
-    const text = rows.length
-      ? `${header}\n${rows.slice(0, 5).map((row) => JSON.stringify(row)).join("\n")}`
-      : `${header}\n（窗口内暂无数据）`;
-    window.dispatchEvent(new CustomEvent("helix-admin-report-generated", { detail: { ok: true, text } }));
-  } catch (error) {
-    showToast(`报表生成失败：${error.message || error}`, true);
-    window.dispatchEvent(new CustomEvent("helix-admin-report-generated", { detail: { ok: false } }));
-  }
+  return window.HelixModules?.['adminReportBridge']?.['generateReportFromIsland'](...arguments);
 }
 
 async function saveSlaFromIsland({ priority, channel, firstResponseMinutes, resolveMinutes } = {}) {
-  const firstResponse = Number(firstResponseMinutes || 0);
-  const resolve = Number(resolveMinutes || 0);
-  if (!firstResponse || !resolve) {
-    showToast("请填写首响与解决时限", true);
-    return;
-  }
-  let ok = false;
-  try {
-    await api("/api/admin/sla-policies", {
-      method: "PUT",
-      body: JSON.stringify({
-        priority: priority || null,
-        channel: (channel || "").trim() || null,
-        first_response_minutes: firstResponse,
-        resolve_minutes: resolve,
-      }),
-    });
-    ok = true;
-    showToast("SLA 策略已保存");
-  } catch (error) {
-    showToast(`SLA 策略保存失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["sla"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['saveSlaFromIsland'](...arguments);
 }
 
 async function createRuleFromIsland({ intent, label, channel, groupId, priority } = {}) {
-  if (!groupId) {
-    showToast("请先选择分配组", true);
-    return;
-  }
-  const body = { group_id: groupId, priority: Number(priority || 0) };
-  for (const [key, value] of [["intent", intent], ["label", label], ["channel", channel]]) {
-    const trimmed = (value || "").trim();
-    if (trimmed) body[key] = trimmed;
-  }
-  let ok = false;
-  try {
-    await api("/api/admin/routing-rules", { method: "POST", body: JSON.stringify(body) });
-    ok = true;
-    showToast("路由规则已添加");
-  } catch (error) {
-    showToast(`路由规则添加失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["rules"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['createRuleFromIsland'](...arguments);
 }
 
 async function deleteRuleFromIsland({ id } = {}) {
-  if (!id) return;
-  let ok = false;
-  try {
-    await api(`/api/admin/routing-rules/${encodeURIComponent(id)}`, { method: "DELETE" });
-    ok = true;
-    showToast("路由规则已删除");
-  } catch (error) {
-    showToast(`路由规则删除失败：${error.message || error}`, true);
-  } finally {
-    dispatchAdminSaved(ok, ["rules"]);
-  }
+  return window.HelixModules?.['adminReportBridge']?.['deleteRuleFromIsland'](...arguments);
 }
 
 
