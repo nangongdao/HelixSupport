@@ -34,6 +34,7 @@ import * as commandDispatch from "./command-dispatch.js?v=1.4.0";
 import * as refresh from "./refresh.js?v=1.4.0";
 import * as queueActions from "./queue-actions.js?v=1.4.0";
 import * as queueFilters from "./queue-filters.js?v=1.4.0";
+import * as queueHelpers from "./queue-helpers.js?v=1.4.0";
 import * as shortcuts from "./shortcuts.js?v=1.4.0";
 import * as detail from "./detail.js?v=1.4.0";
 import * as adminActions from "./admin-actions.js?v=1.4.0";
@@ -143,6 +144,7 @@ export function initModules() {
     refresh,
     queueActions,
     queueFilters,
+    queueHelpers,
     shortcuts,
     detail,
     adminActions,

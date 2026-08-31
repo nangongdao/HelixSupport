@@ -514,6 +514,12 @@ _helixModules.queueActions?.configure?.({
   refreshAll,
   actions: { conversationQuery, renderQueue, renderBulkToolbar },
 });
+_helixModules.queueHelpers?.configure?.({
+  state,
+  els,
+  api,
+  queuePageSize,
+});
 _helixModules.queueFilters?.configure?.({
   state,
   els,
@@ -1032,25 +1038,7 @@ function clearSelection() {
 }
 
 function conversationQuery() {
-  const params = new URLSearchParams();
-  const search = els.searchInput.value.trim();
-  if (search) params.set("search", search);
-  if (els.statusFilter.value) params.set("status", els.statusFilter.value);
-  if (els.labelFilter.value) params.set("label", els.labelFilter.value);
-  if (els.priorityFilter.value) params.set("priority", els.priorityFilter.value);
-  if (els.channelFilter?.value) params.set("channel", els.channelFilter.value);
-  if (els.sortFilter?.value) params.set("sort", els.sortFilter.value);
-  const ownership = els.ownershipFilter.value;
-  if (ownership === "mine") params.set("mine", "true");
-  if (ownership === "unassigned") params.set("unassigned", "true");
-  if (ownership === "unclaimed") params.set("unclaimed", "true");
-  if (ownership === "claimed_by_me" && state.me?.actor_id) {
-    params.set("claimed_by", state.me.actor_id);
-  }
-  if (ownership === "sla_breached") params.set("sla_breached", "true");
-  if (ownership === "needs_response") params.set("needs_response", "true");
-  params.set("limit", String(queuePageSize()));
-  return params.toString();
+  return window.HelixModules?.['queueHelpers']?.['conversationQuery']();
 }
 
 // moved to js/composer.js (renderCannedResponses — island republish +
@@ -1379,21 +1367,11 @@ function renderCopilot(detail) {
 }
 
 async function loadLabelCatalog({ force = false } = {}) {
-  if (!force && state.labelsLoadedAt && Date.now() - state.labelsLoadedAt < 60000 && state.labelCatalog.length) {
-    return state.labelCatalog;
-  }
-  state.labelCatalog = await api("/api/conversation-labels");
-  state.labelsLoadedAt = Date.now();
-  return state.labelCatalog;
+  return window.HelixModules?.['queueHelpers']?.['loadLabelCatalog']({ force });
 }
 
 function queueSignature(conversations) {
-  return conversations
-    .map(
-      (item) =>
-        `${item.id}:${item.version || 0}:${item.updated_at || ""}:${item.status}:${item.claim_active ? 1 : 0}:${item.needs_response ? 1 : 0}`,
-    )
-    .join("|");
+  return window.HelixModules?.['queueHelpers']?.['queueSignature'](conversations);
 }
 
 // moved to js/refresh.js (refreshAll dedup + runRefresh fan-out; the
