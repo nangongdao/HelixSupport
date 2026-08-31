@@ -536,6 +536,15 @@ _helixModules.knowledgeView?.configure?.({
   formatTime,
   languageNames: LANGUAGE_NAMES,
 });
+_helixModules.appNav?.configure?.({
+  els,
+  loadDesktopInfo,
+  renderQualityPanel,
+  loadQualityPanel,
+  loadAdminView,
+  loadKnowledgeView,
+  scheduleIdle,
+});
 _helixModules.notes?.configure?.({
   state,
   els,
@@ -1153,58 +1162,12 @@ async function loadKnowledgeView({ force = false } = {}) {
 
 // ---- UI 升级 §17.1: 全局导航栏 -------------------------------------------
 
-function setNavActive(view) {
-  for (const item of els.navItems) {
-    item.classList.toggle("is-active", item.dataset.view === view);
-  }
-}
-
-function showAppView(name) {
-  const views = {
-    workspace: els.workspaceView,
-    quality: els.qualityView,
-    knowledge: els.knowledgeView,
-    admin: els.adminView,
-  };
-  for (const [key, element] of Object.entries(views)) {
-    if (element) element.hidden = key !== name;
-  }
-  // D1 设置页：真实的桌面运行时信息（版本/端口/数据目录），不再是占位文案。
-  if (els.placeholderView) {
-    els.placeholderView.hidden = name !== "settings";
-    if (els.placeholderView.hidden === false) loadDesktopInfo();
-  }
-}
+// The nav DOM lifecycle (setNavActive/showAppView/switchAppView/currentAppView)
+// lives in js/app-nav.js. switchAppView stays as a thin wrapper — the palette
+// command-dispatch module and the rail click listener below both call it.
 
 function switchAppView(view) {
-  setNavActive(view);
-  showAppView(view);
-  if (view === "quality") {
-    // Island mode: the quality island owns the buckets (yieldsLegacy) and
-    // fetches via react-query — hand the refresh over instead of fetching
-    // into the hidden legacy containers (unforced refresh reuses the
-    // island's 10s throttle; the header refresh button sends force).
-    if (window.__HELIX_ISLAND_MODE__) {
-      window.dispatchEvent(new CustomEvent("helix-quality-refresh", { detail: { force: false } }));
-    } else {
-      // Reuse the Phase 21 aggregates; the parametrized renderer fills the
-      // standalone view containers. The fresh fetch is non-critical — the
-      // cached buckets render immediately, so it is scheduled for idle time.
-      renderQualityPanel(els.qualityViewBuckets, els.qualityViewGaps);
-      scheduleIdle(() => loadQualityPanel());
-    }
-  }
-  if (view === "admin") {
-    void loadAdminView();
-  }
-  if (view === "knowledge") {
-    void loadKnowledgeView();
-  }
-}
-
-function currentAppView() {
-  const active = els.navItems.find((item) => item.classList.contains("is-active"));
-  return active ? active.dataset.view : "workspace";
+  return window.HelixModules?.['appNav']?.['switchAppView'](view);
 }
 
 // ---- UI 升级 §17.1: 命令面板 (Ctrl+K) ------------------------------------
