@@ -308,6 +308,7 @@ const els = {
 // ROADMAP §41.6 (ARC-001): the extracted js/ modules read the legacy app.js
 // singletons through configure(); bindX() calls wire the DOM they own.
 const _helixModules = window.HelixModules || {};
+_helixModules.http?.configure?.({ baseHeaders: BASE_HEADERS });
 _helixModules.composer?.configure?.({
   state,
   els,
@@ -656,44 +657,20 @@ async function loadCollaborators() {
   return window.HelixModules?.['notes']?.['loadCollaborators'](...arguments);
 }
 
+// moved to js/http.js (request/api/apiWithHeaders — the request transport
+// with the 15s timeout, FormData pass-through and X-Tenant-Id/Accept headers;
+// baseHeaders arrive via configure). Thin wrappers keep every call site and
+// every configure-injected module unchanged.
 async function request(path, options = {}) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
-  // FormData(multipart 上传)必须由浏览器自动生成 Content-Type 边界;任何
-  // JSON 之外的 body(FormData/blob)都不该被覆写为 application/json。
-  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const requestHeaders = {
-    ...BASE_HEADERS,
-    ...(!isFormData && options.body ? { "Content-Type": "application/json" } : {}),
-    ...(options.headers || {}),
-  };
-  try {
-    const response = await fetch(path, {
-      ...options,
-      headers: requestHeaders,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || `请求失败（${response.status}）`);
-    }
-    const data = response.status === 204 ? null : await response.json();
-    return { response, data };
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("请求超时，请稍后重试");
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  return window.HelixModules?.http?.request(...arguments);
 }
 
 async function api(path, options = {}) {
-  const result = await request(path, options);
-  return result.data;
+  return window.HelixModules?.http?.api(...arguments);
 }
 
 async function apiWithHeaders(path, options = {}) {
-  return request(path, options);
+  return window.HelixModules?.http?.apiWithHeaders(...arguments);
 }
 
 function escapeHtml(value) {

@@ -21,6 +21,7 @@ import * as desktopInfo from "./desktop-info.js?v=1.4.0";
 import * as drafts from "./drafts.js?v=1.4.0";
 import * as format from "./format.js?v=1.4.0";
 import * as i18n from "./i18n.js?v=1.4.0";
+import * as http from "./http.js?v=1.4.0";
 import * as inspector from "./inspector.js?v=1.4.0";
 import * as knowledge from "./knowledge.js?v=1.4.0";
 import * as knowledgeView from "./knowledge-view.js?v=1.4.0";
@@ -126,6 +127,7 @@ export function initModules() {
     drafts,
     format,
     i18n,
+    http,
     inspector,
     knowledge,
     knowledgeView,
