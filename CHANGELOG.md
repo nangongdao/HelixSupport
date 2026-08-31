@@ -126,6 +126,14 @@
 - **静态 JS 预算 700KB → 715KB**(`scripts/performance_gate.py`):app.js <500 战役每把一个 legacy 域搬进 ES 模块,净增 ~0.9–1.5KB 纯样板(import/export 语句、模块 JSDoc、app.js 为自用调用点保留的薄包装),被搬走的逻辑本身字节中性。第 23 片(命令面板 + saved-views,约 110 行)实测净增 880B,而旧上限只剩 1,043B 余量——再搬一片即红。15KB 余量覆盖约十片;app.js 降到 500 行以下后需重新收紧。依赖膨胀或未压缩的第三方 blob 依旧会被这道门禁拦下。
 - **验证**:`scripts/frontend_gate.py` 全绿(node **270** + vitest **166** + 语法 + 400 行上限 + 资源版本);`tests/test_frontend_gate.py`(7 例)与 `tests/test_performance_gate.py`(3 例,operator JS 699,837B/715KB)绿;ruff 对两个改动脚本干净(存量 BLE001 未触碰)。
 
+### 前端门禁:vitest 段改为「观测运行」,彻底摆脱退出挂起(2026-08-31)
+
+- **ESBUILD_WORKER_THREADS=1 不够**:次日复测发现同一全量套件(16 文件/166 例全绿)在该 Windows 宿主上**进程退出仍不可靠**——同一份代码三个时间点直跑可在 20s 内退出 0,换个时间点就打印完整摘要后永不退出(`--isolate=false`、`--pool=forks`、限线程数均无效;测试本身 20s 跑完,挂的只是退出阶段)。
+- **门禁改为观测运行**(`scripts/frontend_gate.py` `_run_vitest_observed`):流式读取 stdout,一旦出现收尾的 `Duration` 行即认定本轮已跑完,给 45s 宽限窗让运行器自行退出,仍不退就 `taskkill /T /F` 整棵进程树。判定(`_vitest_exit_verdict`)以捕获的摘要为证据——**完整且干净的摘要(全部 passed、无 failed、无 Unhandled Errors)接受并打 WARN**,不完整/有失败/有未处理错误照旧 FAIL。
+- **顺带修掉两个观测缺陷**:vitest 摘要带 ANSI 色码(`Test Files \x1b[…16 passed`),完成检测与摘要正则都被色码隔断——匹配前统一剥离;`Duration` 行之后还有尾随空行,完成检测不能只看最后一行。
+- **效果**:门禁 vitest 段从「挂起/300s 超时」收敛到 **~66s**(实测),CI(Linux 上退出正常)行为不变——退出 0 走原路径,宽限窗/树杀只在退出异常时兜底。
+- **验证**:`scripts/frontend_gate.py` 全绿(node **284** + vitest **166**);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿;ruff 干净。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added
