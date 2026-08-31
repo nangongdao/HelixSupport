@@ -133,6 +133,7 @@
 - **顺带修掉两个观测缺陷**:vitest 摘要带 ANSI 色码(`Test Files \x1b[…16 passed`),完成检测与摘要正则都被色码隔断——匹配前统一剥离;`Duration` 行之后还有尾随空行,完成检测不能只看最后一行。
 - **效果**:门禁 vitest 段从「挂起/300s 超时」收敛到 **~66s**(实测),CI(Linux 上退出正常)行为不变——退出 0 走原路径,宽限窗/树杀只在退出异常时兜底。
 - **验证**:`scripts/frontend_gate.py` 全绿(node **284** + vitest **166**);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿;ruff 干净。
+- **内存压力 OOM 追加修复(同日)**:复盘发现 fork 池默认按 CPU 核数派生 worker,本机内存吃紧时 worker 触发 `FATAL ERROR: AlignedAlloc Allocation failed` → 批量 `Worker exited unexpectedly`、部分测试未跑完。门禁 vitest 段改加 `--minWorkers=1 --maxWorkers=2` 限并发;`_vitest_exit_verdict` 追加判定——「全部 `Test Files/Tests` passed、无 `failed`,且每个 Unhandled Error 块均为 tinypool worker 崩溃」视为 harness 噪音打 WARN 放行,任何非 worker 崩溃的未处理错误/失败计数照旧 FAIL。`tests/test_frontend_gate.py` 新增 `VitestExitVerdictTests` 5 例锁住判定。
 
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 

@@ -9,9 +9,11 @@ module exceeds 400 lines, and the Node unit-test suite passes with at least
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from scripts.frontend_gate import (
     _parse_summary,
+    _vitest_exit_verdict,
     check_asset_versions,
     check_line_limits,
     check_syntax,
@@ -82,6 +84,61 @@ class FrontendGateTests(unittest.TestCase):
         # A summary shape we do not recognise must not be mistaken for a
         # green zero-test run.
         self.assertEqual(_parse_summary("ok 1 - some test\n1..1\n"), {})
+
+
+class VitestExitVerdictTests(unittest.TestCase):
+    """The vitest segment consumes a captured summary, not the exit code."""
+
+    @staticmethod
+    def _verdict(stdout: str, returncode: int = 1) -> list[str]:
+        return _vitest_exit_verdict(
+            SimpleNamespace(returncode=returncode, stdout=stdout, stderr=""),
+        )
+
+    def test_worker_exit_noise_is_accepted_when_all_tests_pass(self) -> None:
+        # Memory pressure on Windows can OOM a tinypool worker after its tests
+        # finish — every suite passes, the only errors are worker exits.
+        stdout = (
+            "Vitest caught 2 unhandled errors during the test run.\n"
+            "\u2500\u2500 Unhandled Error \u2500\u2500\n"
+            "Error: Worker exited unexpectedly\n"
+            "  \u276f worker\n"
+            "\u2500\u2500 Unhandled Error \u2500\u2500\n"
+            "Error: Worker exited unexpectedly\n"
+            "  \u276f worker\n"
+            " Test Files  14 passed (14)\n"
+            "      Tests  149 passed (149)\n"
+            "     Errors  2 errors\n"
+        )
+        self.assertEqual(self._verdict(stdout), [])
+
+    def test_genuine_unhandled_error_is_a_failure(self) -> None:
+        stdout = (
+            "\u2500\u2500 Unhandled Error \u2500\u2500\n"
+            "Error: some island promise rejected\n"
+            "  \u276f src/quality.tsx\n"
+            " Test Files  14 passed (14)\n"
+            "      Tests  149 passed (149)\n"
+            "     Errors  1 errors\n"
+        )
+        self.assertTrue(self._verdict(stdout), "a non-worker unhandled error must fail")
+
+    def test_failed_tests_are_a_failure(self) -> None:
+        stdout = (
+            " Test Files  13 passed (14)\n"
+            "      Tests  148 passed | 1 failed\n"
+        )
+        self.assertTrue(self._verdict(stdout))
+
+    def test_clean_summary_is_accepted_even_with_a_nonzero_exit(self) -> None:
+        stdout = (
+            " Test Files  14 passed (14)\n"
+            "      Tests  149 passed (149)\n"
+        )
+        self.assertEqual(self._verdict(stdout, returncode=1), [])
+
+    def test_empty_run_is_a_failure(self) -> None:
+        self.assertTrue(self._verdict("no summary here", returncode=1))
 
 
 if __name__ == "__main__":
