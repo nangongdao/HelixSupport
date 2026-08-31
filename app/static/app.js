@@ -584,6 +584,23 @@ _helixModules.conversationActions?.configure?.({
   languageNames: LANGUAGE_NAMES,
   actions: { renderQueue },
 });
+_helixModules.conversationDetail?.configure?.({
+  state,
+  els,
+  apiWithHeaders,
+  renderDetail,
+  renderQueue,
+  stopWatching,
+  resetCopilot,
+  hideMentionSuggest,
+  windowedRowHeight,
+  closeQueueDrawer,
+  canWriteConversations,
+  showToast,
+  languageNames: LANGUAGE_NAMES,
+  languageOptions: LANGUAGE_OPTIONS,
+  threadPageLimit: THREAD_PAGE_LIMIT,
+});
 window.HelixModules?.conversationActions?.bindConversationDialog?.();
 
 function queuePageSize() {
@@ -882,32 +899,15 @@ function renderQualityPanel(targetBuckets = els.qualityBuckets, targetGaps = els
 
 // moved to js/qualityPanel.js (createKnowledgeDraftFromFeedback)
 
+// moved to js/conversation-detail.js (renderSubtitle/renderLanguagePicker)
 function renderSubtitle(conversation) {
-  const languageName = conversation.language
-    ? LANGUAGE_NAMES[conversation.language] || conversation.language
-    : "";
-  const subtitleParts = [
-    conversation.id,
-    conversation.channel,
-    conversation.customer_ref || "未绑定身份",
-  ];
-  if (languageName) subtitleParts.push(`语言:${languageName}`);
-  els.conversationSubtitle.textContent = subtitleParts.join(" · ");
+  return window.HelixModules?.['conversationDetail']?.['renderSubtitle'](conversation);
 }
 
-// Backlog (多语言客服): the header select mirrors the stored manual override
-// (empty = auto). Options are injected once; renderDetail sets the value so a
-// PATCH error can roll back by re-rendering.
+// Backlog (多语言客服): header select lives in js/conversation-detail.js
+// (renderLanguagePicker — injected once; PATCH rollback via renderDetail).
 function renderLanguagePicker(conversation) {
-  if (!els.conversationLanguageSelect) return;
-  // viewer/auditor have no conversation:write — hide the override control so
-  // read-only roles don't get a control that would always 403.
-  els.conversationLanguageSelect.hidden = !canWriteConversations();
-  if (!els.conversationLanguageSelect.dataset.built) {
-    els.conversationLanguageSelect.insertAdjacentHTML("beforeend", LANGUAGE_OPTIONS);
-    els.conversationLanguageSelect.dataset.built = "1";
-  }
-  els.conversationLanguageSelect.value = conversation.language || "";
+  return window.HelixModules?.['conversationDetail']?.['renderLanguagePicker'](conversation);
 }
 
 // moved to js/detail.js (renderDetail — the conversation-detail assembly
@@ -928,20 +928,10 @@ function renderSummaries(detail) {
 // A duplicate clearSelection shadowed the live one below (the later function
 // declaration wins in a classic script); it was removed — selectConversation
 // and refresh call the surviving copy that also stopWatching/resetCopilot.
+// moved to js/conversation-detail.js (loadDetail — the detail lifecycle with
+// the opaque X-Prev-Cursor transcript tail fetch).
 async function loadDetail(id) {
-  const sequence = ++state.detailSequence;
-  // ROADMAP §18.4: always load the newest tail of the transcript, then lazily
-  // fetch older messages upward. The detail response echoes an opaque
-  // X-Prev-Cursor header (docs/API_POLICY.md §3 — clients never parse cursors).
-  const limit = state.lowPerf ? 80 : THREAD_PAGE_LIMIT;
-  const { response, data: detail } = await apiWithHeaders(
-    `/api/conversations/${encodeURIComponent(id)}?message_limit=${limit}&messages_before=true`,
-  );
-  if (state.selectedId !== id || sequence !== state.detailSequence) return false;
-  state.threadPrevCursor = response.headers.get("X-Prev-Cursor") || null;
-  state.threadLoadingOlder = false;
-  renderDetail(detail);
-  return true;
+  return window.HelixModules?.['conversationDetail']?.['loadDetail'](id);
 }
 
 // ROADMAP §18.4: fetch the page of messages before the loaded tail and prepend
@@ -984,57 +974,18 @@ window.HelixModules?.session?.bindSession?.();
 
 // moved to js/session.js (toggleWatching)
 
+// moved to js/conversation-detail.js (selectConversation/ensureSelectedRowVisible/
+// clearSelection — the conversation switch reset + virtualized-row nudge).
 async function selectConversation(id) {
-  state.selectedId = id;
-  // 切换会话时收起 note 的候选列表(旧会话的 @token 不再适用)。
-  hideMentionSuggest();
-  // Nudge first so a virtual-mode re-render centers on the just-selected row.
-  ensureSelectedRowVisible(id);
-  renderQueue();
-  els.emptyState.hidden = true;
-  els.conversationView.hidden = false;
-  // Island mode: the thread island renders the loading state from a
-  // helix-thread-state snapshot; the legacy container is hidden.
-  if (window.__HELIX_ISLAND_MODE__) {
-    window.HelixModules?.thread?.publishThreadState?.({ loading: true });
-  } else {
-    els.messages.innerHTML = '<div class="thread-empty">正在加载会话</div>';
-  }
-  stopWatching();
-  try {
-    await loadDetail(id);
-    if (els.queuePane.classList.contains("is-open")) closeQueueDrawer({ restoreFocus: false });
-  } catch (error) {
-    showToast(error.message, true);
-    clearSelection();
-  }
+  return window.HelixModules?.['conversationDetail']?.['selectConversation'](id);
 }
 
-// ROADMAP §18.4: in virtual mode the selected row may sit outside the rendered
-// window — nudge the scrollport so it lands inside the viewport band.
 function ensureSelectedRowVisible(id) {
-  if (!state.queueVirtual) return;
-  const index = state.conversations.findIndex((c) => c.id === id);
-  if (index < 0) return;
-  const rowHeight = windowedRowHeight();
-  const top = index * rowHeight;
-  const bottom = top + rowHeight;
-  if (top < els.list.scrollTop) els.list.scrollTop = top;
-  else if (bottom > els.list.scrollTop + els.list.clientHeight) {
-    els.list.scrollTop = bottom - els.list.clientHeight;
-  }
+  return window.HelixModules?.['conversationDetail']?.['ensureSelectedRowVisible'](id);
 }
 
 function clearSelection() {
-  stopWatching();
-  state.detailSequence += 1;
-  state.selectedId = null;
-  state.detail = null;
-  els.emptyState.hidden = false;
-  els.conversationView.hidden = true;
-  els.noteForm.hidden = true;
-  resetCopilot();
-  renderQueue();
+  return window.HelixModules?.['conversationDetail']?.['clearSelection']();
 }
 
 function conversationQuery() {
