@@ -11,6 +11,7 @@
 import * as adminReport from "./admin-report.js?v=1.4.0";
 import * as adminReportBridge from "./admin-report-bridge.js?v=1.4.0";
 import * as api from "./api.js?v=1.4.0";
+import * as appCore from "./app-core.js?v=1.4.0";
 import * as appNav from "./app-nav.js?v=1.4.0";
 import * as attachments from "./attachment.js?v=1.4.0";
 import * as broadcast from "./broadcast.js?v=1.4.0";
@@ -123,6 +124,7 @@ export function initModules() {
     adminReport,
     adminReportBridge,
     api,
+    appCore,
     appNav,
     attachments,
     broadcast,
