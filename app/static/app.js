@@ -601,6 +601,60 @@ _helixModules.conversationDetail?.configure?.({
   languageOptions: LANGUAGE_OPTIONS,
   threadPageLimit: THREAD_PAGE_LIMIT,
 });
+_helixModules.boot?.configure?.({
+  state,
+  els,
+  document,
+  window,
+  selectConversation,
+  handleQueueScroll,
+  renderBulkToolbar,
+  switchInspectorTab,
+  setDensity,
+  // nextDensity/normalizeDensity are const-destructured from the density
+  // module further down this file — defer the reference so configure-time is
+  // TDZ-safe (same reason the queueView block uses arrow functions).
+  nextDensity: (level) => nextDensity(level),
+  renderQueue,
+  applyWorkspacePreferences,
+  schedulePolling,
+  showToast,
+  refreshAll,
+  renderInspector,
+  applyMacroFromSuggest,
+  insertCannedResponse,
+  switchAppView,
+  renderSummaries,
+  renderWebhookEventCheckboxes,
+  saveQuota,
+  inviteMember,
+  registerWebhook,
+  loadAdminView,
+  saveQuotaFromIsland,
+  inviteMemberFromIsland,
+  changeMemberRoleFromIsland,
+  deactivateMemberFromIsland,
+  registerWebhookFromIsland,
+  deleteWebhookFromIsland,
+  createSubscriptionFromIsland,
+  toggleSubscriptionFromIsland,
+  deleteSubscriptionFromIsland,
+  generateReportFromIsland,
+  saveSlaFromIsland,
+  createRuleFromIsland,
+  deleteRuleFromIsland,
+  changeMemberRole,
+  deactivateMember,
+  deleteWebhook,
+  renderMetrics,
+  renderLoadingQueue,
+  detectConstrainedDevice,
+  normalizeDensity: (level) => normalizeDensity(level),
+  loadSavedViews,
+  PREF_LOW_PERF,
+  PREF_INSPECTOR,
+  PREF_DENSITY,
+});
 window.HelixModules?.conversationActions?.bindConversationDialog?.();
 
 function queuePageSize() {
@@ -1341,263 +1395,13 @@ function schedulePolling() {
 
 // moved to js/queue-actions.js (loadMoreConversations + applyBulkAction)
 
-els.list.addEventListener("click", (event) => {
-  const item = event.target.closest(".conversation-item");
-  if (item?.dataset.id) selectConversation(item.dataset.id);
-});
-
-// ROADMAP §18.4: virtual-mode scroll keeps the windowed render aligned.
-els.list.addEventListener("scroll", handleQueueScroll, { passive: true });
-
-// The thread's feedback/translate click routing moved to js/thread.js
-// (bindThread), which also owns the island bridges.
-
-els.list.addEventListener("change", (event) => {
-  const checkbox = event.target.closest(".conversation-checkbox");
-  if (!checkbox?.dataset.selectId) return;
-  if (checkbox.checked) state.bulkSelected.add(checkbox.dataset.selectId);
-  else state.bulkSelected.delete(checkbox.dataset.selectId);
-  checkbox.closest(".conversation-row")?.classList.toggle("is-selected", checkbox.checked);
-  renderBulkToolbar();
-});
-
-document.querySelectorAll(".inspector-tab").forEach((button) => {
-  button.addEventListener("click", () => switchInspectorTab(button.dataset.tab));
-});
-
-// moved to js/conversation-actions.js (new-conversation dialog lifecycle:
-// open/close/createConversation + legacy form binding + island bridge).
-
-// moved to js/queue-filters.js (queue filter controls + debounced search).
-// moved to js/saved-views.js (saved-view CRUD + legacy bindings + island
-// bridges, plus the filter snapshot / select render / reload / apply).
-
-els.densityToggle.addEventListener("click", () => {
-  // In low-perf the visible density is always compact (effectiveDensity);
-  // cycling here would mutate the stored choice with no visible effect and
-  // it would only materialize after low-perf is disabled (audit D3).
-  if (state.lowPerf) return;
-  setDensity(nextDensity(state.density));
-  renderQueue();
-});
-  if (els.lowPerfToggle) {
-    els.lowPerfToggle.addEventListener("click", () => {
-      state.lowPerf = !state.lowPerf;
-      window.localStorage.setItem(PREF_LOW_PERF, state.lowPerf ? "1" : "0");
-      applyWorkspacePreferences();
-      // UI 升级 §17.2: low-perf forces compact through the density module
-      // (effectiveDensity) without discarding the user's chosen level.
-      setDensity(state.density, { persist: false });
-      schedulePolling();
-      showToast(state.lowPerf ? "已开启低配模式" : "已关闭低配模式");
-      void refreshAll({ silent: true, refreshDetail: false });
-    });
-  }
-if (els.inspectorToggle) {
-  els.inspectorToggle.addEventListener("click", () => {
-    state.inspectorCollapsed = !state.inspectorCollapsed;
-    window.localStorage.setItem(PREF_INSPECTOR, state.inspectorCollapsed ? "1" : "0");
-    applyWorkspacePreferences();
-    if (!state.inspectorCollapsed && state.detail) {
-      renderInspector(state.detail);
-    }
-  });
-}
-els.bulkAction.addEventListener("change", renderBulkToolbar);
-// The applyBulk click binding (with its no-MouseEvent-leak guard) moved to
-// js/queue-actions.js bindQueueActions.
-
-els.clearBulk.addEventListener("click", () => {
-  state.bulkSelected.clear();
-  renderQueue();
-});
-// moved to js/queue-filters.js (debounced search input).
-// moved to js/conversation-actions.js (new-conversation dialog lifecycle)
-async function createConversation(payload) {
-  return window.HelixModules?.['conversationActions']?.['createConversation'](...arguments);
-}
+// The legacy boot wiring (queue/inspector/density listeners, desktop island
+// bridges, admin form bindings, initial render + preference hydration) now
+// lives in js/boot.js — a single bindLegacyBoot() call (configure-injected).
 
 // moved to js/queue-view.js (mobile queue drawer: scrim/focus-trap/inert)
 function closeQueueDrawer(options = {}) {
   return window.HelixModules?.['queueView']?.['closeQueueDrawer'](...arguments);
 }
 
-// moved to js/shortcuts.js (§17.3 single-key shortcuts: / c r i l j/k).
-
-// Tab lifecycle (unhandledrejection/visibilitychange) moved to js/refresh.js bindRefresh.
-
-if (els.macroSuggest) {
-  els.macroSuggest.addEventListener("click", (event) => {
-    const button = event.target.closest(".macro-option");
-    if (button?.dataset.macroId) applyMacroFromSuggest(button.dataset.macroId);
-  });
-}
-if (els.cannedList) {
-  els.cannedList.addEventListener("click", (event) => {
-    const button = event.target.closest(".canned-chip");
-    if (button?.dataset.macroId) insertCannedResponse(button.dataset.macroId);
-  });
-}
-window.HelixModules?.qualityPanel?.bindQuality?.();
-window.HelixModules?.knowledgeView?.bindKnowledgeView?.();
-window.HelixModules?.queueView?.bindQueueDrawer?.();
-window.HelixModules?.savedViews?.bindSavedViews?.();
-window.HelixModules?.commandDispatch?.bindCommandDispatch?.();
-window.HelixModules?.refresh?.bindRefresh?.();
-window.HelixModules?.queueActions?.bindQueueActions?.();
-window.HelixModules?.queueFilters?.bindQueueFilters?.();
-window.HelixModules?.shortcuts?.bindShortcuts?.();
-window.HelixModules?.conversationActions?.bindConversationActions?.();
-window.HelixModules?.notes?.bindNotes?.();
-window.HelixModules?.thread?.bindThread?.();
-window.HelixModules?.composer?.bindComposer?.();
-// §17.1 palette: the shell island owns Ctrl+K (__HELIX_ISLAND_MODE__) so the
-// legacy <dialog> never stacks on top of it; in a browser tab the flag is
-// never set and js/command-dispatch.js bindCommandPalette is the handler.
-window.HelixModules?.commandDispatch?.bindCommandPalette?.();
-
-window.HelixModules?.ticketView?.bindTickets?.();
-window.HelixModules?.attachments?.bindAttachments?.();
-// UI 升级 §17.1: 全局导航栏 — view switching + quality refresh.
-if (els.appNav) {
-  els.appNav.addEventListener("click", (event) => {
-    const button = event.target.closest(".nav-item");
-    if (button?.dataset.view) switchAppView(button.dataset.view);
-  });
-}
-
-// moved to js/notes.js (note composer listeners) and
-// js/composer-island-bridge.js (operator draft/macro typing).
-// Knowledge page listeners + knowledge-island bridges moved to
-// js/knowledge-view.js (bindKnowledgeView — bound at boot below).
-// D3 bridge: the React ticket island dispatches "helix-ticket-open" when a
-// row is clicked (the legacy #ticketList is yielded and hidden in the
-// desktop shell). Bridge it to the legacy detail opener so the ticket detail
-// view stays in ticket-view.js until a later D3 slice migrates it.
-window.addEventListener("helix-ticket-open", (event) => {
-  const { ticketId } = event.detail || {};
-  if (!ticketId) return;
-  void window.HelixModules?.ticketView?.openTicketDetail?.(ticketId);
-});
-// D3 bridge: the React queue island dispatches "helix-queue-select" when a
-// row is clicked (the legacy #conversationList is yielded and hidden in the
-// desktop shell). Bridge it back to the legacy detail loader, which owns the
-// conversation thread view until a later D3 slice migrates it.
-window.addEventListener("helix-queue-select", (event) => {
-  const { id } = event.detail || {};
-  if (!id) return;
-  void selectConversation(id);
-});
-// D3 bridge (workspace tabs island): the island dispatches
-// helix-workspace-tab on clicks; pane switching and the data side effects
-// (ticket loading, queue refresh) stay in legacy switchWorkspaceTab.
-window.addEventListener("helix-workspace-tab", (event) => {
-  const { field } = event.detail || {};
-  if (!["queue", "tickets"].includes(field)) return;
-  window.HelixModules?.ticketView?.switchWorkspaceTab?.(field);
-});
-// D3 bridge (mentions island): the island owns the badge/panel; jumping to
-// a mentioned conversation and the mark-read POST+toast stay legacy.
-window.addEventListener("helix-mentions-open-jump", async (event) => {
-  const { conversationId } = event.detail || {};
-  if (conversationId) await selectConversation(conversationId);
-});
-window.addEventListener("helix-mentions-mark-read", async (event) => {
-  const { id } = event.detail || {};
-  if (id) await window.HelixModules?.session?.markMentionRead?.(id);
-});
-// D3 bridge (summary island): republish the current banner model on request.
-window.addEventListener("helix-summary-sync", () => {
-  if (window.__HELIX_ISLAND_MODE__ && state.detail) renderSummaries(state.detail);
-});
-// D3 bridge (command palette island): the palette island dispatches
-// helix-command {id} for every executed command. This consumer was missing
-// since the palette was island-activated, so desktop commands were inert;
-// each id maps onto the same handlers the legacy surfaces use.
-// moved to js/command-dispatch.js (checkBackendHealth + the palette island's
-// helix-command consumer; switchAppView/refreshAll arrive via configure).
-
-// D3 bridge: on mount the React queue island asks for the current queue
-// snapshot (helix-conversations-sync); re-render in island mode so the
-// freshly mounted island receives the latest list via renderQueue().
-window.addEventListener("helix-conversations-sync", () => {
-  if (!window.__HELIX_ISLAND_MODE__) return;
-  void window.HelixModules?.queueView?.renderQueue?.();
-});
-// UI 升级 §17.3: 管理页 — forms, member actions, webhook delete, refresh.
-renderWebhookEventCheckboxes();
-if (els.quotaForm) els.quotaForm.addEventListener("submit", (event) => void saveQuota(event));
-if (els.memberForm) els.memberForm.addEventListener("submit", (event) => void inviteMember(event));
-if (els.webhookForm) els.webhookForm.addEventListener("submit", (event) => void registerWebhook(event));
-window.HelixModules?.adminReport?.bindAdminReports?.();
-if (els.refreshAdmin) {
-  els.refreshAdmin.addEventListener("click", () => {
-    // The header button is not yielded (it sits outside the island mount),
-    // so in island mode it drives the island's queries directly instead of
-    // the legacy fetch chain.
-    if (window.__HELIX_ISLAND_MODE__) {
-      window.dispatchEvent(new CustomEvent("helix-admin-refresh", { detail: { force: true } }));
-      return;
-    }
-    void loadAdminView();
-  });
-}
-// D3 bridge (admin island): the React admin island dispatches helix-admin-*
-// write events with form payloads; the bridges above own the api()/toast
-// lifecycle and answer with helix-admin-saved for the island's refetch.
-for (const [eventType, handler] of [
-  ["helix-admin-save-quota", saveQuotaFromIsland],
-  ["helix-admin-invite-member", inviteMemberFromIsland],
-  ["helix-admin-member-role", changeMemberRoleFromIsland],
-  ["helix-admin-member-deactivate", deactivateMemberFromIsland],
-  ["helix-admin-register-webhook", registerWebhookFromIsland],
-  ["helix-admin-delete-webhook", deleteWebhookFromIsland],
-  ["helix-admin-create-subscription", createSubscriptionFromIsland],
-  ["helix-admin-toggle-subscription", toggleSubscriptionFromIsland],
-  ["helix-admin-delete-subscription", deleteSubscriptionFromIsland],
-  ["helix-admin-generate-report", generateReportFromIsland],
-  ["helix-admin-save-sla", saveSlaFromIsland],
-  ["helix-admin-create-rule", createRuleFromIsland],
-  ["helix-admin-delete-rule", deleteRuleFromIsland],
-]) {
-  window.addEventListener(eventType, (event) => void handler(event.detail || {}));
-}
-if (els.memberList) {
-  els.memberList.addEventListener("change", (event) => {
-    const select = event.target.closest(".member-role-select");
-    if (select) void changeMemberRole(select.dataset.actor, select.value);
-  });
-  els.memberList.addEventListener("click", (event) => {
-    const button = event.target.closest(".member-deactivate");
-    if (button) void deactivateMember(button.dataset.actor);
-  });
-}
-if (els.webhookList) {
-  els.webhookList.addEventListener("click", (event) => {
-    const button = event.target.closest(".webhook-delete");
-    if (button) void deleteWebhook(button.dataset.id);
-  });
-}
-
-renderMetrics(null);
-renderLoadingQueue();
-
-const storedLowPerf = window.localStorage.getItem(PREF_LOW_PERF);
-state.lowPerf = storedLowPerf === "1" || (storedLowPerf !== "0" && detectConstrainedDevice());
-if (storedLowPerf == null && state.lowPerf) {
-  window.localStorage.setItem(PREF_LOW_PERF, "1");
-}
-state.inspectorCollapsed = window.localStorage.getItem(PREF_INSPECTOR) === "1";
-state.density = normalizeDensity(window.localStorage.getItem(PREF_DENSITY));
-if (state.lowPerf && window.localStorage.getItem(PREF_DENSITY) == null) {
-  // Auto-detected low-perf must not persist a density the user never chose
-  // (audit D2): effectiveDensity() forces compact while low-perf is active,
-  // and the stored default stays untouched for when low-perf is disabled.
-  state.density = "compact";
-}
-setDensity(state.density, { persist: false });
-applyWorkspacePreferences();
-schedulePolling();
-loadSavedViews();
-
-refreshAll();
+window.HelixModules?.boot?.bindLegacyBoot();
