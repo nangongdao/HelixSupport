@@ -248,10 +248,25 @@ describe("ComposerIsland attachment bar", () => {
     render(<ComposerIsland />);
     publishToolsState();
     const file = new File(["hello"], "报告.pdf", { type: "application/pdf" });
-    fireEvent.change(document.getElementById("attachmentFile"), { target: { files: [file] } });
+    fireEvent.change(document.getElementById(INPUT_IDS.attachmentFile), {
+      target: { files: [file] },
+    });
     const uploadEvent = dispatchSpy.mock.calls.map(([ev]) => ev).find(
       (ev) => ev.type === COMPOSER_EVENTS.ATTACHMENT_UPLOAD,
     );
     expect(uploadEvent.detail.file).toBe(file);
+  });
+
+  // The id must stay distinct from the yielded legacy #attachmentFile: a
+  // `<label for>` binds to the first element in tree order with that id, and
+  // legacy's (hidden) copy comes first, which left the island's own input and
+  // this bridge unreachable from its own upload label.
+  it("gives the file input an id the upload label actually controls", () => {
+    render(<ComposerIsland />);
+    publishToolsState();
+    const label = document.querySelector("label.attachment-upload");
+    expect(label.getAttribute("for")).toBe(INPUT_IDS.attachmentFile);
+    expect(INPUT_IDS.attachmentFile).not.toBe("attachmentFile");
+    expect(document.getElementById(INPUT_IDS.attachmentFile)).toBeTruthy();
   });
 });

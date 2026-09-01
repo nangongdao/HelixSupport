@@ -101,9 +101,45 @@ def seed_shell_conversations(page: Page) -> None:
     expect(page.locator("#queueReactIsland")).to_contain_text("验收客户 1")
 
 
+def assert_island_labels_bind_inside_their_island(page: Page) -> None:
+    """Every ``<label for>`` in an island must control that island's own input.
+
+    The dual track leaves legacy elements in the DOM (hidden, not removed), and
+    several islands deliberately re-render legacy ids so locators keep
+    resolving. ``label[for]`` binds to the *first* element in tree order with
+    that id, so whether a label reaches the island's input or legacy's dead one
+    depends purely on DOM order — it cannot be checked statically.
+
+    The composer's attachment upload shipped broken this way: its label carried
+    ``for="attachmentFile"`` while legacy's hidden copy came first, so the
+    island's own input and its helix-composer-attachment-upload bridge were
+    unreachable and every upload went through legacy's listener instead.
+    """
+    offenders = page.evaluate(
+        """() => {
+            const bad = [];
+            for (const mount of document.querySelectorAll('[id$="ReactIsland"]')) {
+                for (const label of mount.querySelectorAll('label[for]')) {
+                    const control = label.control;
+                    if (!control) {
+                        bad.push({island: mount.id, for: label.getAttribute('for'),
+                                  reason: 'no control'});
+                    } else if (!mount.contains(control)) {
+                        bad.push({island: mount.id, for: label.getAttribute('for'),
+                                  reason: 'binds outside the island'});
+                    }
+                }
+            }
+            return bad;
+        }"""
+    )
+    assert not offenders, f"island labels not bound to their own inputs: {offenders}"
+
+
 def assert_desktop_shell_accessibility(page: Page) -> None:
     wait_for_desktop_shell(page)
     seed_shell_conversations(page)
+    assert_island_labels_bind_inside_their_island(page)
     for theme in ("dark", "light"):
         page.evaluate(f"() => window.HelixModules.applyTheme({theme!r})")
         # Scan settled tokens, not the transient colours mid-transition.

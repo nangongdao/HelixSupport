@@ -37,9 +37,15 @@ def wait_for_cdp(deadline_s: float = 90.0) -> list[dict]:
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{DEBUG_PORT}/json/list", timeout=2) as res:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{DEBUG_PORT}/json/list", timeout=2
+            ) as res:
                 targets = json.loads(res.read().decode("utf-8"))
-            pages = [t for t in targets if t.get("type") == "page" and "127.0.0.1" in (t.get("url") or "")]
+            pages = [
+                t
+                for t in targets
+                if t.get("type") == "page" and "127.0.0.1" in (t.get("url") or "")
+            ]
             if pages:
                 return targets
         except Exception:
@@ -123,8 +129,12 @@ def main() -> int:
 
             # Select the conversation from the queue island.
             page.locator("#refreshList").click()
-            page.wait_for_selector("#queueReactIsland .conversation-item", state="visible", timeout=30000)
-            page.locator(f"#queueReactIsland .conversation-item[data-id='{seeded['conversationId']}']").click()
+            page.wait_for_selector(
+                "#queueReactIsland .conversation-item", state="visible", timeout=30000
+            )
+            page.locator(
+                f"#queueReactIsland .conversation-item[data-id='{seeded['conversationId']}']"
+            ).click()
 
             # Tool surfaces visible in the island (legacy forms stay yielded).
             page.wait_for_function(
@@ -147,7 +157,9 @@ def main() -> int:
 
             # ── Canned chip → island insertion + real /use POST ──
             with page.expect_response(
-                lambda r: "/canned-responses/" in r.url and r.url.endswith("/use") and r.request.method == "POST"
+                lambda r: "/canned-responses/" in r.url
+                and r.url.endswith("/use")
+                and r.request.method == "POST"
             ) as use_info:
                 page.locator("#composerReactIsland #cannedList .canned-chip").first.click()
             checks["macro_use_post_status"] = use_info.value.status
@@ -175,7 +187,9 @@ def main() -> int:
                 timeout=10000,
             )
             with page.expect_response(
-                lambda r: "/canned-responses/" in r.url and r.url.endswith("/use") and r.request.method == "POST"
+                lambda r: "/canned-responses/" in r.url
+                and r.url.endswith("/use")
+                and r.request.method == "POST"
             ) as use_info2:
                 page.locator("#composerReactIsland #macroSuggest .macro-option").first.click()
             checks["macro_pick_post_status"] = use_info2.value.status
@@ -210,7 +224,9 @@ def main() -> int:
             )
 
             # Apply a suggestion into the textarea.
-            page.locator("#composerReactIsland #copilotSuggestions .copilot-suggestion").first.click()
+            page.locator(
+                "#composerReactIsland #copilotSuggestions .copilot-suggestion"
+            ).first.click()
             checks["suggestion_applied"] = page.evaluate(
                 "() => document.getElementById('operatorInputReact').value.length > 0"
             )
@@ -236,8 +252,18 @@ def main() -> int:
                     lambda r: r.url.endswith("/api/attachments") and r.request.method == "POST",
                     timeout=15000,
                 ) as upload_info:
-                    page.locator("#composerReactIsland #attachmentFile").set_input_files(
-                        files=[{"name": "凭证.txt", "mimeType": "text/plain", "buffer": b"attachment proof"}]
+                    # #attachmentFileReact, not #attachmentFile: the island's
+                    # input needs an id distinct from the yielded legacy one, or
+                    # its own upload label binds to legacy's (first in tree
+                    # order) and this bridge is never reached.
+                    page.locator("#composerReactIsland #attachmentFileReact").set_input_files(
+                        files=[
+                            {
+                                "name": "凭证.txt",
+                                "mimeType": "text/plain",
+                                "buffer": b"attachment proof",
+                            }
+                        ]
                     )
                 checks["attachment_post_status"] = upload_info.value.status
             except Exception as error:  # noqa: BLE001 — diagnostic path
