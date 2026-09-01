@@ -131,6 +131,13 @@ def _run_script(
         args,
         capture_output=True,
         text=True,
+        # The anchor scripts print Chinese diagnostics; `text=True` alone
+        # decodes with the OS default codepage, which on Windows is GBK. The
+        # reader thread then dies on UnicodeDecodeError and `stderr` comes
+        # back as None, so an assertion about the message fails with a
+        # TypeError that says nothing about the actual tamper detection.
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         check=False,
     )

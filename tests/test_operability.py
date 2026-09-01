@@ -87,6 +87,14 @@ class MigrationDrillTests(unittest.TestCase):
                 [sys.executable, "scripts/migration_drill.py", "--db", str(db_path)],
                 capture_output=True,
                 text=True,
+                # `text=True` alone decodes with the OS default codepage (GBK
+                # on Windows). The drill's output is ASCII today, so this is
+                # prophylactic: the first non-ASCII character in a diagnostic
+                # would kill the reader thread and hand the assertions below a
+                # None stderr, failing with a TypeError that says nothing
+                # about the migration. Same fix as tests/test_audit_anchors.py.
+                encoding="utf-8",
+                errors="replace",
                 cwd=str(Path(__file__).resolve().parents[1]),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -107,6 +115,8 @@ class MigrationDrillTests(unittest.TestCase):
                 [sys.executable, "scripts/migration_drill.py", "--db", str(db_path)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=str(Path(__file__).resolve().parents[1]),
             )
             self.assertNotEqual(result.returncode, 0)
