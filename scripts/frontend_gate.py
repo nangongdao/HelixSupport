@@ -54,6 +54,9 @@ STATIC_REF_RE = re.compile(r"/static/[A-Za-z0-9_./-]+(?:\?[^\"'()\s<>]+)?(?:#[^\
 CSS_PROP_DEF_RE = re.compile(r"(--[A-Za-z0-9_-]+)\s*:")
 # A var() reference; group 2 is the comma that opens a fallback, if present.
 CSS_VAR_USE_RE = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(,)?")
+# `<symbol id="x">` in the sprite, and `icons.svg?v=…#x` in a <use href>.
+SVG_SYMBOL_ID_RE = re.compile(r"<symbol[^>]*\bid=\"([A-Za-z0-9_-]+)\"")
+ICON_REF_RE = re.compile(r"icons\.svg[^\"'#\s]*#([A-Za-z0-9_-]+)")
 LOCAL_IMPORT_RE = re.compile(r"(?:from\s+|import\s+)[\"'](\./[^\"']+\.js(?:\?v=[^\"']+)?)\1")
 
 
@@ -122,6 +125,54 @@ def check_line_limits() -> list[str]:
         if lines > MAX_LINES:
             rel = path.relative_to(ROOT).as_posix()
             problems.append(f"{rel}: {lines} lines exceeds {MAX_LINES}")
+    return problems
+
+
+def check_icon_symbols() -> list[str]:
+    """Fail on ``icons.svg#name`` where the sprite has no such ``<symbol>``.
+
+    An ``<svg><use href="...#missing"></svg>`` paints nothing at all — no
+    console error, no network 404 (the sprite itself resolves), just an empty
+    box. Four shipped controls were found this way, the worst being
+    ``#themeToggle``: an icon-only header button with no visible text, so it
+    rendered completely blank. The visual baselines had captured it broken and
+    axe passes because the button carries a proper aria-label, so nothing in
+    the suite objected.
+    """
+    sprite = ROOT / "app" / "static" / "icons.svg"
+    defined = set(SVG_SYMBOL_ID_RE.findall(sprite.read_text(encoding="utf-8")))
+    sources: list[tuple[str, str]] = []
+    for root, patterns in (
+        (ROOT / "app" / "static", ("*.html", "*.js")),
+        (FRONTEND_SRC_DIR, ("*.jsx", "*.js")),
+    ):
+        for pattern in patterns:
+            for path in sorted(root.rglob(pattern)):
+                if "dist" in path.parts or "node_modules" in path.parts:
+                    continue
+                sources.append(
+                    (path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8"))
+                )
+    return find_unknown_icon_symbols(sources, defined)
+
+
+def find_unknown_icon_symbols(sources: list[tuple[str, str]], defined: set[str]) -> list[str]:
+    """Pure core of :func:`check_icon_symbols`.
+
+    :param sources: ``(display_name, source_text)`` pairs to scan.
+    :param defined: symbol ids the sprite actually declares.
+    """
+    problems: list[str] = []
+    for name, source in sources:
+        for match in ICON_REF_RE.finditer(source):
+            symbol = match.group(1)
+            if symbol in defined:
+                continue
+            line = source.count("\n", 0, match.start()) + 1
+            problems.append(
+                f"{name}:{line}: icons.svg#{symbol} is not a symbol in the "
+                f"sprite, so the <use> paints nothing"
+            )
     return problems
 
 
@@ -194,9 +245,7 @@ def check_asset_versions() -> list[str]:
             if "/static/dist/" in ref:
                 continue
             if expected not in ref:
-                problems.append(
-                    f"{path.relative_to(ROOT)}: unversioned static reference {ref}"
-                )
+                problems.append(f"{path.relative_to(ROOT)}: unversioned static reference {ref}")
         for match in LOCAL_IMPORT_RE.finditer(source):
             if expected not in match.group(2):
                 problems.append(
@@ -410,6 +459,7 @@ def main() -> int:
     problems.extend(check_syntax())
     problems.extend(check_line_limits())
     problems.extend(check_css_custom_properties())
+    problems.extend(check_icon_symbols())
     problems.extend(check_asset_versions())
     test_problems, test_count = run_tests()
     problems.extend(test_problems)

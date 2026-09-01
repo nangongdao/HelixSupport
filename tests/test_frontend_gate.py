@@ -16,9 +16,11 @@ from scripts.frontend_gate import (
     _vitest_exit_verdict,
     check_asset_versions,
     check_css_custom_properties,
+    check_icon_symbols,
     check_line_limits,
     check_syntax,
     find_dangling_css_vars,
+    find_unknown_icon_symbols,
     run_tests,
 )
 
@@ -90,6 +92,48 @@ class FrontendGateTests(unittest.TestCase):
     def test_no_shipped_css_var_is_dangling(self) -> None:
         problems = check_css_custom_properties()
         self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_every_icon_reference_resolves_to_a_sprite_symbol(self) -> None:
+        problems = check_icon_symbols()
+        self.assertEqual(problems, [], "\n".join(problems))
+
+
+class UnknownIconSymbolTests(unittest.TestCase):
+    """``<use href="icons.svg#missing">`` paints nothing, silently.
+
+    Four shipped controls referenced symbols the sprite never declared; the
+    worst, #themeToggle, is icon-only and rendered blank. No console error, no
+    404 (the sprite resolves), and axe passes on the aria-label — so these
+    cases pin the detection instead.
+    """
+
+    DEFINED = {"check", "moon"}
+
+    def test_known_symbol_is_clean(self) -> None:
+        html = '<svg><use href="/static/icons.svg?v=1.4.0#check" /></svg>'
+        self.assertEqual(find_unknown_icon_symbols([("index.html", html)], self.DEFINED), [])
+
+    def test_unknown_symbol_is_reported(self) -> None:
+        html = '<svg><use href="/static/icons.svg?v=1.4.0#nope" /></svg>'
+        problems = find_unknown_icon_symbols([("index.html", html)], self.DEFINED)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("icons.svg#nope", problems[0])
+
+    def test_jsx_href_form_is_scanned_too(self) -> None:
+        # The islands write the same reference in JSX; a symbol missing there
+        # is just as blank (mentions-island.jsx carried one).
+        jsx = 'const I = () => <svg><use href="/static/icons.svg?v=1.4.0#ghost" /></svg>;'
+        problems = find_unknown_icon_symbols([("island.jsx", jsx)], self.DEFINED)
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_reference_without_version_query_is_matched(self) -> None:
+        html = '<svg><use href="/static/icons.svg#nope" /></svg>'
+        self.assertEqual(len(find_unknown_icon_symbols([("i.html", html)], self.DEFINED)), 1)
+
+    def test_line_number_points_at_the_reference(self) -> None:
+        html = '<div>\n  <p>x</p>\n</div>\n<svg><use href="/static/icons.svg#nope" /></svg>'
+        problems = find_unknown_icon_symbols([("i.html", html)], self.DEFINED)
+        self.assertIn("i.html:4", problems[0])
 
 
 class DanglingCssVarTests(unittest.TestCase):
