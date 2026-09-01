@@ -226,6 +226,11 @@ class OutboxConsumerRuntimeTests(unittest.TestCase):
         )
         self.client = TestClient(create_app(self.settings))
         self.services = cast(Any, self.client.app).state.services
+        # Sandbox DNS maps example.com -> reserved 198.18.x.x; the SSRF guard
+        # would reject it as a private/loopback address. Pin a public resolver
+        # (same hermetic pattern as test_webhooks.py) so the app-API webhook
+        # registration tests stay environment-independent.
+        self.services.webhooks._resolve_host = _public_resolve
 
     def tearDown(self) -> None:
         self.client.close()

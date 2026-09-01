@@ -27,6 +27,14 @@ ADMIN_KEY = "admin-test-key-0001"
 ACME_KEY = "acme-admin-key-0001"
 
 
+def _public_resolve(_host: str, _port: int) -> list[str]:
+    """Hermetic resolver so example.com is treated as public (test_webhooks
+    pattern). Sandbox DNS maps example.com to reserved 198.18.x.x, which the
+    SSRF guard rejects as private/loopback — without this the webhook tests
+    get 422 before the envelope fail-closed path can assert its 503."""
+    return ["93.184.216.34"]
+
+
 class EnvelopeRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -55,6 +63,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
         )
         self.client = TestClient(create_app(self.settings))
         self.services = cast(Any, self.client.app).state.services
+        self.services.webhooks._resolve_host = _public_resolve
 
     def tearDown(self) -> None:
         self.client.close()
@@ -150,6 +159,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
             )
             client = TestClient(create_app(settings))
             services = cast(Any, client.app).state.services
+            services.webhooks._resolve_host = _public_resolve
             try:
                 self.assertIsNone(services.envelope_cipher)
                 response = client.post(
