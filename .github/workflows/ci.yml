@@ -60,6 +60,11 @@ jobs:
       - name: Frontend gate
         run: python scripts/frontend_gate.py
 
+      # --allow-empty-pubkey: 签名证书采购中（D5 唯一外部依赖）。证书到位后
+      # 填入 pubkey 并摘掉此旗标，让空 pubkey 重新成为硬失败。
+      - name: Tauri config gate
+        run: python scripts/tauri_config_gate.py --allow-empty-pubkey
+
       - name: Unit tests with coverage
         run: |
           python -m coverage run -m pytest tests -q
