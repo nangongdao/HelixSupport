@@ -19,7 +19,16 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.residency import summarize_tenant_residency
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/backup.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+from app.residency import summarize_tenant_residency  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -149,4 +158,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

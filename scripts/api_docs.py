@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+import sys
+sys.path.insert(0, str(ROOT))
+from scripts._console import use_utf8_console  # noqa: E402
 SNAPSHOT = ROOT / "api" / "openapi.json"
 OUTPUT = ROOT / "docs" / "api" / "reference.md"
 
@@ -167,4 +171,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

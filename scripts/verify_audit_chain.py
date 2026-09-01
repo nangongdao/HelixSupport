@@ -22,10 +22,19 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from app.audit_anchor import verify_signed_anchor
-from app.audit_chain import chain_head, validate_audit_archive, verify_chain
-from app.audit_gap import HIGH_RISK_EVENT_TYPES
-from app.worm_store import DiskWormStore, WormIntegrityError, WormUnavailableError
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/verify_audit_chain.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+from app.audit_anchor import verify_signed_anchor  # noqa: E402
+from app.audit_chain import chain_head, validate_audit_archive, verify_chain  # noqa: E402
+from app.audit_gap import HIGH_RISK_EVENT_TYPES  # noqa: E402
+from app.worm_store import DiskWormStore, WormIntegrityError, WormUnavailableError  # noqa: E402
 
 
 def load_rows(connection: sqlite3.Connection) -> list[dict]:
@@ -282,4 +291,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

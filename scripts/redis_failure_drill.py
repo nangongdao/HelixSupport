@@ -38,10 +38,20 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
-from app.config import Settings
-from app.database import Database
-from app.main import create_app
-from app.queue import QueueUnavailableError, RedisTaskQueue
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/redis_failure_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+
+from app.config import Settings  # noqa: E402
+from app.database import Database  # noqa: E402
+from app.main import create_app  # noqa: E402
+from app.queue import QueueUnavailableError, RedisTaskQueue  # noqa: E402
 
 QUEUE_KEYS = (
     "helix:q:dispatch",
@@ -404,4 +414,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

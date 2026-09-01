@@ -40,6 +40,8 @@ _DESCRIPTION = (__doc__ or "visual regression gate").strip().splitlines()[0]
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from scripts._console import use_utf8_console  # noqa: E402
+
 from PIL import Image  # noqa: E402
 from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import Page, sync_playwright  # noqa: E402
@@ -235,4 +237,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

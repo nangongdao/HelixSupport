@@ -40,6 +40,7 @@ import tracemalloc
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts._console import use_utf8_console  # noqa: E402
 
 from scripts.pagination_load_test import (  # noqa: E402
     DENSE_MESSAGE_SEARCH_TERM,
@@ -384,4 +385,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

@@ -26,9 +26,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
-from app.database import Database
-from app.worm_store import DiskWormStore
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/run_restore_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim  # noqa: E402
+from app.database import Database  # noqa: E402
+from app.worm_store import DiskWormStore  # noqa: E402
 
 logger = logging.getLogger("helix")
 
@@ -240,4 +249,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

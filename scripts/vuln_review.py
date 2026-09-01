@@ -28,6 +28,10 @@ from pathlib import Path
 _DESCRIPTION = (__doc__ or "supply-chain gate").strip().splitlines()[0]
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
 DEFAULT_EXCEPTIONS = ROOT / "supplychain" / "vulnerability-exceptions.json"
 
 VALID_STATUSES = {"open", "closed"}
@@ -162,4 +166,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

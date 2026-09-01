@@ -4,6 +4,63 @@ Version: `1.3.0`
 
 This reference is generated from the OpenAPI contract snapshot (`api/openapi.json`) by `scripts/api_docs.py`. The error contract is documented in [ERRORS.md](../ERRORS.md); versioning and deprecation policy in [API_POLICY.md](../API_POLICY.md).
 
+## Attachments
+
+### POST `/api/attachments/{attachment_id}/verdict`
+
+**Apply an external malware-scan verdict**
+
+SEC-006 quarantine flow: an external AV/CDR engine promotes a quarantined upload to stored (clean) or rejected (infected) with its verdict. Only quarantined attachments can transition.
+
+*Tags:* `Attachments`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `attachment_id` | path | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Request body**
+
+`application/json`
+
+{
+  clean: boolean (required)
+  verdict: string (required)
+}
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  {
+    id: string (required)
+    tenant_id: string (required)
+    conversation_id: string (required)
+    message_id: object
+    filename: string (required)
+    content_type: string (required)
+    size_bytes: integer (required)
+    uploader: string (required)
+    status: string (required)
+    scanned: boolean (required)
+    verdict: string (required)
+    created_at: string (required)
+    sha256: object
+  }
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
 ## Admin
 
 ### GET `/api/admin/agent-groups`
@@ -265,15 +322,87 @@ on-call engineer needs to triage, without secrets.
     detail: array
   }
 
+### POST `/api/admin/keys`
+
+**Issue a fresh runtime API key (secret returned once)**
+
+Issue a fresh runtime API key (41.1 rotation drill).
+
+The secret is returned once in this response and is never stored — the
+database keeps only ``sha256(secret)[:12]`` as the credential id and the
+full fingerprint.  The id is the same deterministic one a re-seed of the
+deployment config would produce for the key, so promoting the issued
+key into ``API_KEYS_JSON`` (the second rotation step) keeps the same
+registry row and revocations address it by id immediately.
+
+*Tags:* `admin`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `201` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/admin/keys`
+
+**List API-key credentials (secrets are never returned)**
+
+List the tenant's API-key credentials; never returns a secret.
+
+*Tags:* `admin`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
 ### POST `/api/admin/keys/{credential_id}/revoke`
 
 **Revoke an API key by credential id**
 
-Revoke an API key by its credential id (Phase 28.2).
+Revoke an API key by its credential id (Phase 28.2 / 41 SEC-004).
 
 The credential id is the sha256[:12] of the key, exposed via
-``GET /api/me`` (``credential_id``). Revoking takes effect
-immediately in-process and is persisted so it survives restarts.
+``GET /api/me`` (``credential_id``). Phase 41 routes the revocation
+through the credential registry — the persistent arbiter — so it takes
+effect immediately on every instance without a restart; the legacy
+revoked-keys table and in-memory set are kept in sync so an older peer
+still honours the revoke during the mixed-version window.
 
 *Tags:* `admin`
 
@@ -544,6 +673,7 @@ quota fields given here are applied on both calls.
   daily_turn_budget: object
   conversation_quota: object
   storage_quota_bytes: object
+  region: object
 }
 
 **Responses**
@@ -560,6 +690,7 @@ quota fields given here are applied on both calls.
     conversation_quota: object
     storage_quota_bytes: object
     created_at: string (required)
+    region: string
   }
 
 - `422` Validation Error
@@ -871,6 +1002,7 @@ Read tenant quota. Requires: tenant:manage.
     conversation_quota: object
     storage_quota_bytes: object
     created_at: string (required)
+    region: string
   }
 
 - `422` Validation Error
@@ -920,6 +1052,7 @@ Update tenant quota. Requires: tenant:manage.
     conversation_quota: object
     storage_quota_bytes: object
     created_at: string (required)
+    region: string
   }
 
 - `422` Validation Error
@@ -1115,6 +1248,7 @@ Upload an attachment to a conversation (validated + scanned). Requires: operator
     scanned: boolean (required)
     verdict: string (required)
     created_at: string (required)
+    sha256: object
   }
 
 - `422` Validation Error
@@ -1161,6 +1295,7 @@ List a conversation's stored attachments. Requires: conversation:read.
       scanned: boolean (required)
       verdict: string (required)
       created_at: string (required)
+      sha256: object
     }
 
 - `422` Validation Error
@@ -1206,6 +1341,7 @@ Attachment metadata. Requires: conversation:read.
     scanned: boolean (required)
     verdict: string (required)
     created_at: string (required)
+    sha256: object
   }
 
 - `422` Validation Error
@@ -1261,6 +1397,8 @@ Force-download an attachment (Content-Disposition: attachment). Requires: conver
 | Name | In | Required | Description |
 |------|----|----------|-------------|
 | `attachment_id` | path | yes |  |
+| `token` | query | no |  |
+| `expires` | query | no |  |
 | `X-API-Key` | header | no |  |
 | `X-Tenant-Id` | header | no |  |
 
@@ -1281,6 +1419,99 @@ Force-download an attachment (Content-Disposition: attachment). Requires: conver
   }
 
 ## Audit
+
+### GET `/api/admin/audit/anchors`
+
+**List audit frontier anchors**
+
+List in-DB frontier anchors (mind the read-only gate).
+
+*Tags:* `audit`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/admin/audit/anchors/verify`
+
+**Re-verify external audit anchors against the local chain**
+
+Re-verify every external anchor against the local chain (41.3).
+
+*Tags:* `audit`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/admin/audit/gaps`
+
+**List observable audit gap counts**
+
+List observable audit_gap rows merged with in-process counts.
+
+*Tags:* `audit`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
 
 ### GET `/api/audit-archives`
 
@@ -1469,7 +1700,6 @@ OIDC callback. Requires: none (unauthenticated).
 |------|----|----------|-------------|
 | `code` | query | yes |  |
 | `state` | query | yes |  |
-| `tenant` | query | no |  |
 
 **Responses**
 
@@ -1793,6 +2023,7 @@ Authenticate and durably enqueue one external customer message.
 | `account_id` | path | yes |  |
 | `X-Helix-Timestamp` | header | no |  |
 | `X-Helix-Signature` | header | no |  |
+| `X-Helix-Key-Id` | header | no |  |
 
 **Request body**
 
@@ -3846,7 +4077,7 @@ becomes retrievable.
 
 **Create a data subject request**
 
-Create a data subject request. Requires: admin:manage.
+Create a data subject request. Requires: privacy:request.
 
 *Tags:* `privacy`
 
@@ -3854,10 +4085,18 @@ Create a data subject request. Requires: admin:manage.
 
 | Name | In | Required | Description |
 |------|----|----------|-------------|
-| `customer_ref` | query | yes |  |
-| `request_type` | query | yes |  |
 | `X-API-Key` | header | no |  |
 | `X-Tenant-Id` | header | no |  |
+
+**Request body**
+
+`application/json`
+
+{
+  customer_ref: string (required)
+  request_type: string (required)
+  idempotency_key: object
+}
 
 **Responses**
 
@@ -3875,11 +4114,11 @@ Create a data subject request. Requires: admin:manage.
     detail: array
   }
 
-### POST `/api/data-subject-requests/{customer_ref}/execute`
+### GET `/api/data-subject-requests`
 
-**Execute a data subject request**
+**List data subject requests**
 
-Execute a data subject request. Requires: admin:manage.
+List data subject requests. Requires: privacy:request.
 
 *Tags:* `privacy`
 
@@ -3887,8 +4126,38 @@ Execute a data subject request. Requires: admin:manage.
 
 | Name | In | Required | Description |
 |------|----|----------|-------------|
-| `customer_ref` | path | yes |  |
-| `request_type` | query | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/data-subject-requests/{request_id}/approve`
+
+**Approve a data subject request**
+
+Approve a data subject request. Requires: privacy:approve.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `request_id` | path | yes |  |
 | `X-API-Key` | header | no |  |
 | `X-Tenant-Id` | header | no |  |
 
@@ -3899,6 +4168,229 @@ Execute a data subject request. Requires: admin:manage.
   `application/json`
 
   object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/data-subject-requests/{request_id}/execute`
+
+**Execute an approved data subject request**
+
+Execute an approved data subject request. Requires: privacy:execute.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `request_id` | path | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/data-subject-requests/{request_id}/export`
+
+**Download a data subject export**
+
+Download a data subject export. Requires: privacy:execute.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `request_id` | path | yes |  |
+| `token` | query | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/privacy/board`
+
+**Privacy approval board (redacted refs, SLA posture, failure details)**
+
+Privacy approval board (redacted refs, SLA posture, failure details). Requires: privacy:manage.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/privacy/deletion-proof`
+
+**Deletion attestation keyed by the DSR execution secret**
+
+Deletion attestation keyed by the DSR execution secret. Requires: privacy:manage.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `customer_ref` | query | yes |  |
+| `secret` | query | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/privacy/requests/{request_id}/retry`
+
+**Return a failed DSR to approved for re-execution**
+
+Return a failed DSR to approved for re-execution. Requires: privacy:manage.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `request_id` | path | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/privacy/sla/scan`
+
+**Re-scan open DSRs and flag SLA breaches**
+
+Re-scan open DSRs and flag SLA breaches. Requires: privacy:manage.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/privacy/tombstones`
+
+**List recorded customer tombstones**
+
+List recorded customer tombstones. Requires: privacy:manage.
+
+*Tags:* `privacy`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  array of object
 
 - `422` Validation Error
 
@@ -5267,6 +5759,147 @@ Operator workspace. Requires: none (unauthenticated).
   `text/html`
 
   string
+
+## V2:conversations
+
+### GET `/api/v2/conversations`
+
+**List conversations (cursor-paginated)**
+
+Keyset-paginated queue listing. Cursors are opaque and live in the response body next_cursor field; core fields match v1 exactly (shadow-read contract).
+
+*Tags:* `v2:conversations`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `cursor` | query | no |  |
+| `limit` | query | no |  |
+| `sort` | query | no |  |
+| `status` | query | no |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### POST `/api/v2/conversations`
+
+**Create a conversation (Idempotency-Key honoured)**
+
+Creates a conversation and records its domain event in the same transaction (transactional outbox). Replaying the same Idempotency-Key returns the original resource with X-Idempotent-Replay: true.
+
+*Tags:* `v2:conversations`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `Idempotency-Key` | header | no |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Request body**
+
+`application/json`
+
+object
+
+**Responses**
+
+- `201` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/v2/conversations/{conversation_id}`
+
+**Fetch one conversation**
+
+Single conversation by id; archived conversations resolve transparently, mirroring v1 semantics.
+
+*Tags:* `v2:conversations`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `conversation_id` | path | yes |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
+
+### GET `/api/v2/conversations/{conversation_id}/messages`
+
+**List messages (keyset-paginated)**
+
+Stable keyset pagination over (created_at, seq) so equal-timestamp messages never skip or repeat.
+
+*Tags:* `v2:conversations`
+
+**Parameters**
+
+| Name | In | Required | Description |
+|------|----|----------|-------------|
+| `conversation_id` | path | yes |  |
+| `cursor` | query | no |  |
+| `limit` | query | no |  |
+| `X-API-Key` | header | no |  |
+| `X-Tenant-Id` | header | no |  |
+
+**Responses**
+
+- `200` Successful Response
+
+  `application/json`
+
+  object
+
+- `422` Validation Error
+
+  `application/json`
+
+  {
+    detail: array
+  }
 
 ## Webhooks
 

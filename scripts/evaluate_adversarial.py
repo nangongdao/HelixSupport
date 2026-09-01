@@ -46,6 +46,11 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import use_utf8_console  # noqa: E402
+
 from app.config import Settings
 from app.main import create_app
 from app.redaction import make_canary, scan_for_canary
@@ -563,4 +568,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

@@ -19,16 +19,26 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.config import Settings
-from app.credentials import key_ref_for
-from app.db._util import utc_now
-from app.main import create_app
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/run_rotation_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+from app.config import Settings  # noqa: E402
+from app.credentials import key_ref_for  # noqa: E402
+from app.db._util import utc_now  # noqa: E402
+from app.main import create_app  # noqa: E402
 
 logger = logging.getLogger("helix")
 
@@ -194,4 +204,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

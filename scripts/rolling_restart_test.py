@@ -37,6 +37,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts._console import use_utf8_console  # noqa: E402
 from app.jobs import split_stream_tokens  # noqa: E402
 from scripts.verify_audit_chain import verify_chain  # noqa: E402
 
@@ -314,4 +315,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

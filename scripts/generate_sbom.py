@@ -22,6 +22,10 @@ from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parent.parent
 
+import sys
+sys.path.insert(0, str(ROOT))
+from scripts._console import use_utf8_console  # noqa: E402
+
 
 def _locked_requirements(lock_path: Path) -> list[tuple[str, str]]:
     locked: list[tuple[str, str]] = []
@@ -99,4 +103,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

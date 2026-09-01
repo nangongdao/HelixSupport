@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -42,11 +43,42 @@ from pathlib import Path
 logger = logging.getLogger("helix")
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
 DEFAULT_PIN = ROOT / "supplychain" / "base-image-pin.json"
 DEFAULT_MANIFEST = ROOT / "artifacts" / "release-manifest.json"
 DEFAULT_SBOM = ROOT / "artifacts" / "sbom.json"
 
 FAIL_CLOSED = "release image is not pinned/verifiable: staging admission would reject"
+
+
+def _run_utf8(cmd: list[str], *, python_child: bool) -> subprocess.CompletedProcess[str]:
+    """Capture a child's output as UTF-8, and never let its bytes crash us.
+
+    Two separate hazards, both of which turned a clean `exit 1` into an
+    unhandled UnicodeEncodeError on Windows:
+
+    1. A Python child writes its Chinese violation text through a GBK stdout
+       (the console codepage), while we decode as UTF-8 — every multi-byte
+       character came back as U+FFFD. PYTHONIOENCODING pins the child to UTF-8
+       so the text survives the pipe. It has no effect on a non-Python child
+       (cosign is a Go binary), hence the flag.
+    2. Whatever still fails to decode is dropped rather than kept as U+FFFD:
+       re-printing a replacement character to a GBK stdout raises, so the gate
+       died reporting a real violation instead of reporting it.
+    """
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"} if python_child else None
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        env=env,
+        check=False,
+    )
 
 
 def _check_pin(pin_path: Path = DEFAULT_PIN, *, require_digest: bool = True) -> list[str]:
@@ -69,12 +101,9 @@ def _check_pin(pin_path: Path = DEFAULT_PIN, *, require_digest: bool = True) -> 
 def _check_manifest(manifest_path: Path = DEFAULT_MANIFEST) -> list[str]:
     if not manifest_path.exists():
         return [f"{FAIL_CLOSED} — release manifest 缺失: {manifest_path}"]
-    run = subprocess.run(
+    run = _run_utf8(
         [sys.executable, "scripts/release_manifest.py", "--verify", "--out", str(manifest_path)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        python_child=True,
     )
     if run.returncode != 0:
         output = (run.stdout or "") + (run.stderr or "")
@@ -98,13 +127,7 @@ def _check_cosign(registry: str, image: str, key: str) -> list[str]:
     # ``image`` is already a fully-qualified reference when it contains a host
     # prefix ("/"); otherwise prepend ``registry``.
     ref = image if ("/" in image or registry == "") else f"{registry}/{image}"
-    run = subprocess.run(
-        ["cosign", "verify", "--key", key, ref],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    run = _run_utf8(["cosign", "verify", "--key", key, ref], python_child=False)
     if run.returncode != 0:
         output = (run.stdout or "") + (run.stderr or "")
         return [f"{FAIL_CLOSED} — cosign verify 失败: {output[-300:]}"]
@@ -170,4 +193,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

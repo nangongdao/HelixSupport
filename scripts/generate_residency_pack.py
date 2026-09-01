@@ -28,8 +28,17 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from app.control_plane import ControlPlaneError, TenantControlPlane
-from app.residency import (
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/generate_residency_pack.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
+from app.control_plane import ControlPlaneError, TenantControlPlane  # noqa: E402
+from app.residency import (  # noqa: E402
     DATA_CLASSES,
     REGION_INVENTORY,
     get_region_spec,
@@ -295,4 +304,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

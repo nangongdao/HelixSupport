@@ -40,6 +40,10 @@ from typing import Any
 _DESCRIPTION = (__doc__ or "tauri config gate").strip().splitlines()[0]
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console  # noqa: E402
+
 DEFAULT_CONFIG = ROOT / "src-tauri" / "tauri.conf.json"
 
 # 1.x 字段 -> v2 中的正确做法，供报错时直接给出修法
@@ -128,4 +132,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

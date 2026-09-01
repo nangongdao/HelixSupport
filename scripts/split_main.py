@@ -36,6 +36,11 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from typing_extensions import Annotated as TAnnotated  # noqa: F401
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import use_utf8_console  # noqa: E402
+
 from app.main import (
     IDEMPOTENCY_KEY_PATTERN,
     BulkConversationActionOut,
@@ -135,4 +140,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     main()
