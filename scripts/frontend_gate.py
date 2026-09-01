@@ -63,6 +63,17 @@ CSS_VAR_USE_RE = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(,)?")
 # `<symbol id="x">` in the sprite, and `icons.svg?v=…#x` in a <use href>.
 SVG_SYMBOL_ID_RE = re.compile(r"<symbol[^>]*\bid=\"([A-Za-z0-9_-]+)\"")
 ICON_REF_RE = re.compile(r"icons\.svg[^\"'#\s]*#([A-Za-z0-9_-]+)")
+# React islands build the href in a template literal — `...#${cond ? "a" : "b"}`
+# or `...#${item.icon}`. ICON_REF_RE cannot see past the `${`, so the symbol
+# names inside were never checked; three of them did not exist in the sprite.
+ICON_REF_DYNAMIC_RE = re.compile(r"icons\.svg[^\"'`#\s]*#\$\{([^}]*)\}")
+# Only the *results* of the interpolation name a symbol. `theme === "dark" ?
+# "moon" : "sun"` also contains "dark", which is a theme name, not an icon —
+# anchoring on `?` and `:` keeps the comparison operands out.
+ICON_NAME_LITERAL_RE = re.compile(r"[?:]\s*[\"']([a-z][a-z0-9-]*)[\"']")
+# Icon names are also declared away from the href, in a nav/tab table:
+# `{ id: "admin", label: "管理", icon: "settings" }`. Those feed `#${item.icon}`.
+ICON_NAME_PROPERTY_RE = re.compile(r"\bicon:\s*[\"']([a-z][a-z0-9-]*)[\"']")
 # A relative module import: `from "./x.js?v=1.4.0"`. Group 1 is the opening
 # quote so the backreference closes on the same kind; group 2 is the specifier.
 # The quote MUST be its own group — with `["'](...)\1` the backreference points
@@ -185,6 +196,45 @@ def find_unknown_icon_symbols(sources: list[tuple[str, str]], defined: set[str])
                 f"{name}:{line}: icons.svg#{symbol} is not a symbol in the "
                 f"sprite, so the <use> paints nothing"
             )
+        problems.extend(_dynamic_icon_problems(name, source, defined))
+    return problems
+
+
+def _dynamic_icon_problems(name: str, source: str, defined: set[str]) -> list[str]:
+    """Check symbol names that only appear inside a template-literal ``href``.
+
+    Two shapes ship today: the name is written inline in the interpolation
+    (``#${theme === "dark" ? "moon" : "sun"}``), or the interpolation reads a
+    property and the literal lives in a nav table (``icon: "settings"``). Both
+    are checked only when the file actually builds an ``icons.svg`` href, so an
+    unrelated ``icon:`` key elsewhere cannot trip the gate.
+    """
+    problems: list[str] = []
+    dynamic_refs = list(ICON_REF_DYNAMIC_RE.finditer(source))
+    if not dynamic_refs:
+        return problems
+
+    for match in dynamic_refs:
+        line = source.count("\n", 0, match.start()) + 1
+        for literal in ICON_NAME_LITERAL_RE.finditer(match.group(1)):
+            symbol = literal.group(1) or literal.group(2)
+            if symbol in defined:
+                continue
+            problems.append(
+                f"{name}:{line}: icons.svg#{symbol} (built in a template "
+                f"literal) is not a symbol in the sprite, so the <use> paints "
+                f"nothing"
+            )
+
+    for match in ICON_NAME_PROPERTY_RE.finditer(source):
+        symbol = match.group(1)
+        if symbol in defined:
+            continue
+        line = source.count("\n", 0, match.start()) + 1
+        problems.append(
+            f'{name}:{line}: icon: "{symbol}" feeds an icons.svg href but is '
+            f"not a symbol in the sprite, so the <use> paints nothing"
+        )
     return problems
 
 

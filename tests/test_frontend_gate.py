@@ -131,6 +131,38 @@ class UnknownIconSymbolTests(unittest.TestCase):
         html = '<svg><use href="/static/icons.svg#nope" /></svg>'
         self.assertEqual(len(find_unknown_icon_symbols([("i.html", html)], self.DEFINED)), 1)
 
+    def test_template_literal_href_is_scanned(self) -> None:
+        # `#${...}` hid three missing symbols through all of D3–D5: the static
+        # regex cannot see past the `${`, so session-shell shipped a blank
+        # theme toggle and two blank nav buttons.
+        jsx = 'href={`/static/icons.svg?v=1.4.0#${theme === "dark" ? "moon" : "sun"}`}'
+        problems = find_unknown_icon_symbols([("shell.jsx", jsx)], self.DEFINED)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("icons.svg#sun", problems[0])
+
+    def test_comparison_operand_is_not_read_as_an_icon_name(self) -> None:
+        # "dark" is the theme being compared, not a symbol; anchoring on ?/:
+        # keeps it out. Both branches here are real symbols, so this is clean.
+        jsx = 'href={`/static/icons.svg#${theme === "dark" ? "moon" : "check"}`}'
+        self.assertEqual(find_unknown_icon_symbols([("shell.jsx", jsx)], self.DEFINED), [])
+
+    def test_icon_property_table_feeding_a_dynamic_href_is_scanned(self) -> None:
+        # `#${item.icon}` reads a nav table declared far from the href, so the
+        # literal must be resolved there (NAV_VIEWS carried two dead names).
+        jsx = (
+            'const NAV = [{ id: "admin", icon: "settings" }];\n'
+            "const I = () => <use href={`/static/icons.svg#${item.icon}`} />;"
+        )
+        problems = find_unknown_icon_symbols([("shell.jsx", jsx)], self.DEFINED)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("settings", problems[0])
+
+    def test_icon_property_without_any_sprite_href_is_ignored(self) -> None:
+        # An unrelated `icon:` key in a file that never builds an icons.svg
+        # href must not trip the gate.
+        js = 'export const cfg = { icon: "not-a-sprite-symbol" };'
+        self.assertEqual(find_unknown_icon_symbols([("cfg.js", js)], self.DEFINED), [])
+
     def test_line_number_points_at_the_reference(self) -> None:
         html = '<div>\n  <p>x</p>\n</div>\n<svg><use href="/static/icons.svg#nope" /></svg>'
         problems = find_unknown_icon_symbols([("i.html", html)], self.DEFINED)
