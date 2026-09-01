@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -85,6 +86,17 @@ BROWSER_BUDGETS = {
     "cls_desktop": 0.10,  # splash hand-off must not shift the workspace
 }
 
+# The heap_growth_mb budget above says "20 refresh cycles"; the loop ran 5.
+HEAP_REFRESH_CYCLES = 20
+# What Chromium reports from performance.memory.usedJSHeapSize when precise
+# memory info is disabled — a fixed 10 MB, identical on every sample. Measured,
+# not assumed: with --enable-precise-memory-info the same page reports ~940 KB.
+HEAP_QUANTIZED_BYTES = 10_000_000
+# Opt in to real heap numbers. Off by default because the flag also disables
+# some allocator optimizations, which would skew the timing budgets measured
+# in the same browser session.
+PERF_PRECISE_MEMORY = os.environ.get("PERF_PRECISE_MEMORY") == "1"
+
 
 def _static_payload() -> dict[str, int]:
     """Measure the shipped first-paint byte sizes."""
@@ -135,13 +147,6 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright
 
-    try:
-        import psutil  # noqa: F401 — optional; only used for diagnostics
-
-        HAVE_PSUTIL = True
-    except ImportError:
-        HAVE_PSUTIL = False
-
     metrics_script = """
     async () => {
       const lcpPromise = new Promise((resolve) => {
@@ -181,11 +186,12 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
 
     problems: list[str] = []
     metrics: dict[str, float] = {}
+    launch_args = ["--enable-precise-memory-info"] if PERF_PRECISE_MEMORY else []
     with sync_playwright() as playwright:
         try:
-            browser = playwright.chromium.launch(headless=True)
+            browser = playwright.chromium.launch(headless=True, args=launch_args)
         except PlaywrightError:
-            browser = playwright.chromium.launch(channel="msedge", headless=True)
+            browser = playwright.chromium.launch(channel="msedge", headless=True, args=launch_args)
         context = browser.new_context(viewport={"width": 1440, "height": 900})
         page = context.new_page()
 
@@ -249,7 +255,9 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
         try:
             shell_context = browser.new_context(viewport={"width": 1440, "height": 900})
             shell_page = shell_context.new_page()
-            shell_page.add_init_script("window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };")
+            shell_page.add_init_script(
+                "window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };"
+            )
             shell_page.goto(base_url, wait_until="domcontentloaded")
             shell_page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
             # The island may render the empty state (no conversations) —
@@ -296,29 +304,58 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float], list[str]]:
                 """
             )
             shell_context.close()
-        except Exception:
-            island_render_ms = None
+        except Exception as exc:
+            # This try spans the whole desktop measurement: shell context,
+            # lcp_desktop_ms, cls_desktop and the island render. Swallowing it
+            # left four of eight budgets unset, and the assertion loop below
+            # skips unset keys — so a 60-second island render passed against
+            # the 500 ms budget with no warning and no trace in the report.
+            # A measurement that was supposed to happen and did not is a gate
+            # failure, not an absent optional metric.
+            problems.append(
+                f"desktop (Tauri shell) measurement failed, leaving the §D5 budgets "
+                f"unenforced: {type(exc).__name__}: {exc}"
+            )
         metrics["queue_10k_island_render_ms"] = island_render_ms
 
         # --- heap growth across refresh cycles -------------------------
-        if HAVE_PSUTIL:
-            pass  # placeholder: kept out of the hot path
-        heap_samples = []
-        for _ in range(5):
-            await_refresh = """
-            () => new Promise((done) => {
-              const original = refreshAll;
-              window.__perfDone = done;
-              refreshAll({ silent: true, background: true, refreshDetail: false })
-                .then(() => done(performance.memory ? performance.memory.usedJSHeapSize : 0));
-            })
-            """
-            size = page.evaluate(await_refresh)
-            heap_samples.append(size or 0)
-        if heap_samples and all(s > 0 for s in heap_samples):
-            metrics["heap_growth_mb"] = round(
-                (max(heap_samples) - min(heap_samples)) / (1024 * 1024), 2
+        # Chromium quantizes performance.memory for privacy unless launched
+        # with --enable-precise-memory-info: usedJSHeapSize returns a constant
+        # 10,000,000 regardless of real usage. That constant is > 0, so the old
+        # `all(s > 0)` guard passed, every sample was identical, and
+        # `max - min` was always 0.0 — which is exactly what
+        # artifacts/performance-baseline.json recorded. The budget was set and
+        # could never be exceeded. HEAP_QUANTIZED_BYTES detects that state so
+        # it is reported instead of being read as a clean 0 MB of growth.
+        await_refresh = """
+        () => new Promise((done) => {
+          refreshAll({ silent: true, background: true, refreshDetail: false })
+            .then(() => done(performance.memory ? performance.memory.usedJSHeapSize : 0));
+        })
+        """
+        heap_samples: list[int] = []
+        for _ in range(HEAP_REFRESH_CYCLES):
+            heap_samples.append(page.evaluate(await_refresh) or 0)
+
+        if not heap_samples or not all(s > 0 for s in heap_samples):
+            problems.append(
+                "heap growth unmeasurable: performance.memory is unavailable, so the "
+                f"{BROWSER_BUDGETS['heap_growth_mb']} MB budget went unenforced"
             )
+        elif len(set(heap_samples)) == 1 and heap_samples[0] == HEAP_QUANTIZED_BYTES:
+            problems.append(
+                f"heap growth unmeasurable: every sample is the quantized constant "
+                f"{HEAP_QUANTIZED_BYTES} — launch Chromium with "
+                "--enable-precise-memory-info (see PERF_PRECISE_MEMORY) or the "
+                f"{BROWSER_BUDGETS['heap_growth_mb']} MB budget cannot fail"
+            )
+        else:
+            # Growth, not spread: compare the tail against the first sample so a
+            # leak registers. `max - min` measured jitter and would stay small
+            # for a heap that climbs monotonically across every cycle.
+            baseline = heap_samples[0]
+            settled = max(heap_samples[-3:])
+            metrics["heap_growth_mb"] = round((settled - baseline) / (1024 * 1024), 2)
 
         browser.close()
 
