@@ -148,6 +148,16 @@
 - **验证**:vitest **166** 例全绿(16 文件);`frontend_gate` 绿(node 284 + vitest 166),并用 401 行探针确认新限制真能抓到越线;`performance_gate` 静态段绿(JS 725KB/780KB、CSS 97KB/125KB);`ui_accessibility` 全绿——含**真实挂载 React 岛的桌面壳 pass**(明暗双主题 axe + reduced-motion),这是唯一覆盖切分后岛 DOM 的门禁;`ui_smoke`、`ui_knowledge` 绿;`ui_admin` 配额读写 + 成员邀请/改角色/停用全生命周期绿(webhook 段失败为本机 fake-IP DNS 把 `hooks.example.com` 劫持到 `198.18.0.27` 触发后端 SSRF 防护,既有环境噪声,与本次改动无关)。
 - **D3 里程碑达成**:`app.js` 3,258 → **477 行**,纯 `HelixModules` 委托包装 + 一次 `bindLegacyBoot()`,低于 <500 行验收线;岛侧全部 ≤400 行且从此有门禁看守,两条前端轨口径统一。
 
+### 三条被未定义 CSS 变量吞掉的声明 + 悬空 var() 门禁(2026-09-01)
+
+- **缺陷共性**:`var(--x)` 在 `--x` 从未定义、且没有回退值时解析为 guaranteed-invalid,**整条声明在计算值阶段被丢弃**——没有控制台警告,没有构建错误,一条消失的 `background` 看起来只是设计选择。三处因此逃过了全部门禁与四张视觉基线:
+  - `.report-preview`(管理页报表预览 `<pre>`)写 `background: var(--bg)`。别名块定义的是 `--bg-0`…`--bg-3`,没有 `--bg`,所以两个主题下这个 `<pre>` 都**完全透明**地压在卡片上(实测 `rgba(0,0,0,0)`)。改为 `--surface-alt`——所有同类凹陷等宽块都用它,`.audit-payload` 的 surface-alt/line/radius-sm 组合与它完全同形。
+  - `.csat-label` 写 `color: var(--text-muted)` 且**没带回退**,而另外五处 `--text-muted` 引用全部写作 `var(--text-muted, var(--muted))`。声明被丢弃后标签继承了满强度正文色(暗色实测 `rgb(230,237,243)`,本应 `rgb(139,149,163)`),读起来像正文而不是标签。
+  - `.desktop-splash` 引用 `--color-surface-0` 与 `--color-text`,**两个名字在任何地方都不存在**,双双落到硬编码深色 hex——这个 `inset:0; z-index:9999` 的 Tauri 启动全屏遮罩因此在亮色主题下始终是深色。改用别名名 `--bg-0`/`--ink`:亮色主题重映射的是别名(指向 `--color-light-*`),底层 `--color-bg-0`/`--color-ink` 仍保持深色值,所以直接引用 `--color-*` 同样不会翻转(第一版修法就错在这里,已纠正)。
+- **未动**:`.thread-load-older-btn:hover` 的 `var(--accent, var(--blue))`。`--accent` 同样未定义,但回退能解析、能渲染,改它等于凭对意图的猜测改变外观。
+- **门禁**(`scripts/frontend_gate.py` `check_css_custom_properties`):汇集 `app/static` 下所有手写样式表(跳过 Vite 产物 `dist/`)的自定义属性定义,再报出每一个既无定义又无回退的 `var()` 引用。对 f8bc271 的父提交运行,精确报出上述两条无回退缺陷。检测核心拆为纯函数 `find_dangling_css_vars(sheets)` 以便用合成 CSS 测试——**这一拆立刻抓出门禁自身的 bug**:定义正则锚在行首,导致单行 `:root { --x: red }` 不被登记、`--x` 的每一处使用都被误报;去掉锚点是安全的,因为 `var()` 引用后面永不跟冒号。
+- **验证**:视觉门禁四面 **0.00% drift**(clean DB;首轮四面全飘是 UI 套件把 `support.db` 种了数据所致——把本次改动 revert 后百分比完全一致,证明这个 diff 在基线上像素中性);计算样式确认三处均已解析且随主题翻转;两处可见修复的对比度实测 `.csat-label` 6.24:1 暗 / 5.26:1 亮(12px,4.5:1 底线)、`.report-preview` 16.02:1 / 14.88:1;`ui_accessibility` 含桌面壳 pass 全绿;CSS 字节 99,791/125,000;`tests/test_frontend_gate.py` 新增 `DanglingCssVarTests` 6 例锁边界(定义/未定义、有无回退、跨表定义汇集、内联定义、行号、嵌套回退——`var(--a, var(--b))` 内层未定义时照样报,因为 `--a` 会回退到一个 guaranteed-invalid 值、声明仍然丢弃;这也正是仓库自己的 `var(--text-muted, var(--muted))` 干净的原因:`--muted` 有定义),共 19 例绿。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added
