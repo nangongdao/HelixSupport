@@ -135,6 +135,19 @@
 - **验证**:`scripts/frontend_gate.py` 全绿(node **284** + vitest **166**);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿;ruff 干净。
 - **内存压力 OOM 追加修复(同日)**:复盘发现 fork 池默认按 CPU 核数派生 worker,本机内存吃紧时 worker 触发 `FATAL ERROR: AlignedAlloc Allocation failed` → 批量 `Worker exited unexpectedly`、部分测试未跑完。门禁 vitest 段改加 `--minWorkers=1 --maxWorkers=2` 限并发;`_vitest_exit_verdict` 追加判定——「全部 `Test Files/Tests` passed、无 `failed`,且每个 Unhandled Error 块均为 tinypool worker 崩溃」视为 harness 噪音打 WARN 放行,任何非 worker 崩溃的未处理错误/失败计数照旧 FAIL。`tests/test_frontend_gate.py` 新增 `VitestExitVerdictTests` 5 例锁住判定。
 
+### D3 收官:岛侧模块行数门禁 + 四岛切分(2026-09-01)
+
+- **门禁缺口**:`scripts/frontend_gate.py` 的 400 行模块限制自 Phase 26 起只扫 `app/static/js/*.js`。D2 引入 `frontend/src` 这条**同样发货**的前端轨后,它一直处于零覆盖状态——`admin-island.jsx` 已长到 **1,052 行**(越过项目 800 行硬禁线)、`knowledge-island.jsx` 613 行、`inspector-island.jsx` 523 行、`queue-island.jsx` 413 行,四个越线文件无人拦。`check_line_limits()` 扩到 `frontend/src/**/*.{js,jsx}`,排除 `*.test.jsx`(长度由用例数驱动,不是设计债)。
+- **四岛按域切分为 13 个子模块**,根文件降为「组合根 + re-export 面」,导入面零变化(组件测试与 `vite.config.js` 入口都不用改):
+  - `islands/admin/` — `constants.js`(事件名/角色与报表标签/React 后缀 id 表)、`models.js`(配额读数、成员行、订阅行、SLA/路由标签、CSAT、导出 URL 等纯模型)、`shared.jsx`(身份门 `useIdentity`/`canManageIdentity` + `useBridge`/`AdminReadout`/`useClearOnSaved`)、`tenant-cards.jsx`(配额/成员/Webhook)、`report-cards.jsx`(订阅/导出/CSAT)、`policy-cards.jsx`(SLA/路由);
+  - `islands/knowledge/` — `domain.js`(状态与语言目录、标签解析、载荷、归一化/筛选/汇总/审核动作)、`reducer.js`(§43.6 `createState` + `reduce`)、`components.jsx`(汇总条/文章卡/草稿编辑器);
+  - `islands/inspector/` — `helpers.jsx`(桥事件名、tab 目录、转义/引用 URL 白名单/时间格式化、`latestAssistant`/`renderLabelChips`)、`sections.jsx`(概览/证据)、`note-composer.jsx`(内部备注 + @提及,IME 组合守卫与光标推导原样保留);
+  - `islands/queue/` — `components.jsx`(行/页脚条带/批量操作条 + SLA 文案与 windowing 数学)。
+- **字节中性**:切分前后 `operator_js_bytes` 725,218 → 725,157(−61,少一行陈旧注释),每岛仍是**单 chunk**——子模块只被各自岛入口引用,Rollup 直接内联,不产生新 chunk 也不改首屏。最大文件从 1,052 行降到 252 行。
+- **顺带清掉一处过期注释**:queue 岛头注释仍写「legacy 保留拥有 bulk toolbar(#bulkToolbar)」,而批量操作条在 D3 长尾第七片(^dd836f5)已并入岛。
+- **验证**:vitest **166** 例全绿(16 文件);`frontend_gate` 绿(node 284 + vitest 166),并用 401 行探针确认新限制真能抓到越线;`performance_gate` 静态段绿(JS 725KB/780KB、CSS 97KB/125KB);`ui_accessibility` 全绿——含**真实挂载 React 岛的桌面壳 pass**(明暗双主题 axe + reduced-motion),这是唯一覆盖切分后岛 DOM 的门禁;`ui_smoke`、`ui_knowledge` 绿;`ui_admin` 配额读写 + 成员邀请/改角色/停用全生命周期绿(webhook 段失败为本机 fake-IP DNS 把 `hooks.example.com` 劫持到 `198.18.0.27` 触发后端 SSRF 防护,既有环境噪声,与本次改动无关)。
+- **D3 里程碑达成**:`app.js` 3,258 → **477 行**,纯 `HelixModules` 委托包装 + 一次 `bindLegacyBoot()`,低于 <500 行验收线;岛侧全部 ≤400 行且从此有门禁看守,两条前端轨口径统一。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

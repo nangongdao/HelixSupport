@@ -6,7 +6,9 @@ dependencies:
 1. Every ES module under ``app/static/js`` must pass ``node --check``
    (syntax gate).
 2. No module may exceed ``MAX_LINES`` (default 400) — the Phase 26
-   acceptance limit.
+   acceptance limit. Covers both shipped frontend tracks: the zero-build
+   modules under ``app/static/js`` and the React island sources under
+   ``frontend/src`` (vitest suites excluded).
 3. The Node test runner suite under ``tests/frontend`` must pass and report
    at least ``MIN_TESTS`` (default 30) tests — the Phase 26 acceptance
    threshold.
@@ -33,6 +35,9 @@ from app.assets import STATIC_ASSET_VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 JS_DIR = ROOT / "app" / "static" / "js"
+# D3: the React island sources are the second shipped frontend track, held to
+# the same module limit as the zero-build modules above (check_line_limits).
+FRONTEND_SRC_DIR = ROOT / "frontend" / "src"
 TEST_DIR = ROOT / "tests" / "frontend"
 MAX_LINES = 400
 MIN_TESTS = 30
@@ -88,11 +93,28 @@ def check_syntax() -> list[str]:
 
 
 def check_line_limits() -> list[str]:
+    """Enforce the 400-line module limit on both frontend tracks.
+
+    The zero-build modules under app/static/js were the only track covered
+    until the D3 islands landed, and frontend/src grew unwatched: the admin
+    island reached 1,052 lines — past the 800-line hard prohibition — before
+    anything complained. Both tracks are shipped operator code, so both are
+    held to the same limit. Vitest suites (*.test.jsx) are excluded: they
+    already sit under the limit by convention, and a test file's length is
+    driven by case count rather than by design debt.
+    """
     problems: list[str] = []
     for path in sorted(JS_DIR.glob("*.js")):
         lines = len(path.read_text(encoding="utf-8").splitlines())
         if lines > MAX_LINES:
             problems.append(f"{path.name}: {lines} lines exceeds {MAX_LINES}")
+    for path in sorted(FRONTEND_SRC_DIR.rglob("*")):
+        if path.suffix not in {".js", ".jsx"} or path.name.endswith(".test.jsx"):
+            continue
+        lines = len(path.read_text(encoding="utf-8").splitlines())
+        if lines > MAX_LINES:
+            rel = path.relative_to(ROOT).as_posix()
+            problems.append(f"{rel}: {lines} lines exceeds {MAX_LINES}")
     return problems
 
 
