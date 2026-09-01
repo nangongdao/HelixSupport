@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy": "运行时依赖闭包逐包登记许可证：新依赖进入 requirements.lock 而未登记时 scripts/license_gate.py 红灯，强制有意的许可审查。许可必须属于 allowed_licenses；尚未完成法务确认的许可以 LicenseRef-TBD 登记并携带 approved_until 到期日，逾期红灯。",
-  "license_source_note": "许可值依据 PyPI metadata（2026-08 快照）与上游仓库 LICENSE 文件人工核对；双许可登记为斜杠连接（如 MIT/Apache-2.0）。",
+  "policy": "运行时依赖闭包逐包登记许可证：新依赖进入 requirements.lock 或 frontend/package.json 的 dependencies（经 Vite 打进 app/static/dist/assets 随桌面端与 Web 一起分发）而未登记时 scripts/license_gate.py 红灯，强制有意的许可审查。devDependencies（vite/vitest/jsdom/testing-library）只在构建与测试期存在、不随产物分发，与 Python 侧只读 lock 不读 dev extras 同一条线，不在闭包内。许可必须属于 allowed_licenses；尚未完成法务确认的许可以 LicenseRef-TBD 登记并携带 approved_until 到期日，逾期红灯。",
+  "license_source_note": "Python 包许可值依据 PyPI metadata（2026-08 快照）与上游仓库 LICENSE 文件人工核对；npm 包（@ 前缀与 react/react-dom/zustand，2026-09 核对）依据 node_modules 内 package.json license 字段与同目录 LICENSE 正文双向核对，8 个均为 MIT；双许可登记为斜杠连接（如 MIT/Apache-2.0）。",
   "allowed_licenses": [
     "MIT",
     "BSD-2-Clause",
@@ -40,6 +40,15 @@
     "uvicorn": { "license": "BSD-3-Clause", "note": "encode" },
     "uvloop": { "license": "MIT", "note": "MagicStack；MIT/Apache-2.0 双许可" },
     "watchfiles": { "license": "MIT", "note": "Samuel Colvin" },
-    "websockets": { "license": "BSD-3-Clause", "note": "Aymeric Augustin" }
+    "websockets": { "license": "BSD-3-Clause", "note": "Aymeric Augustin" },
+
+    "@tanstack/react-query": { "license": "MIT", "note": "npm 运行时；Tanner Linsley" },
+    "@xterm/addon-fit": { "license": "MIT", "note": "npm 运行时；xterm.js authors" },
+    "@xterm/addon-search": { "license": "MIT", "note": "npm 运行时；xterm.js authors" },
+    "@xterm/addon-webgl": { "license": "MIT", "note": "npm 运行时；xterm.js authors" },
+    "@xterm/xterm": { "license": "MIT", "note": "npm 运行时；xterm.js authors" },
+    "react": { "license": "MIT", "note": "npm 运行时；Meta Platforms" },
+    "react-dom": { "license": "MIT", "note": "npm 运行时；Meta Platforms" },
+    "zustand": { "license": "MIT", "note": "npm 运行时；Paul Henschel" }
   }
 }
