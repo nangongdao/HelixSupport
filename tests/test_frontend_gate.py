@@ -15,8 +15,10 @@ from scripts.frontend_gate import (
     _parse_summary,
     _vitest_exit_verdict,
     check_asset_versions,
+    check_css_custom_properties,
     check_line_limits,
     check_syntax,
+    find_dangling_css_vars,
     run_tests,
 )
 
@@ -85,6 +87,64 @@ class FrontendGateTests(unittest.TestCase):
         # green zero-test run.
         self.assertEqual(_parse_summary("ok 1 - some test\n1..1\n"), {})
 
+    def test_no_shipped_css_var_is_dangling(self) -> None:
+        problems = check_css_custom_properties()
+        self.assertEqual(problems, [], "\n".join(problems))
+
+
+class DanglingCssVarTests(unittest.TestCase):
+    """``var(--x)`` with no definition and no fallback drops its declaration.
+
+    Three shipped rules were lost this way before the check existed, so the
+    cases below pin the boundaries: a fallback makes a reference acceptable,
+    definitions pool across sheets, and an inline ``:root { --x: y }`` counts
+    as a definition (anchoring the pattern to line start made every use of
+    such a property look dangling).
+    """
+
+    TOKENS = ":root {\n  --ink: #eee;\n  --muted: #888;\n}"
+
+    def test_reference_to_defined_property_is_clean(self) -> None:
+        sheets = [("tokens.css", self.TOKENS), ("styles.css", ".a { color: var(--ink); }")]
+        self.assertEqual(find_dangling_css_vars(sheets), [])
+
+    def test_undefined_reference_without_fallback_is_reported(self) -> None:
+        sheets = [("tokens.css", self.TOKENS), ("styles.css", ".a { background: var(--bg); }")]
+        problems = find_dangling_css_vars(sheets)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("var(--bg)", problems[0])
+        self.assertIn("styles.css:1", problems[0])
+
+    def test_undefined_reference_with_fallback_is_accepted(self) -> None:
+        # It still renders; whether the fallback is the intended value is a
+        # judgement call this check deliberately does not make.
+        sheets = [
+            ("styles.css", ".a { color: var(--nope, var(--muted)); }"),
+            ("t.css", self.TOKENS),
+        ]
+        self.assertEqual(find_dangling_css_vars(sheets), [])
+
+    def test_nested_fallback_with_undefined_inner_is_reported(self) -> None:
+        # var(--a, var(--b)) with --b undefined: --a falls back to a
+        # guaranteed-invalid value, so the declaration drops anyway.
+        sheets = [("styles.css", ".a { color: var(--nope, var(--also-nope)); }")]
+        problems = find_dangling_css_vars(sheets)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("var(--also-nope)", problems[0])
+
+    def test_inline_definition_counts(self) -> None:
+        sheets = [
+            ("tokens.css", ":root { --accent: red; }"),
+            ("styles.css", ".a { color: var(--accent); }"),
+        ]
+        self.assertEqual(find_dangling_css_vars(sheets), [])
+
+    def test_line_number_points_at_the_reference(self) -> None:
+        source = ".a {\n  color: red;\n}\n.b {\n  color: var(--absent);\n}"
+        problems = find_dangling_css_vars([("styles.css", source)])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("styles.css:5", problems[0])
+
 
 class VitestExitVerdictTests(unittest.TestCase):
     """The vitest segment consumes a captured summary, not the exit code."""
@@ -124,17 +184,11 @@ class VitestExitVerdictTests(unittest.TestCase):
         self.assertTrue(self._verdict(stdout), "a non-worker unhandled error must fail")
 
     def test_failed_tests_are_a_failure(self) -> None:
-        stdout = (
-            " Test Files  13 passed (14)\n"
-            "      Tests  148 passed | 1 failed\n"
-        )
+        stdout = " Test Files  13 passed (14)\n      Tests  148 passed | 1 failed\n"
         self.assertTrue(self._verdict(stdout))
 
     def test_clean_summary_is_accepted_even_with_a_nonzero_exit(self) -> None:
-        stdout = (
-            " Test Files  14 passed (14)\n"
-            "      Tests  149 passed (149)\n"
-        )
+        stdout = " Test Files  14 passed (14)\n      Tests  149 passed (149)\n"
         self.assertEqual(self._verdict(stdout, returncode=1), [])
 
     def test_empty_run_is_a_failure(self) -> None:

@@ -47,6 +47,13 @@ MIN_TESTS = 30
 # leaking child processes that hold the parent event loop open on Windows).
 VITEST_TIMEOUT_SECONDS = float(os.environ.get("FRONTEND_GATE_VITEST_TIMEOUT", "300"))
 STATIC_REF_RE = re.compile(r"/static/[A-Za-z0-9_./-]+(?:\?[^\"'()\s<>]+)?(?:#[^\"'()\s<>]+)?")
+# A custom-property definition: `--name:` anywhere. Not anchored to line start
+# — that missed single-line rules like `:root { --x: red; }` and reported every
+# use of --x as dangling. A var() reference can never be followed by a colon
+# (`var(--x)` / `var(--x, y)`), so an unanchored match cannot pick one up.
+CSS_PROP_DEF_RE = re.compile(r"(--[A-Za-z0-9_-]+)\s*:")
+# A var() reference; group 2 is the comma that opens a fallback, if present.
+CSS_VAR_USE_RE = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(,)?")
 LOCAL_IMPORT_RE = re.compile(r"(?:from\s+|import\s+)[\"'](\./[^\"']+\.js(?:\?v=[^\"']+)?)\1")
 
 
@@ -115,6 +122,54 @@ def check_line_limits() -> list[str]:
         if lines > MAX_LINES:
             rel = path.relative_to(ROOT).as_posix()
             problems.append(f"{rel}: {lines} lines exceeds {MAX_LINES}")
+    return problems
+
+
+def check_css_custom_properties() -> list[str]:
+    """Fail on ``var(--x)`` where --x is never defined and there is no fallback.
+
+    CSS resolves such a reference to guaranteed-invalid, which drops the whole
+    declaration at computed-value time — silently. Three shipped rules were
+    found this way: `.report-preview`'s background (the <pre> rendered
+    transparent), `.csat-label`'s colour (inherited full-strength ink), and
+    `.desktop-splash`'s two --color-* names that do not exist (the startup
+    overlay stayed dark in the light theme, via its hex fallbacks).
+
+    A reference *with* a fallback is accepted: it still renders, and whether
+    the fallback is the intended value is a judgement call, not a defect this
+    check can decide.
+    """
+    sheets = [
+        (path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8"))
+        for path in sorted((ROOT / "app" / "static").rglob("*.css"))
+        if "dist" not in path.parts  # Vite output, not hand-authored
+    ]
+    return find_dangling_css_vars(sheets)
+
+
+def find_dangling_css_vars(sheets: list[tuple[str, str]]) -> list[str]:
+    """Pure core of :func:`check_css_custom_properties`.
+
+    Definitions are pooled across every sheet before use is checked, because
+    the token file defines what the stylesheets consume.
+
+    :param sheets: ``(display_name, css_source)`` pairs.
+    """
+    definitions: set[str] = set()
+    for _, source in sheets:
+        definitions |= set(CSS_PROP_DEF_RE.findall(source))
+    problems: list[str] = []
+    for name, source in sheets:
+        for match in CSS_VAR_USE_RE.finditer(source):
+            prop = match.group(1)
+            has_fallback = match.group(2) is not None
+            if has_fallback or prop in definitions:
+                continue
+            line = source.count("\n", 0, match.start()) + 1
+            problems.append(
+                f"{name}:{line}: var({prop}) is never defined and has no "
+                f"fallback, so the whole declaration is dropped"
+            )
     return problems
 
 
@@ -354,6 +409,7 @@ def main() -> int:
     problems: list[str] = []
     problems.extend(check_syntax())
     problems.extend(check_line_limits())
+    problems.extend(check_css_custom_properties())
     problems.extend(check_asset_versions())
     test_problems, test_count = run_tests()
     problems.extend(test_problems)
