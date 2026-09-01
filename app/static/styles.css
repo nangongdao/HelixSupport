@@ -141,8 +141,13 @@ button .icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-0, #0a0d12);
-  color: var(--color-text, #e6e8ec);
+  /* --color-surface-0 / --color-text do not exist, so both fell through to
+     the dark hex fallbacks and this full-viewport overlay stayed dark in the
+     light theme. Use the alias names: the light theme remaps --bg-0/--ink
+     (to --color-light-*) and leaves the underlying --color-bg-0/--color-ink
+     at their dark values, so referencing those directly would not flip. */
+  background: var(--bg-0);
+  color: var(--ink);
 }
 
 .desktop-splash-content {
@@ -1218,7 +1223,12 @@ a.knowledge-source:hover {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  /* --bg has never been defined (the alias block defines --bg-0..--bg-3), and
+     with no fallback the whole declaration was invalid at computed-value
+     time, so this <pre> rendered transparent over the admin card. --surface-alt
+     is what every sibling recessed mono block uses (.audit-payload has the
+     identical surface-alt/line/radius-sm shape). */
+  background: var(--surface-alt);
   font-family: var(--font-mono);
   font-size: 11px;
   white-space: pre-wrap;
@@ -2588,7 +2598,10 @@ body.is-inspector-collapsed .inspector-surface {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-muted);
+  /* --text-muted is undefined; the five other references all carry the
+     var(--text-muted, var(--muted)) fallback, this one did not — so the
+     declaration was dropped and the label inherited its parent's colour. */
+  color: var(--text-muted, var(--muted));
   white-space: nowrap;
 }
 
