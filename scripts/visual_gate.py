@@ -14,8 +14,9 @@ a UI regression.
 
 Baselines live in ``tests/baselines/``. First run without a baseline writes
 one and passes (bootstrap); later runs fail on pixel drift beyond
-``DIFF_RATIO_LIMIT``. Delete a baseline to re-bootstrap after an intended UI
-change, and commit the new capture.
+``DIFF_RATIO_LIMIT`` **or on any change in capture geometry** — a size change
+is a visual change, not a licence to re-baseline. After an intended UI change,
+re-capture with ``--update`` (or delete the PNG) and commit the new baseline.
 
 The existing axe / keyboard / reduced-motion gates in
 ``tests/ui_accessibility.py`` are unchanged; this module adds only the pixel
@@ -27,11 +28,14 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+
+_DESCRIPTION = (__doc__ or "visual regression gate").strip().splitlines()[0]
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -84,20 +88,40 @@ def capture(page: Page, path_hint: str) -> Image.Image:
     return Image.open(BytesIO(raw)).convert("RGB")
 
 
-def compare(name: str, current: Image.Image) -> tuple[bool, float, str]:
+def _drift_path(name: str) -> Path:
+    """Where a failing capture is written for eyeballing."""
+    drift_dir = ROOT / "artifacts"
+    drift_dir.mkdir(parents=True, exist_ok=True)
+    return drift_dir / f"visual-drift-{name}.png"
+
+
+def compare(name: str, current: Image.Image, update: bool = False) -> tuple[bool, float, str]:
     """Compare against baseline; write one when missing. Returns (ok, ratio, message)."""
     BASELINES.mkdir(parents=True, exist_ok=True)
     baseline_path = BASELINES / f"{name}.png"
+    if update:
+        current.save(baseline_path)
+        return True, 0.0, f"{name}: baseline updated ({current.size[0]}x{current.size[1]})"
     if not baseline_path.is_file():
         current.save(baseline_path)
         return True, 0.0, f"{name}: baseline created ({current.size[0]}x{current.size[1]})"
     baseline = Image.open(baseline_path).convert("RGB")
     if baseline.size != current.size:
-        current.save(baseline_path)
+        # A size change used to return ok=True *and* overwrite the committed
+        # baseline, so any regression that also shifted layout height by a
+        # pixel — which most do — was laundered into the baseline, and the
+        # next run reported a clean 0.00%. Verified: a 100%-different capture
+        # one pixel taller passed and replaced the baseline.
+        #
+        # Geometry drift is a real visual change, so it fails. Re-baselining
+        # is a deliberate act (--update, or deleting the PNG), never a
+        # side effect of a comparison.
+        current.save(_drift_path(name))
         return (
-            True,
+            False,
             1.0,
-            f"{name}: viewport changed {baseline.size}->{current.size}; baseline re-created",
+            f"{name}: geometry changed {baseline.size}->{current.size}; "
+            f"capture at {_drift_path(name)}. Re-run with --update if intended",
         )
     diff_pixels = 0
     total_pixels = baseline.size[0] * baseline.size[1]
@@ -116,7 +140,7 @@ def compare(name: str, current: Image.Image) -> tuple[bool, float, str]:
                 diff_pixels += 1
     ratio = diff_pixels / total_pixels
     if ratio > DIFF_RATIO_LIMIT:
-        drift = ROOT / "artifacts" / f"visual-drift-{name}.png"
+        drift = _drift_path(name)
         current.save(drift)
         return (
             False,
@@ -146,8 +170,17 @@ def wait_for_operator(page: Page) -> None:
     expect(page.locator("#conversationList")).to_have_attribute("aria-busy", "false")
 
 
-def main() -> int:
-    results: list[tuple[bool, str]] = []
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=_DESCRIPTION)
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="rewrite every baseline from this run's captures (intentional re-baseline)",
+    )
+    args = parser.parse_args(argv)
+    update = args.update
+
+    results: list[tuple[bool, float, str]] = []
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
         # Pin the color scheme so resolveInitialTheme() (main.js) picks a
@@ -165,18 +198,18 @@ def main() -> int:
         # context could otherwise leak a light preference.
         page.evaluate("() => window.HelixModules.applyTheme('dark')")
         page.wait_for_timeout(300)
-        results.append(compare("workspace-dark", capture(page, "workspace-dark")))
+        results.append(compare("workspace-dark", capture(page, "workspace-dark"), update))
 
         page.evaluate("() => window.HelixModules.applyTheme('light')")
         page.wait_for_timeout(400)
-        results.append(compare("workspace-light", capture(page, "workspace-light")))
+        results.append(compare("workspace-light", capture(page, "workspace-light"), update))
 
         page.evaluate("() => window.HelixModules.applyTheme('dark')")
         page.wait_for_timeout(300)
 
         page.locator('.nav-item[data-view="knowledge"]').click()
         page.wait_for_selector("#knowledgeList[aria-busy='false']", timeout=15000)
-        results.append(compare("knowledge-view", capture(page, "knowledge-view")))
+        results.append(compare("knowledge-view", capture(page, "knowledge-view"), update))
 
         mobile = context.new_page()
         mobile.set_viewport_size({"width": 390, "height": 844})
@@ -187,7 +220,7 @@ def main() -> int:
         mobile.wait_for_timeout(300)
         mobile.locator("#mobileQueue").click()
         mobile.wait_for_timeout(300)
-        results.append(compare("mobile-queue", capture(mobile, "mobile-queue")))
+        results.append(compare("mobile-queue", capture(mobile, "mobile-queue"), update))
 
         browser.close()
 
