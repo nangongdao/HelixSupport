@@ -31,9 +31,15 @@ import threading
 import time
 from pathlib import Path
 
-from app.assets import STATIC_ASSET_VERSION
-
 ROOT = Path(__file__).resolve().parent.parent
+# Same bootstrap as the other repo-root importers (visual_gate, readme_screenshots,
+# run_rls_drill, …). Without it a direct `python scripts/frontend_gate.py` — the
+# invocation CONTRIBUTING.md documents — dies on `No module named 'app'` unless the
+# package happens to be installed editable, which only CI does.
+sys.path.insert(0, str(ROOT))
+
+from app.assets import STATIC_ASSET_VERSION  # noqa: E402
+
 JS_DIR = ROOT / "app" / "static" / "js"
 # D3: the React island sources are the second shipped frontend track, held to
 # the same module limit as the zero-build modules above (check_line_limits).
@@ -57,7 +63,13 @@ CSS_VAR_USE_RE = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(,)?")
 # `<symbol id="x">` in the sprite, and `icons.svg?v=…#x` in a <use href>.
 SVG_SYMBOL_ID_RE = re.compile(r"<symbol[^>]*\bid=\"([A-Za-z0-9_-]+)\"")
 ICON_REF_RE = re.compile(r"icons\.svg[^\"'#\s]*#([A-Za-z0-9_-]+)")
-LOCAL_IMPORT_RE = re.compile(r"(?:from\s+|import\s+)[\"'](\./[^\"']+\.js(?:\?v=[^\"']+)?)\1")
+# A relative module import: `from "./x.js?v=1.4.0"`. Group 1 is the opening
+# quote so the backreference closes on the same kind; group 2 is the specifier.
+# The quote MUST be its own group — with `["'](...)\1` the backreference points
+# at the path group, not the quote, so the pattern demanded the path appear
+# twice and matched nothing. This check silently passed on every file for as
+# long as it existed (notes.md claimed version drift here fails CI).
+LOCAL_IMPORT_RE = re.compile(r"(?:from\s+|import\s+)([\"'])(\./[^\"']+\.js(?:\?v=[^\"']+)?)\1")
 
 
 def _run(
@@ -224,6 +236,27 @@ def find_dangling_css_vars(sheets: list[tuple[str, str]]) -> list[str]:
     return problems
 
 
+def find_unversioned_imports(sources: list[tuple[str, str]], expected_version: str) -> list[str]:
+    """Find relative module imports that lack the cache-busting query key.
+
+    Args:
+        sources: (name, text) pairs.
+        expected_version: The ?v= query string every import must carry.
+
+    Returns:
+        Problem strings "name:line: unversioned import ./x.js".
+    """
+    problems: list[str] = []
+    for name, source in sources:
+        for line_no, line in enumerate(source.splitlines(), start=1):
+            for match in LOCAL_IMPORT_RE.finditer(line):
+                # Group 1 is the quote, group 2 is the path specifier.
+                specifier = match.group(2)
+                if expected_version not in specifier:
+                    problems.append(f"{name}:{line_no}: unversioned module import {specifier}")
+    return problems
+
+
 def check_asset_versions() -> list[str]:
     """Require every shipped static reference to carry the current cache key.
 
@@ -232,6 +265,7 @@ def check_asset_versions() -> list[str]:
     """
     problems: list[str] = []
     expected = f"?v={STATIC_ASSET_VERSION}"
+    sources_for_import_check: list[tuple[str, str]] = []
     for path in sorted((ROOT / "app" / "static").rglob("*")):
         if path.suffix.lower() not in {".css", ".html", ".js"}:
             continue
@@ -246,11 +280,10 @@ def check_asset_versions() -> list[str]:
                 continue
             if expected not in ref:
                 problems.append(f"{path.relative_to(ROOT)}: unversioned static reference {ref}")
-        for match in LOCAL_IMPORT_RE.finditer(source):
-            if expected not in match.group(2):
-                problems.append(
-                    f"{path.relative_to(ROOT)}: unversioned module import {match.group(2)}"
-                )
+        # Collect JS/JSX modules for import checking (HTML/CSS have no imports).
+        if path.suffix.lower() == ".js":
+            sources_for_import_check.append((str(path.relative_to(ROOT)), source))
+    problems.extend(find_unversioned_imports(sources_for_import_check, expected))
     return problems
 
 

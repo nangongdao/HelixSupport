@@ -21,6 +21,7 @@ from scripts.frontend_gate import (
     check_syntax,
     find_dangling_css_vars,
     find_unknown_icon_symbols,
+    find_unversioned_imports,
     run_tests,
 )
 
@@ -134,6 +135,54 @@ class UnknownIconSymbolTests(unittest.TestCase):
         html = '<div>\n  <p>x</p>\n</div>\n<svg><use href="/static/icons.svg#nope" /></svg>'
         problems = find_unknown_icon_symbols([("i.html", html)], self.DEFINED)
         self.assertIn("i.html:4", problems[0])
+
+
+class UnversionedImportTests(unittest.TestCase):
+    """A stale ``?v=`` on a relative import serves cached JS after a release.
+
+    This check existed but never fired: its pattern wrote ``["'](path)\\1``,
+    so the backreference closed on the *path* group instead of the quote and
+    demanded the specifier appear twice. Nothing ever matched, on any file, for
+    as long as the check shipped — while notes.md claimed version drift here
+    fails CI. These cases pin both the match and the version comparison.
+    """
+
+    VERSION = "?v=1.4.0"
+
+    def test_current_version_is_clean(self) -> None:
+        src = 'import { api } from "./http.js?v=1.4.0";'
+        self.assertEqual(find_unversioned_imports([("app.js", src)], self.VERSION), [])
+
+    def test_stale_version_is_reported(self) -> None:
+        src = 'import { api } from "./http.js?v=1.3.9";'
+        problems = find_unversioned_imports([("app.js", src)], self.VERSION)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("./http.js?v=1.3.9", problems[0])
+
+    def test_missing_version_is_reported(self) -> None:
+        src = 'import { api } from "./http.js";'
+        problems = find_unversioned_imports([("app.js", src)], self.VERSION)
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_single_quoted_import_is_matched(self) -> None:
+        # The backreference must close on the same quote kind it opened with.
+        src = "import { api } from './http.js';"
+        self.assertEqual(len(find_unversioned_imports([("app.js", src)], self.VERSION)), 1)
+
+    def test_from_and_bare_import_forms_are_both_matched(self) -> None:
+        src = 'import "./side-effect.js";\nimport { x } from "./other.js";'
+        self.assertEqual(len(find_unversioned_imports([("app.js", src)], self.VERSION)), 2)
+
+    def test_line_number_points_at_the_import(self) -> None:
+        src = '// header\n\nimport { x } from "./late.js";'
+        problems = find_unversioned_imports([("app.js", src)], self.VERSION)
+        self.assertIn("app.js:3", problems[0])
+
+    def test_bare_package_specifier_is_ignored(self) -> None:
+        # Only relative (./) specifiers are ours to cache-bust; node_modules
+        # imports in the island sources carry no version key.
+        src = 'import React from "react";\nimport { z } from "zustand";'
+        self.assertEqual(find_unversioned_imports([("island.jsx", src)], self.VERSION), [])
 
 
 class DanglingCssVarTests(unittest.TestCase):
