@@ -3,12 +3,13 @@
 Runs the frontend engineering checks that CI enforces without adding build
 dependencies:
 
-1. Every ES module under ``app/static/js`` must pass ``node --check``
-   (syntax gate).
+1. Every ES module under ``app/static/js``, plus the ``app/static`` entry
+   points, must pass ``node --check`` (syntax gate).
 2. No module may exceed ``MAX_LINES`` (default 400) — the Phase 26
    acceptance limit. Covers both shipped frontend tracks: the zero-build
    modules under ``app/static/js`` and the React island sources under
-   ``frontend/src`` (vitest suites excluded).
+   ``frontend/src`` (vitest suites excluded). The entry points get the
+   separate ``ENTRY_MAX_LINES`` ceiling.
 3. The Node test runner suite under ``tests/frontend`` must pass and report
    at least ``MIN_TESTS`` (default 30) tests — the Phase 26 acceptance
    threshold.
@@ -46,6 +47,15 @@ JS_DIR = ROOT / "app" / "static" / "js"
 FRONTEND_SRC_DIR = ROOT / "frontend" / "src"
 TEST_DIR = ROOT / "tests" / "frontend"
 MAX_LINES = 400
+# The two shipped entry points live in app/static/, one level above JS_DIR, so
+# neither glob reached them: app.js sat at 477 lines — over MAX_LINES — with the
+# gate reporting zero problems, and `node --check` never validated either file.
+# app.js is the legacy monolith the D3 campaign drove 4,560 -> 477 lines against
+# a "< 500" target, so it gets that documented ceiling rather than the module
+# limit; it is a script entry point, not a domain module. The budget is a
+# ratchet: it may fall as slices continue, never rise.
+ENTRY_POINTS = ("app.js", "widget-app.js")
+ENTRY_MAX_LINES = 500
 MIN_TESTS = 30
 # Vitest runs 16 island suites; a healthy run finishes well under a minute.
 # The bound exists so a runner that never exits fails the gate instead of
@@ -116,9 +126,15 @@ def _run(
         return subprocess.CompletedProcess(cmd, 124, out, err)
 
 
+def _entry_point_paths() -> list[Path]:
+    """The shipped entry points under app/static/, which JS_DIR.glob misses."""
+    static_dir = ROOT / "app" / "static"
+    return [path for name in ENTRY_POINTS if (path := static_dir / name).is_file()]
+
+
 def check_syntax() -> list[str]:
     problems: list[str] = []
-    for path in sorted(JS_DIR.glob("*.js")):
+    for path in sorted(JS_DIR.glob("*.js")) + _entry_point_paths():
         result = _run(["node", "--check", str(path)])
         if result.returncode != 0:
             problems.append(f"syntax error in {path.name}:\n{result.stderr.strip()}")
@@ -126,21 +142,32 @@ def check_syntax() -> list[str]:
 
 
 def check_line_limits() -> list[str]:
-    """Enforce the 400-line module limit on both frontend tracks.
+    """Enforce the module line limit across every shipped frontend file.
 
     The zero-build modules under app/static/js were the only track covered
     until the D3 islands landed, and frontend/src grew unwatched: the admin
     island reached 1,052 lines — past the 800-line hard prohibition — before
     anything complained. Both tracks are shipped operator code, so both are
-    held to the same limit. Vitest suites (*.test.jsx) are excluded: they
-    already sit under the limit by convention, and a test file's length is
-    driven by case count rather than by design debt.
+    held to MAX_LINES. Vitest suites (*.test.jsx) are excluded: they already
+    sit under the limit by convention, and a test file's length is driven by
+    case count rather than by design debt.
+
+    The entry points in app/static/ are held to ENTRY_MAX_LINES — see that
+    constant for why they carry a separate ceiling instead of MAX_LINES.
     """
     problems: list[str] = []
     for path in sorted(JS_DIR.glob("*.js")):
         lines = len(path.read_text(encoding="utf-8").splitlines())
         if lines > MAX_LINES:
             problems.append(f"{path.name}: {lines} lines exceeds {MAX_LINES}")
+    for path in _entry_point_paths():
+        lines = len(path.read_text(encoding="utf-8").splitlines())
+        if lines > ENTRY_MAX_LINES:
+            problems.append(
+                f"{path.name}: {lines} lines exceeds the {ENTRY_MAX_LINES}-line "
+                f"entry-point ceiling — extract a domain module into "
+                f"app/static/js/ rather than raising the limit"
+            )
     for path in sorted(FRONTEND_SRC_DIR.rglob("*")):
         if path.suffix not in {".js", ".jsx"} or path.name.endswith(".test.jsx"):
             continue
@@ -312,12 +339,21 @@ def check_asset_versions() -> list[str]:
 
     D2 (DESKTOP_TAURI_PLAN.md §3.4): dist/ artifacts are content-hashed by
     Vite and self-cache-busting — they are exempt from the ?v= requirement.
+
+    Both shipped tracks are scanned. Only app/static was walked until now,
+    while the island sources hardcode `?v=` in their JSX — 25 references that
+    would have gone stale, silently, on the next version bump. check_line_limits
+    and check_icon_symbols already cover frontend/src; this closes the gap.
     """
     problems: list[str] = []
     expected = f"?v={STATIC_ASSET_VERSION}"
     sources_for_import_check: list[tuple[str, str]] = []
-    for path in sorted((ROOT / "app" / "static").rglob("*")):
-        if path.suffix.lower() not in {".css", ".html", ".js"}:
+    scan_roots = (ROOT / "app" / "static", FRONTEND_SRC_DIR)
+    for path in sorted(p for root in scan_roots for p in root.rglob("*")):
+        if path.suffix.lower() not in {".css", ".html", ".js", ".jsx"}:
+            continue
+        # Vitest suites are not shipped, so their fixtures need no cache key.
+        if path.name.endswith(".test.jsx"):
             continue
         # Skip Vite-produced dist artifacts (self-cache-busting via hash).
         if "dist" in path.parts:
@@ -330,8 +366,12 @@ def check_asset_versions() -> list[str]:
                 continue
             if expected not in ref:
                 problems.append(f"{path.relative_to(ROOT)}: unversioned static reference {ref}")
-        # Collect JS/JSX modules for import checking (HTML/CSS have no imports).
-        if path.suffix.lower() == ".js":
+        # Import checking applies only to the zero-build track. Those modules
+        # are fetched by the browser as written, so a relative specifier needs
+        # its own cache key: `./vqueue.js?v=1.4.0`. Island imports
+        # (`./constants.js`) are resolved by Vite at build time and land inside
+        # a content-hashed chunk — adding ?v= there would be meaningless.
+        if path.suffix.lower() == ".js" and FRONTEND_SRC_DIR not in path.parents:
             sources_for_import_check.append((str(path.relative_to(ROOT)), source))
     problems.extend(find_unversioned_imports(sources_for_import_check, expected))
     return problems

@@ -4,13 +4,19 @@ CI runs the frontend engineering checks here so a frontend regression fails
 the same gate as backend tests: every ES module passes ``node --check``, no
 module exceeds 400 lines, and the Node unit-test suite passes with at least
 30 tests.
+
+:class:`GateCoverageTests` asserts the checks reach every shipped file. A gate
+that scans the wrong directory returns an empty problem list, which looks
+exactly like a pass — so scope is pinned by test, not by reading the globs.
 """
 
 from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
+from scripts import frontend_gate
 from scripts.frontend_gate import (
     _parse_summary,
     _vitest_exit_verdict,
@@ -96,6 +102,45 @@ class FrontendGateTests(unittest.TestCase):
 
     def test_every_icon_reference_resolves_to_a_sprite_symbol(self) -> None:
         problems = check_icon_symbols()
+        self.assertEqual(problems, [], "\n".join(problems))
+
+
+class GateCoverageTests(unittest.TestCase):
+    """The checks must actually reach every shipped file.
+
+    Each assertion here pins a file that was silently exempt: a gate that
+    scans the wrong directory reports zero problems, which is indistinguishable
+    from a pass. These fail if a glob narrows again.
+    """
+
+    def test_entry_points_are_scanned(self) -> None:
+        names = {path.name for path in frontend_gate._entry_point_paths()}
+        self.assertEqual(names, {"app.js", "widget-app.js"})
+
+    def test_entry_point_ceiling_is_enforced(self) -> None:
+        # app.js is 477 lines against a 500 ceiling. Tightening below its
+        # real size must produce a violation — proof the file is measured
+        # rather than skipped.
+        with mock.patch.object(frontend_gate, "ENTRY_MAX_LINES", 400):
+            problems = frontend_gate.check_line_limits()
+        self.assertTrue(
+            any(p.startswith("app.js:") for p in problems),
+            f"app.js must be measured, got {problems}",
+        )
+
+    def test_island_sources_are_scanned_for_stale_cache_keys(self) -> None:
+        # The islands hardcode ?v= in JSX. Bumping the expected version must
+        # flag them; before frontend/src was walked, this reported nothing.
+        with mock.patch.object(frontend_gate, "STATIC_ASSET_VERSION", "9.9.9"):
+            problems = frontend_gate.check_asset_versions()
+        island = [p for p in problems if p.startswith("frontend")]
+        self.assertTrue(island, "frontend/src static references must be scanned")
+
+    def test_island_imports_are_exempt_from_cache_keys(self) -> None:
+        # Vite resolves `./constants.js` at build time into a content-hashed
+        # chunk, so ?v= there would be meaningless — only the zero-build
+        # track needs it. Guards against re-introducing 20 false positives.
+        problems = frontend_gate.check_asset_versions()
         self.assertEqual(problems, [], "\n".join(problems))
 
 
