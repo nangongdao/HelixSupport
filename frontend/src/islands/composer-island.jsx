@@ -27,12 +27,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import { COMPOSER_EVENTS, INPUT_IDS, macroMatches } from "./composer/constants.js";
-import {
-  AttachmentBar,
-  CannedBar,
-  CopilotBar,
-  MacroSuggest,
-} from "./composer/tool-bars.jsx";
+import { AttachmentBar, CannedBar, CopilotBar, MacroSuggest } from "./composer/tool-bars.jsx";
 
 export { COMPOSER_EVENTS, INPUT_IDS, macroMatches } from "./composer/constants.js";
 
