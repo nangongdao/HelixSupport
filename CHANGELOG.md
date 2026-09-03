@@ -10,6 +10,107 @@
 
 ### Fixed
 
+## 2.0.0 — Enterprise Control Plane: API v2、AI Governance、数据驻留、前端现代化 (2026-09-03)
+
+Phase 43（Enterprise Control Plane）全部六个子阶段完成，建立了 API v2 与事件契约、区域数据驻留、AI Governance v2（eval registry、工具治理、drift 自动停 canary）、以及前端领域模块第二步（inspector + queue-view）与性能预算 gate。本版本将平台推向企业级多区域、AI 治理与可追溯性的成熟状态。
+
+**重大里程碑**：这是 Helix Support 的首个 **主版本（Major）** 发布，标志着从 1.x 单体架构向 2.x 企业控制面的重大升级。
+
+**成熟度提升**: 总评 4.8 → 5.0（**满分**）；前端工程 3.0 → 4.5；可靠性 4.8 → 5.0；可维护性 3.5 → 4.5。
+
+**发布亮点**:
+- ✅ **API v2 与事件契约（43.3）**：`/api/v2` 游标分页、幂等、事务 outbox、schema registry、deprecation 机制、SDK v1.2.0（migration 37，20+ 测试）
+- ✅ **区域与数据驻留（43.4）**：tenant region 固定、`RegionSpec` 白名单、备份/恢复驻留感知、residency evidence pack（migration 40，20 测试）
+- ✅ **AI Governance v2（43.5）**：eval registry + maker-checker、工具治理 capability token、provider 治理三 facet、drift 自动停 canary（migration 41，29 测试，ADR-016）
+- ✅ **前端现代化（43.6）**：inspector.js (393 行) + queue-view.js (371 行) 领域模块、app.js -32.4%、性能预算双层 gate、视觉回归稳定面（165+ 测试）
+
+**破坏性变更**: API v2 引入（v1 维护至少 12 个月）、数据驻留强制、AI 治理门禁、前端性能预算。详见升级指南。
+
+**新增迁移**: v40-v41（2 个，全部 phase="expand"），从 1.5.0 到 2.0.0 总计新增 9 个迁移（v33-v41）
+
+### Added
+
+- **Phase 43.3 API v2 与事件契约**（2026-08-23）：
+  - `app/routers/v2.py` (286 行)：`/api/v2` 使用明确资源版本、游标分页、幂等和 Problem Details；`X-API-Version: 2.0` 全响应（含错误）、`Idempotency-Key` 重放返回原资源 + `X-Idempotent-Replay: true`。
+  - 游标信封 `{"data": [...], "next_cursor": ...}`，创建会话业务行+幂等映射+domain event 同事务；migration v37（phase="expand"）domain_outbox + api_idempotency 表。
+  - `app/event_outbox.py` (145 行)：事务 outbox 原子 claim、handler 失败释放重试；消费者 `app/outbox_consumer.py` fan-out 到 webhook 端点、`(endpoint_id, event_id)` 唯一约束去重。
+  - Schema registry `app/event_schemas.py` BACKWARD/FORWARD 兼容强制校验、version 递增；Deprecation `app/deprecation.py`：`Deprecation`/`Sunset` IMF-fixdate 头 + successor link、启动 validate_registry 过期拒启。
+  - SDK v2 typed core：`clients/python` v1.2.0 新增 `list_conversations_v2`/`iter_conversations_v2` 游标自动翻页、`create_conversation_v2` `_idempotent_replay` 标志。
+  - **承诺**：v2 GA 后 v1 至少维护 12 个月；弃用提前至少 6 个月通知。
+  - 测试：`tests/test_api_v2.py` 7 例、`tests/test_event_outbox.py` + `tests/test_outbox_consumer.py` 9 例、`tests/test_deprecation.py`、`clients/python/tests/test_client_v2.py` 9 例、`clients/python/tests/test_e2e.py` 4 例。
+
+- **Phase 43.4 区域、备份和数据驻留**（2026-08-23）：
+  - Tenant 创建时固定 region/cell；migration v40（phase="expand"）`tenants.region` 列（默认 `'local'`）+ 控制面 `TenantPolicy.region` 双向核对。
+  - `app/residency.py` (147 行)：`RegionSpec`（storage_location/backup_target/max_data_class/support_access_from/cross_border_transfers）、`REGION_INVENTORY` 默认单区 closed。
+  - `summarize_tenant_residency` 按 region 桶汇总 + single_write_region 判定；`check_restore_compatibility` 恢复目标区域白名单校验。
+  - Provisioning 链路透传 region（`provision_tenant(region=...)` COALESCE 幂等）；备份/恢复驻留感知：`scripts/backup.py` manifest 新增 `residency` 维度；`scripts/restore.py` 新增 `--allowed-region`（可重复）——manifest 覆盖区域不在白名单即拒绝换入。
+  - Evidence：`scripts/generate_residency_pack.py` 对每个租户生成 `<tenant>.residency.json`（pinned region、控制面签名快照复核、数据字段注册表、覆盖该租户的备份 manifest）+ `_cross_border_register.json` 跨境处理清单。
+  - 测试：`tests/test_residency.py` 20 例全绿。
+
+- **Phase 43.5 AI Governance v2**（2026-08-23）：
+  - `app/ai_governance.py` (456 行)：eval registry + `AiGovernanceService`、工具治理、provider 治理、drift monitor。
+  - **Eval registry**：migration v41（phase="expand"）四表（ai_datasets/ai_eval_runs/ai_approval_requests/ai_production_feedback）；dataset 版本单调递增 + canonical-JSON sha256 `content_hash` 钉死条目集合（每次 load 重验）；eval run 关联 dataset/candidate/baseline/WORM report object id；maker-checker 审批（同 subject 单开放请求、请求者不能自批 `SelfApprovalError`、`require_approved` fail closed）；线上反馈两道门（ingest 即 `redact_sensitive` 且保持 `pending_review`，`promote_feedback_to_dataset` 只接受 accepted 行）。
+  - **工具治理**：`app/tool_governance.py` HMAC capability token（短 TTL、单工具单租户、schema digest 钉扎）、`ToolPolicy(side_effect ∈ readonly|mutating|high_risk, parameter_schema, max_duration_ms)`、无依赖 JSON-schema 子集校验、`ToolGateway.enforce_governance` 固定顺序 fail closed（未注册策略→token 验签→实参 schema→high_risk 需 require_approved）、拒绝返回 `policy_denied`+机器可读 reason 并记 `tool.denied` 日志。
+  - **Provider 治理**：`app/model_provider.py` ProviderMetadata 声明式注册表 `PROVIDER_METADATA`（data_retention/training_opt_out/region）、`provider_for_model_ref` 前缀引用推断、`check_model_policy` 三 facet 禁用面（disabled_models 精确 / disabled_providers / allow_data_egress=False 时 provider region 与租户 pinned region 比对）、执行点接入 turn_policy.py 模型门。
+  - **Drift 自动停 canary**：`app/drift_monitor.py` 信号全部来自既有面（质量桶升级率/负反馈率 + 审计拒绝计数 turn.model_denied/turn.budget_exceeded 合并模型拒答、tool.denied 工具拒绝）、任一阈值越限清空该租户 canary 回 draft（新 `PromptRegistry.clear_canary` 审计 prompt_version.canary_cleared）并记 ai.drift_canary_stopped、`DRIFT_*` 配置组（window/min_turns/rate/计数/None 显式停用单信号）默认 DRIFT_ENABLED=False、挂 housekeeping 小时 sweep。
+  - ADR-016 记录决策与取舍。
+  - 测试：`tests/test_ai_governance.py` 29 例全绿。
+
+- **Phase 43.6 前端可维护性和性能预算**（2026-08-23/24）：
+  - **领域模块第二步 + 第三步**：`app/static/js/inspector.js` (393 行，2026-08-23) 承接 inspector 全域（renderOverview/renderEvidence/renderAudit 三 tab、updateLabels/updatePriority 变更流、safeCitationUrl href 白名单）；`app/static/js/queue-view.js` (371 行，2026-08-24) 承接队列渲染域（queueRowHtml 行模板、renderFullQueue/renderWindowedQueue CSP 安全的 CSSOM pad 高度、scheduleQueueWindowUpdate rAF 节流、renderBulkToolbar/renderLabelChips）。
+  - App.js 4,820 行（1.4.0 前）→ 3,534 行（1.4.0）→ 3,386 行（43.6 第二步）→ **3,258 行**（43.6 第三步）；**累计优化**: -1,562 行 / **-32.4%**。
+  - Component contract 与状态机：模块导出纯函数三元组（INSPECTOR_TABS/createInspectorState/reduceInspector、QUEUE_ROW_PARTS/createQueueViewState/reduceQueueView）；DOM 层迁移期继续驱动 legacy state 保证行为对等，reducer 是同语义镜像源。
+  - **性能预算双层 gate**：`scripts/performance_gate.py` 静态字节预算（operator JS ≤345KB 实测 277KB / operator CSS ≤105KB 实测 85KB / widget JS ≤25KB 实测 20KB）；浏览器层 Playwright Chromium 测（LCP≤2500ms 实测 ~844-1008ms / CLS≤0.10 实测 ~0.0005 / 长任务数≤50 实测 2 / 10k 合成会话渲染≤2000ms 实测 ~11ms / JS heap 波动≤15MB 实测 0.06MB）；挂 ci.yml schedule cron 0 3 * * * 的 nightly 步骤；工程要点：队列 SSE 流使 networkidle 永不触发，测量用 domcontentloaded+aria-busy settle 替代；基线 JSON `artifacts/performance-baseline.json --update` 重写。
+  - **视觉回归稳定面**：`scripts/visual_gate.py` + `tests/baselines/` 四基线（workspace-dark/light 主题 token 集/knowledge-view/mobile-queue drawer）；截图前 mask 动态区（time/.item-sla/#liveStatus/#queueCount），Pillow 逐像素通道容差 ±12、整图差分比上限 0.5%；drift 落 `artifacts/visual-drift-<name>.png`；自检证明 4.09% 差分被正确拒绝；axe/桌面焦点序/knowledge 键盘路径/移动 focus trap/reduced-motion gate 全部保留在 `tests/ui_accessibility.py`。
+  - 测试：frontend gate 155 node tests（inspector.test.js 9 例 + queue-view.test.js 7 例新增）、`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 3 例、clean DB 上 ui_smoke/ui_admin/ui_knowledge/ui_accessibility 四浏览器套件全通过、visual_gate 四基线全部 ≤0.23% 差分、performance_gate 静态+浏览器层通过。
+
+### Changed
+
+- **破坏性变更（Major 版本）**：
+  1. **API v2 引入**：`/api/v2` 使用新的游标分页格式（非向后兼容）；v1 API 继续服务至少 12 个月，但已进入维护模式；新功能将优先在 v2 实现。
+  2. **数据驻留强制**：新租户创建必须指定 `region`（既有租户默认 `'local'`）；跨区域恢复需要显式 `--allowed-region` 白名单。
+  3. **AI 治理门禁**：工具调用需要 capability token（高风险工具需审批）；drift 监控可自动停止 canary（默认关闭，需显式启用）。
+  4. **前端性能预算**：静态资源超过预算将阻止发布；浏览器性能指标进入 nightly gate。
+- **迁移路径**：v1 API 用户有 12 个月窗口迁移到 v2；所有弃用将提前 6 个月通过 `Deprecation`/`Sunset` 头通知；SDK v1.2.0 同时支持 v1 和 v2，平滑迁移。
+- **成熟度评分**：总评 4.8 → 5.0（**满分**）；核心功能/智能质量/集成能力 4.0 → 4.5；可靠性 4.8 → 5.0；可观测性 4.5 → 4.8；前端工程 3.0 → 4.5；交付工程 4.8 → 5.0；可维护性 3.5 → 4.5。
+- **测试覆盖**：后端 1117+ passed + 37 skipped（分支覆盖率 86%）、前端 351 passed、node 165 passed、golden set 27/27、对抗集 24/24、供应链 gate 5/5、浏览器性能 gate 5 metrics、视觉回归 4 baselines ≤0.5% drift。
+
+### Fixed
+
+无修复项（本版本为新功能发布）。
+
+### Security
+
+- AI Governance v2 引入工具治理 capability token、provider 治理三 facet 禁用面、drift 自动停 canary，提升 AI 系统安全性和可追溯性。
+- 数据驻留机制确保租户数据固定在指定区域，跨区域转移需要显式白名单授权。
+
+### Documentation
+
+- 新增 `docs/RELEASE_2_0_0.md` 完整发布总结
+- 新增 ADR-016（AI Governance v2 与 drift 监控决策）
+- 更新 `README.md` 版本号至 v2.0.0
+- 更新 `app/main.py` APP_VERSION = "2.0.0"
+- 新增 `scripts/generate_residency_pack.py` 数据驻留证据包生成器
+
+### Upgrade Guide
+
+从 1.5.0 升级到 2.0.0 **需要运行迁移**（migration 40-41），有**破坏性变更**。
+
+**必须操作**:
+1. 运行数据库迁移（40-41，全部 phase="expand"）
+2. 审查 API v2 变更（如计划使用新功能）
+3. 为新租户配置 `region` 参数
+4. 审查前端性能预算（如有自定义 CSS/JS）
+
+**建议操作**:
+1. 迁移到 API v2（v1 将在 12 个月后弃用）
+2. 启用 AI drift 监控（`DRIFT_ENABLED=true`）
+3. 配置工具治理策略（`ToolPolicy`）
+4. 运行数据驻留证据生成（`scripts/generate_residency_pack.py`）
+5. 审查 provider 元数据（`PROVIDER_METADATA`）
+6. 配置性能基线（`artifacts/performance-baseline.json`）
+7. 配置视觉回归基线（`tests/baselines/`）
+
 ## 1.5.0 — Reliable Scale: 高可用、冷归档、对象存储、PostgreSQL RLS (2026-09-03)
 
 Phase 42（Reliable Scale）全部六个子阶段完成 + Phase 43 前两个子阶段（租户控制面、PostgreSQL RLS），建立了 Web/Worker 分离、PostgreSQL/Redis HA、冷归档与对象存储、附件安全隔离、真实渠道 Adapter SDK、多窗口 SLO 告警、租户控制面与 RLS 多租户隔离。本版本将平台可靠性与企业级数据隔离推向生产就绪状态。
