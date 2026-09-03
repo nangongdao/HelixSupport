@@ -199,18 +199,37 @@ function initDesktopSplash() {
   const splash = document.getElementById("desktopSplash");
   if (!splash) return;
   const statusEl = document.getElementById("desktopSplashStatus");
+  const progressEl = document.getElementById("desktopSplashProgress");
+
   if (isDesktopShell()) {
     splash.hidden = false;
     document.documentElement.classList.add("desktop-booting");
+
+    // Show progress bar after a short delay to indicate activity
+    if (progressEl) {
+      setTimeout(() => {
+        if (!splash.hidden) progressEl.hidden = false;
+      }, 300);
+    }
   }
+
   window.addEventListener("helix-backend-ready", () => {
+    const backend = window.__HELIX_BACKEND__;
+
+    // Check for backend errors first
+    if (backend && backend.error) {
+      if (statusEl) {
+        statusEl.textContent = `后端启动失败：${backend.error}`;
+      }
+      if (progressEl) progressEl.hidden = true;
+      // Keep splash visible to show error
+      return;
+    }
+
+    // Success path: hide splash and mark desktop as ready
     splash.hidden = true;
     document.documentElement.classList.remove("desktop-booting");
-    const backend = window.__HELIX_BACKEND__;
-    if (backend && backend.error && statusEl) {
-      statusEl.textContent = `后端启动失败：${backend.error}`;
-      splash.hidden = false;
-    }
+
     // Notify the Rust side that the UI is interactive (startup telemetry).
     if (isDesktopShell() && window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
       window.__TAURI_INTERNALS__.invoke("ui_ready").catch(() => {});

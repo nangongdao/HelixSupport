@@ -176,6 +176,29 @@ button .icon {
   opacity: 0.65;
 }
 
+.desktop-splash-progress {
+  width: 16rem;
+  height: 0.25rem;
+  background: var(--bg-2);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.desktop-splash-progress-bar {
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  animation: desktop-splash-progress 2s ease-in-out infinite;
+}
+
+@keyframes desktop-splash-progress {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(250%); }
+  100% { transform: translateX(-100%); }
+}
+
 @keyframes desktop-splash-pulse {
   0%, 100% { opacity: 0.5; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.06); }
@@ -183,6 +206,7 @@ button .icon {
 
 @media (prefers-reduced-motion: reduce) {
   .desktop-splash-mark .icon { animation: none; }
+  .desktop-splash-progress-bar { animation: none; width: 100%; }
 }
 
 /* ------------------------------------------------------------------ D5 motion (§5.2) */
