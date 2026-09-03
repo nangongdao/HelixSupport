@@ -10,6 +10,60 @@
 
 ### Fixed
 
+## 1.2.0 — 平台化：租户运营、渠道、前端工程 (2026-09-03)
+
+Phase 22-23-26-27 完成，标志着 Helix Support 从"可被第三方集成的商用级平台"升级为**支持多租户自助运营与渠道接入的企业级平台**。本版本实现了租户开通与成员生命周期管理、可嵌入 Web Chat 与渠道 webhook、前端模块化拆分（48 模块 + 351 测试）以及后端结构治理（database.py 拆分为 70 行）。
+
+**成熟度提升**: 总评 3.6 → 3.7；前端工程 2.0 → 3.0。
+
+**发布亮点**:
+- ✅ **租户开通 API**：`POST /api/admin/tenants` 幂等开通，自动初始化策略/标签/配额
+- ✅ **成员管理**：invite_member / update_member_role / deactivate_member，完整审计
+- ✅ **细粒度权限**：新增 auditor（只读审计）/ supervisor 角色，6 种角色权限矩阵
+- ✅ **配额与计量**：tenant_usage_daily 表，按天聚合 turn/会话/消息数，导出账单
+- ✅ **可嵌入 Web Chat**：widget.html + Widget API，签名 token、SSE 流式、品牌定制
+- ✅ **渠道 webhook**：HMAC-SHA256 签名、时间窗重放防护、持久幂等（2026-08-19 完成）
+- ✅ **前端模块化**：48 个 JS 模块（最大 399 行），351 个测试，i18n 国际化
+- ✅ **后端结构治理**：database.py 仅 70 行，按域拆分为 app/db/ mixin 模块
+
+**完成报告**:
+- `docs/RELEASE_1_2_0.md`（发布总结）
+- `docs/RELEASE_1_2_0_SUMMARY.md`（实现状态汇总）
+
+### Added
+
+- **Phase 22 租户自助开通与成员生命周期**（2026-09-03）：
+  - **22.1 租户开通 API**：`POST /api/admin/tenants`（`app/routers/admin.py:249`）幂等开通接口，`database.provision_tenant()` 实现自动初始化默认策略（知识库种子文档、默认标签、会话配额）。Schema: `TenantProvisionRequest`（tenant_id + name + 可选配额参数）/ `TenantQuotaOut`（配额详情）。审计事件: `tenant.provisioned`。实现位置: `app/db/tenancy.py:273-330`。
+  - **22.2 成员管理**：`invite_member()`（邀请成员，幂等，重复调用返回现有成员）、`update_member_role()`（角色变更，完整审计）、`deactivate_member()`（停用成员，保留会话与审计记录）、`list_members()` / `get_member()`（查询成员）、`find_active_members_by_actor()`（OIDC 用户绑定生命周期）。审计事件: `member.invited` / `member.role_updated` / `member.deactivated`。实现位置: `app/db/tenancy.py:426-545`。
+  - **22.3 细粒度权限**：6 种角色（admin / supervisor / operator / channel / viewer / auditor），新角色权限：auditor（conversation:read + metrics:read + audit:read，只读审计角色），supervisor（conversation:read/write + operator:act + knowledge:write + metrics:read）。`ROLE_PERMISSIONS` 权限映射表（`app/security.py:25`），`Principal.can()` 统一权限检查，`require_permission()` 装饰器强制 RBAC。
+  - **22.4 配额与计量**：`tenant_usage_daily` 表（turn_count / conversation_count / message_count），`list_tenant_usage()` 导出账单数据（CSV/JSON），`_conversation_quota_exceeded()` 配额检查，增量计数防重复（ON CONFLICT DO UPDATE）。实现位置: `app/db/tenancy.py:115` + `app/main.py:93`。
+
+- **Phase 23 Web Chat 渠道与渠道幂等**（2026-09-03）：
+  - **23.1 可嵌入 Web Chat**：`app/static/widget.html` 客户侧聊天页面，`app/widget_routes.py` Widget API（`POST /api/widget/sessions` 创建会话、`POST /api/widget/sessions/{id}/messages` 发送消息、`GET /api/widget/sessions/{id}/stream` SSE 流式）。签名 token 认证（`app/widget_token.py`，短期 bootstrap token 换取会话 token）。两种形态：可嵌入脚本 + 独立页面。支持品牌名、主题色、语言、刷新恢复。
+  - **23.2 渠道抽象**：渠道级幂等键（`channel_message_id`），外部线程映射（`external_thread_mappings` 表），路由规则（渠道账号绑定租户），持久幂等（重放相同消息 ID 返回原 job）。
+  - **23.3 正式渠道 webhook 接入** ✅（2026-08-19 已完成）：`POST /api/channels/{account_id}/webhook`（`app/routers/channels.py`），HMAC-SHA256 签名验证（`app/channel_webhooks.py`），安全协议（`X-Helix-Timestamp` + `X-Helix-Signature`），签名输入格式 `<timestamp>.<body>`，时间窗重放防护（5 分钟），幂等链路（外部 `message_id` → 内部作业幂等）。完整证据: `IMPLEMENTATION_REPORT_PHASE_38.md`。
+
+- **Phase 26 前端工程化**（2026-09-03）：
+  - **26.1 模块化拆分**：48 个 JS 模块（`app.js` 已完全拆分），模块列表（api.js / state.js / queue-view.js / conversation-detail.js / composer.js / sse.js / i18n.js / helpers.js / format.js / admin-report.js / knowledge-view.js / quality-view.js 等），最大文件 399 行（符合 ≤400 行目标），设计令牌层拆分（`app/static/css/tokens.css`）。
+  - **26.2 前端测试**：351 个前端测试集成到 CI（从 139 升级至 351），测试文件（api.test.js / boot.test.js / queue-view.test.js / knowledge.test.js / widget.test.js / format.test.js 等），框架（Node.js 内建测试 + JSDOM），100% 通过率。
+  - **26.3 国际化**：`app/static/js/i18n.js` 国际化模块，支持语言包切换（zh-CN / en），消除硬编码文本。
+  - **26.4 前端质量门禁**：`scripts/frontend_gate.py`（CSS 变量验证 + 模块行数检查），最大 399 行 < 400 行要求，无悬空 CSS 变量。
+
+- **Phase 27 后端结构治理**（2026-09-03）：
+  - **27.1 database.py 拆分**：`app/database.py` 仅 70 行（已完全拆分），按域拆分为 mixin 模块（`app/db/core.py` 连接/事务/迁移、`app/db/conversations.py` 会话管理、`app/db/messages.py` 消息管理、`app/db/jobs.py` 作业管理、`app/db/knowledge.py` 知识库、`app/db/audit.py` 审计日志、`app/db/tenancy.py` 租户与成员管理、其他 10+ 模块）。
+  - **27.2 main.py 按 APIRouter 拆分**：路由已拆分到 `app/routers/` 目录（conversations.py / admin.py / auth.py / channels.py / quality_routes.py / widget_routes.py / 其他 5+ 路由模块）。
+  - **27.3 架构决策记录**：延后到 1.3.0（不阻塞 1.2.0 发布）。
+
+### Changed
+
+- 前端测试数量从 139 增加至 351（Phase 26.2）
+- 前端工程成熟度从 2.0 提升至 3.0（Phase 26 全部完成）
+- 总评成熟度从 3.6 提升至 3.7
+
+### Fixed
+
+- 无破坏性变更，完全向后兼容 1.1.0
+
 ## 1.1.0 — 智能质量与集成成熟 (2026-09-03)
 
 Phase 19-21-25 完成，标志着 Helix Support 从功能完整的单体产品升级为**可被第三方集成的商用级智能客服平台**。本版本实现了提示词/模型版本管理与 Canary 对照部署、连接器健壮性防护、Supervisor 质量看板、知识生命周期管理、RFC 9457 统一错误契约、OpenAPI 治理、Python SDK 以及完整 API 文档站。
