@@ -16,6 +16,11 @@
   - 应用 ruff 自动修复规则跨 163 个文件，共 579 处新增、648 处删除（净减少 69 行）。
   - 主要修复：`re.I` → `re.IGNORECASE` 规范化（26 处正则表达式，FURB167）、`yield` in for loop → `yield from` 优化（UP028）、多个 `startswith` 调用合并为元组形式（PIE810，如 `if head.startswith(b"MZ") or head.startswith(b"\x7fELF"):` → `if head.startswith((b"MZ", b"\x7fELF")):`）、`fromisoformat` Z 替换优化（FURB162）、嵌套 if 语句合并（SIM102）、移除未使用导入和尾随逗号。
   - 剩余 144 项警告需人工审查（主要为 BLE001 盲异常捕获 63 项、RUF012 可变类默认值 8 项等），这些涉及业务逻辑判断，不适合自动修复。
+
+- **队列模块测试覆盖提升**（2026-09-03，commit b500944）：
+  - 新增 `tests/test_queue_error_paths.py`（21 例）完整覆盖 Redis 队列错误处理路径、stats() 方法、retry() 方法和工厂函数 fallback 场景。
+  - 测试场景：SQLiteQueue stats() 全局和租户过滤、RedisQueue stats() dispatch_depth/in_flight 指标、RedisQueue retry() 终态任务重试、Redis 错误处理（enqueue/dequeue/complete/fail/recover 失败路径）、create_task_queue() 工厂函数（redis 导入失败、客户端构建失败、fallback 模式）。
+  - `app/queue.py` 模块覆盖率从 **72% → 90%**（226 stmts，22 miss，36 branches），超额完成 >85% 目标。
   
 - **测试覆盖率提升**（2026-09-03）：
   - 第一轮：新增 `tests/test_coverage_final_push.py`（3 例）覆盖 `app/attachment_store.py:81`（tmp cleanup 异常路径）、`app/audit_gap.py:63-66`（DB 不可达异常处理）、`app/db/archive.py:167`（before cursor 反转）；新增 `tests/test_channel_webhooks_validation.py`（5 例）覆盖 `InboundChannelRegistry` 配置验证错误路径；扩展 `tests/test_config_validation.py`（+2 例）覆盖 archive 配置零值拒绝。覆盖率 **87.45% → 87.54%**（13109 stmts，1320 miss）。
