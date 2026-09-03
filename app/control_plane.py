@@ -83,10 +83,7 @@ class TenantPolicy:
         )
 
     def differs_in_high_risk_fields(self, other: "TenantPolicy") -> bool:
-        return any(
-            self.canonical()[name] != other.canonical()[name]
-            for name in _HIGH_RISK_FIELDS
-        )
+        return any(self.canonical()[name] != other.canonical()[name] for name in _HIGH_RISK_FIELDS)
 
 
 def _canonical_bytes(document: dict[str, Any]) -> bytes:
@@ -146,7 +143,13 @@ class TenantControlPlane:
         self.database = database
         self._secret = signing_secret.encode("utf-8")
 
-    def set_policy(self, tenant_id: str, policy: TenantPolicy, *, ttl_seconds: int = DEFAULT_SNAPSHOT_TTL_SECONDS) -> ConfigSnapshot:
+    def set_policy(
+        self,
+        tenant_id: str,
+        policy: TenantPolicy,
+        *,
+        ttl_seconds: int = DEFAULT_SNAPSHOT_TTL_SECONDS,
+    ) -> ConfigSnapshot:
         """Persist a new policy version and return its signed snapshot."""
         with self.database.connect() as connection:
             row = connection.execute(
@@ -288,9 +291,7 @@ class DataPlaneConfig:
             raise SnapshotVerificationError(
                 f"snapshot v{snapshot.version} for {snapshot.tenant_id!r} is expired"
             )
-        previous = self._accepted.get(snapshot.tenant_id) or self._load_stored(
-            snapshot.tenant_id
-        )
+        previous = self._accepted.get(snapshot.tenant_id) or self._load_stored(snapshot.tenant_id)
         if (
             not self.control_plane_available
             and previous is not None

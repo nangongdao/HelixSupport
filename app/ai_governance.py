@@ -82,7 +82,9 @@ class AiGovernanceService:
         measured.
         """
         if strategy not in DATASET_STRATEGIES:
-            raise ValueError(f"unknown dataset strategy {strategy!r}; allowed: {list(DATASET_STRATEGIES)}")
+            raise ValueError(
+                f"unknown dataset strategy {strategy!r}; allowed: {list(DATASET_STRATEGIES)}"
+            )
         if not items:
             raise ValueError("an eval dataset needs at least one item")
         dataset_id = f"ds_{uuid4().hex[:12]}"
@@ -115,7 +117,10 @@ class AiGovernanceService:
             connection.executemany(
                 """INSERT INTO ai_eval_dataset_items
                 (dataset_id, position, item_json) VALUES (?, ?, ?)""",
-                [(dataset_id, i, json.dumps(item, ensure_ascii=False)) for i, item in enumerate(items)],
+                [
+                    (dataset_id, i, json.dumps(item, ensure_ascii=False))
+                    for i, item in enumerate(items)
+                ],
             )
         return {
             "id": dataset_id,
@@ -171,9 +176,12 @@ class AiGovernanceService:
         run_id = f"run_{uuid4().hex[:12]}"
         now = utc_now()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM ai_eval_datasets WHERE id = ?", (dataset_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM ai_eval_datasets WHERE id = ?", (dataset_id,)
+                ).fetchone()
+                is None
+            ):
                 raise LookupError(f"unknown dataset {dataset_id!r}")
             connection.execute(
                 """INSERT INTO ai_eval_runs
@@ -274,13 +282,19 @@ class AiGovernanceService:
                 None,
                 decided_by,
                 "ai.approval_decided",
-                {"approval_id": approval_id, "subject": f"{row['subject_kind']}:{row['subject_id']}",
-                 "decision": decision, "reason": reason},
+                {
+                    "approval_id": approval_id,
+                    "subject": f"{row['subject_kind']}:{row['subject_id']}",
+                    "decision": decision,
+                    "reason": reason,
+                },
                 created_at=now,
             )
         return {"id": approval_id, "decision": decision, "decided_by": decided_by}
 
-    def require_approved(self, *, tenant_id: str, subject_kind: str, subject_id: str) -> dict[str, Any]:
+    def require_approved(
+        self, *, tenant_id: str, subject_kind: str, subject_id: str
+    ) -> dict[str, Any]:
         """Return the governing approval or raise — fail closed by default."""
         with self.database.connect() as connection:
             row = connection.execute(
@@ -290,9 +304,7 @@ class AiGovernanceService:
                 (tenant_id, subject_kind, subject_id),
             ).fetchone()
         if row is None:
-            raise ApprovalRequiredError(
-                f"{subject_kind}:{subject_id} has no approval record"
-            )
+            raise ApprovalRequiredError(f"{subject_kind}:{subject_id} has no approval record")
         if row["decision"] == "rejected":
             raise ApprovalRequiredError(f"{subject_kind}:{subject_id} was rejected")
         if row["decision"] == "pending":
@@ -367,9 +379,7 @@ class AiGovernanceService:
             if row is None:
                 raise LookupError(f"unknown feedback {feedback_id!r}")
             if row["review_status"] != "pending_review":
-                raise GovernanceError(
-                    f"feedback {feedback_id!r} is already {row['review_status']}"
-                )
+                raise GovernanceError(f"feedback {feedback_id!r} is already {row['review_status']}")
             connection.execute(
                 """UPDATE ai_online_feedback SET review_status = ?, reviewed_by = ?,
                 reviewed_at = ? WHERE id = ?""",

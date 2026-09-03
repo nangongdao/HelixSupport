@@ -173,7 +173,9 @@ class ToolGateway:
         # (calls without a ``capability`` argument still pass — the token is
         # required only when the caller presents one or when policy demands it).
         self._capability_secret = (
-            capability_secret.encode("utf-8") if isinstance(capability_secret, str) else capability_secret
+            capability_secret.encode("utf-8")
+            if isinstance(capability_secret, str)
+            else capability_secret
         )
         # AiGovernanceService for high-risk approvals; None means no high-risk
         # tool is approvable and such calls fail closed.

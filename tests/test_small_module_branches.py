@@ -13,7 +13,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 from unittest import mock
 
 from fastapi import Request
@@ -86,9 +85,7 @@ class AttachmentStorePathTests(unittest.TestCase):
     def test_digest_stability(self) -> None:
         import hashlib
 
-        self.assertEqual(
-            DiskAttachmentStore.digest(b"abc"), hashlib.sha256(b"abc").hexdigest()
-        )
+        self.assertEqual(DiskAttachmentStore.digest(b"abc"), hashlib.sha256(b"abc").hexdigest())
 
 
 class ArchiveMessageListingTests(unittest.TestCase):

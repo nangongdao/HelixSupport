@@ -23,6 +23,5 @@ from app.migrations import migration
 )
 def migrate(connection: sqlite3.Connection) -> None:
     connection.execute(
-        "ALTER TABLE webhook_endpoints "
-        "ADD COLUMN secret_format TEXT NOT NULL DEFAULT 'plain'"
+        "ALTER TABLE webhook_endpoints ADD COLUMN secret_format TEXT NOT NULL DEFAULT 'plain'"
     )

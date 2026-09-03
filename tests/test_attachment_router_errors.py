@@ -95,15 +95,11 @@ class AttachmentRouterErrorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_get_unknown_attachment_404(self) -> None:
-        response = self.client.get(
-            "/api/attachments/no-such-id", headers=self.admin
-        )
+        response = self.client.get("/api/attachments/no-such-id", headers=self.admin)
         self.assertEqual(response.status_code, 404)
 
     def test_download_unknown_attachment_404(self) -> None:
-        response = self.client.get(
-            "/api/attachments/no-such-id/download", headers=self.admin
-        )
+        response = self.client.get("/api/attachments/no-such-id/download", headers=self.admin)
         self.assertEqual(response.status_code, 404)
 
     def test_download_with_bad_token_403(self) -> None:
@@ -147,17 +143,13 @@ class AttachmentRouterErrorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_delete_unknown_attachment_404(self) -> None:
-        response = self.client.delete(
-            "/api/attachments/no-such-id", headers=self.admin
-        )
+        response = self.client.delete("/api/attachments/no-such-id", headers=self.admin)
         self.assertEqual(response.status_code, 404)
 
     def test_delete_requires_operator_act(self) -> None:
         conv_id = self._open_conversation()
         attachment = self._upload(conv_id)
-        response = self.client.delete(
-            f"/api/attachments/{attachment['id']}", headers=self.viewer
-        )
+        response = self.client.delete(f"/api/attachments/{attachment['id']}", headers=self.viewer)
         self.assertEqual(response.status_code, 403)
 
     def test_list_unknown_conversation_is_empty(self) -> None:
@@ -172,9 +164,7 @@ class AttachmentRouterErrorTests(unittest.TestCase):
     def test_get_requires_conversation_read(self) -> None:
         conv_id = self._open_conversation()
         attachment = self._upload(conv_id)
-        response = self.client.get(
-            f"/api/attachments/{attachment['id']}", headers=self.viewer
-        )
+        response = self.client.get(f"/api/attachments/{attachment['id']}", headers=self.viewer)
         self.assertEqual(response.status_code, 200)
 
 

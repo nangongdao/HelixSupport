@@ -87,8 +87,12 @@ def build_router(deps: RouteDeps) -> APIRouter:
         if token is not None or expires is not None:
             # Signed-URL mode (42.4): the HMAC must validate for THIS
             # tenant+attachment+expiry; an expired or tampered link fails.
-            if token is None or expires is None or not attachments.verify_download_url_token(
-                principal.tenant_id, attachment_id, token, int(expires)
+            if (
+                token is None
+                or expires is None
+                or not attachments.verify_download_url_token(
+                    principal.tenant_id, attachment_id, token, int(expires)
+                )
             ):
                 raise HTTPException(status_code=403, detail="Invalid or expired download token")
         path, filename, content_type = result

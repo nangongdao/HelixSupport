@@ -80,6 +80,14 @@ class ScanSecretsTests(unittest.TestCase):
         )
         self.assertEqual(scan(self.root), [])
 
+    def test_rust_target_dir_is_skipped(self) -> None:
+        # src-tauri incremental caches embed CSP hashes ('sha256-<43 b64>=')
+        # that trip the Fernet matcher; Cargo build state is gitignored and
+        # must be skipped like node_modules.
+        csp_hash = "sha256-" + "A" * 43 + "='sha256-" + "B" * 43 + "='"
+        self._write("src-tauri/target/debug/incremental/lib.helix.o", csp_hash + "\n")
+        self.assertEqual(scan(self.root), [])
+
 
 if __name__ == "__main__":
     unittest.main()

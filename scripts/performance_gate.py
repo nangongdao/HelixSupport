@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT))
 from scripts._console import use_utf8_console  # noqa: E402
+
 BASELINE = ROOT / "artifacts" / "performance-baseline.json"
 
 # Byte budgets: raw (uncompressed) source sizes of the first-paint payload.
@@ -164,9 +165,7 @@ def _ensure_queue_row(page: Any, customer_name: str) -> None:
     poll cycle to surface it. Both measured tracks render the same row
     classes (legacy queueRowHtml and the island's QueueRow), so one selector
     covers web and desktop shell."""
-    page.evaluate(
-        f"() => Promise.resolve(({_SEED_SCRIPT})({customer_name!r}))"
-    )
+    page.evaluate(f"() => Promise.resolve(({_SEED_SCRIPT})({customer_name!r}))")
     # The seeded conversation is visible only after a poll cycle (SSE push or
     # ~15 s fallback); asking for an explicit refresh makes it deterministic
     # and fast instead of racing the next cycle.
@@ -215,6 +214,8 @@ def _measure_interaction_inp(page: Any) -> float:
     except Exception as exc:
         print(f"inp probe warning: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 0.0
+
+
 # What Chromium reports from performance.memory.usedJSHeapSize when precise
 # memory info is disabled — a fixed 10 MB, identical on every sample. Measured,
 # not assumed: with --enable-precise-memory-info the same page reports ~940 KB.
@@ -367,7 +368,9 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float | None], list[
                     executable_path=chrome_binary, headless=True, args=launch_args
                 )
             else:
-                browser = playwright.chromium.launch(channel="msedge", headless=True, args=launch_args)
+                browser = playwright.chromium.launch(
+                    channel="msedge", headless=True, args=launch_args
+                )
         context = browser.new_context(viewport={"width": 1440, "height": 900})
         page = context.new_page()
 
@@ -576,12 +579,11 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float | None], list[
                 leak_context = leak_browser.new_context(viewport={"width": 1440, "height": 900})
                 leak_page = leak_context.new_page()
                 leak_page.goto(base_url, wait_until="domcontentloaded")
-                leak_page.wait_for_selector(
-                    "#conversationList[aria-busy='false']", timeout=60000
-                )
+                leak_page.wait_for_selector("#conversationList[aria-busy='false']", timeout=60000)
                 # Queue render settle before the first cycle.
                 leak_page.wait_for_timeout(800)
-                leak_script = """
+                leak_script = (
+                    """
                 async (id) => {
                   const forceGc = () => { if (window.gc) { window.gc(); window.gc(); } };
                   const heap = () => performance.memory ? performance.memory.usedJSHeapSize : 0;
@@ -605,7 +607,9 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float | None], list[
                   }
                   return samples;
                 }
-                """ % DETAIL_LEAK_CYCLES
+                """
+                    % DETAIL_LEAK_CYCLES
+                )
                 row_id = leak_page.evaluate(
                     "() => document.querySelector('.conversation-row button.conversation-item')"
                     "?.dataset?.id || null"
@@ -623,9 +627,7 @@ def check_browser_budgets(base_url: str) -> tuple[dict[str, float | None], list[
                 leak_context.close()
                 leak_browser.close()
             except Exception as exc:
-                problems.append(
-                    f"detail leak probe failed: {type(exc).__name__}: {exc}"
-                )
+                problems.append(f"detail leak probe failed: {type(exc).__name__}: {exc}")
 
     for key, limit in BROWSER_BUDGETS.items():
         if key not in metrics or metrics[key] is None:

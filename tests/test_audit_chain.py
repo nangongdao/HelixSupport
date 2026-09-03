@@ -94,14 +94,26 @@ def _archive_document(events: list[dict[str, Any]]) -> dict[str, Any]:
 class EventHashTests(unittest.TestCase):
     def test_event_hash_is_deterministic(self) -> None:
         first = event_hash(
-            prev_hash="", event_id="evt_1", tenant_id="demo", conversation_id=None,
-            request_id=None, actor="admin", event_type="conversation.created",
-            payload_json="{}", created_at="2026-09-01T00:00:00Z",
+            prev_hash="",
+            event_id="evt_1",
+            tenant_id="demo",
+            conversation_id=None,
+            request_id=None,
+            actor="admin",
+            event_type="conversation.created",
+            payload_json="{}",
+            created_at="2026-09-01T00:00:00Z",
         )
         second = event_hash(
-            prev_hash="", event_id="evt_1", tenant_id="demo", conversation_id=None,
-            request_id=None, actor="admin", event_type="conversation.created",
-            payload_json="{}", created_at="2026-09-01T00:00:00Z",
+            prev_hash="",
+            event_id="evt_1",
+            tenant_id="demo",
+            conversation_id=None,
+            request_id=None,
+            actor="admin",
+            event_type="conversation.created",
+            payload_json="{}",
+            created_at="2026-09-01T00:00:00Z",
         )
         self.assertEqual(first, second)
 

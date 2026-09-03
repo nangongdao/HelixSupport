@@ -68,9 +68,7 @@ class ProviderAdapter(Protocol):
 
     name: str
 
-    def verify_signature(
-        self, secret: bytes, headers: Mapping[str, str], body: bytes
-    ) -> None:
+    def verify_signature(self, secret: bytes, headers: Mapping[str, str], body: bytes) -> None:
         """Raise ChannelWebhookAuthError unless the request authenticates."""
         ...
 
@@ -116,9 +114,7 @@ class ReferenceJsonAdapter:
     def __init__(self, replay_window_seconds: int = DEFAULT_REPLAY_WINDOW_SECONDS) -> None:
         self.replay_window_seconds = replay_window_seconds
 
-    def verify_signature(
-        self, secret: bytes, headers: Mapping[str, str], body: bytes
-    ) -> None:
+    def verify_signature(self, secret: bytes, headers: Mapping[str, str], body: bytes) -> None:
         verify_reference_signature(
             secret, headers, body, replay_window_seconds=self.replay_window_seconds
         )
@@ -181,7 +177,9 @@ def get_provider_adapter(name: str) -> ProviderAdapter:
         raise ValueError(f"unknown provider adapter: {name!r}") from exc
 
 
-def sign_reference_request(secret: bytes, body: bytes, *, now_epoch: int | None = None) -> dict[str, str]:
+def sign_reference_request(
+    secret: bytes, body: bytes, *, now_epoch: int | None = None
+) -> dict[str, str]:
     """Produce the reference signature headers (used by the conformance suite)."""
     timestamp = now_epoch if now_epoch is not None else int(time.time())
     signature = hmac.new(secret, f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()

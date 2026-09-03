@@ -172,9 +172,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
                     headers={"X-API-Key": ADMIN_KEY, "X-Tenant-Id": "demo"},
                 )
                 self.assertEqual(response.status_code, 503, response.text)
-                self.assertIn(
-                    "envelope encryption is required", response.json()["detail"]
-                )
+                self.assertIn("envelope encryption is required", response.json()["detail"])
             finally:
                 client.close()
                 services.database.close()
@@ -193,9 +191,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
         for tenant_id in ("demo", "acme"):
             cipher.encrypt_text(tenant_id, "seed")
         for tenant_id in ("demo", "acme"):
-            self.assertEqual(
-                int(cipher.keystore.list_versions(tenant_id)[0]["kek_version"]), 1
-            )
+            self.assertEqual(int(cipher.keystore.list_versions(tenant_id)[0]["kek_version"]), 1)
         cipher.kms.rotate()
         self.assertEqual(cipher.kms.active_version(), 2)
 
@@ -223,9 +219,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
     def test_runtime_cipher_round_trip_and_cross_tenant(self) -> None:
         cipher = self.services.envelope_cipher
         envelope = cipher.encrypt_text("demo", "restricted-payload")
-        self.assertEqual(
-            cipher.decrypt_text("demo", envelope), "restricted-payload"
-        )
+        self.assertEqual(cipher.decrypt_text("demo", envelope), "restricted-payload")
         with self.assertRaises(EnvelopeTamperError):
             cipher.decrypt_text("acme", envelope)
 

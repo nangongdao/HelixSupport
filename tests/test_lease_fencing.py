@@ -71,13 +71,9 @@ class LeaseFencingTests(unittest.TestCase):
 
     def _rewind_lease(self, job_id: str, hours_ago: int = 1) -> None:
         """Force ``locked_at`` into the past so the lease reads as expired."""
-        stale = (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat(
-            timespec="microseconds"
-        )
+        stale = (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat(timespec="microseconds")
         with self.database.connect() as conn:
-            conn.execute(
-                "UPDATE turn_jobs SET locked_at = ? WHERE id = ?", (stale, job_id)
-            )
+            conn.execute("UPDATE turn_jobs SET locked_at = ? WHERE id = ?", (stale, job_id))
 
     def test_fresh_lease_complete_succeeds(self) -> None:
         claimed = self._claim("w-fresh")
@@ -101,7 +97,11 @@ class LeaseFencingTests(unittest.TestCase):
     def test_fresh_lease_fail_succeeds(self) -> None:
         claimed = self._claim("w-fresh-fail")
         result = self.queue.fail(
-            claimed["id"], "w-fresh-fail", "ConnectorUnavailable", 0, LEASE,
+            claimed["id"],
+            "w-fresh-fail",
+            "ConnectorUnavailable",
+            0,
+            LEASE,
             retryable=False,
         )
         assert result is not None
@@ -111,7 +111,11 @@ class LeaseFencingTests(unittest.TestCase):
         claimed = self._claim("w-stale-fail")
         self._rewind_lease(claimed["id"])
         result = self.queue.fail(
-            claimed["id"], "w-stale-fail", "ConnectorUnavailable", 0, LEASE,
+            claimed["id"],
+            "w-stale-fail",
+            "ConnectorUnavailable",
+            0,
+            LEASE,
             retryable=False,
         )
         self.assertIsNone(result)
@@ -130,9 +134,7 @@ class LeaseFencingTests(unittest.TestCase):
     def test_invalid_lease_seconds_rejected(self) -> None:
         claimed = self._claim("w-validate")
         with self.assertRaises(ValueError):
-            self.database.complete_turn_job(
-                claimed["id"], "w-validate", {"ok": True}, 0
-            )
+            self.database.complete_turn_job(claimed["id"], "w-validate", {"ok": True}, 0)
         with self.assertRaises(ValueError):
             self.database.fail_turn_job(
                 claimed["id"], "w-validate", "boom", 1, retryable=True, lease_seconds=0

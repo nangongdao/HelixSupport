@@ -268,15 +268,11 @@ class DatabaseAuditMixin:
         with self._audit_scope(tenant_id):
             with self.audit_transaction() as connection:
                 prev_hash, tail_seq = self._audit_chain_tail(connection)
-                rows: list[
-                    tuple[str, str, str, str | None, str, str, str, str, int, str, str]
-                ] = []
+                rows: list[tuple[str, str, str, str | None, str, str, str, str, int, str, str]] = []
                 sequences: list[tuple[int, str]] = []
                 for conversation_id, event_type, payload in events:
                     event_id = f"evt_{uuid4().hex[:12]}"
-                    payload_json = json.dumps(
-                        sanitize_for_audit(payload), ensure_ascii=False
-                    )
+                    payload_json = json.dumps(sanitize_for_audit(payload), ensure_ascii=False)
                     tail_seq += 1
                     event_hash_value = event_hash(
                         prev_hash=prev_hash,
@@ -447,7 +443,9 @@ class DatabaseAuditMixin:
 
             expected_digest = str(item.get("content_sha256") or "")
             item["events"] = list(
-                validate_audit_archive_stream(item, _digesting(store.iter_lines(tenant_id, object_key)))
+                validate_audit_archive_stream(
+                    item, _digesting(store.iter_lines(tenant_id, object_key))
+                )
             )
             if digest_cell.get("sha256") != expected_digest:
                 raise ValueError("audit archive content hash mismatch")

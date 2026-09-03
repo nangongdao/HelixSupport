@@ -13,8 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 import sys  # noqa: E402 — sys.path bootstrap before scripts._console import
+
 sys.path.insert(0, str(ROOT))
 from scripts._console import use_utf8_console  # noqa: E402
+
 MAIN_BAK = ROOT / "app" / "main.py.bak"
 ROUTER = ROOT / "app" / "routers" / "conversations.py"
 

@@ -70,9 +70,7 @@ _ARCHIVE_TABLES = (
 )
 
 
-def measure_with_memory(
-    name: str, fn, rounds: int
-) -> tuple[BenchStats, dict[str, float]]:
+def measure_with_memory(name: str, fn, rounds: int) -> tuple[BenchStats, dict[str, float]]:
     """Measure latency (existing harness) plus peak allocated memory."""
     stats = BenchStats(name=name)
     tracemalloc.start()
@@ -93,7 +91,7 @@ def archive_table_bytes(database: Database) -> dict[str, int]:
         with database.connect() as connection:
             row = connection.execute(
                 f"""SELECT SUM(pgsize) AS total FROM dbstat
-                WHERE name IN ({','.join('?' for _ in _ARCHIVE_TABLES)})""",
+                WHERE name IN ({",".join("?" for _ in _ARCHIVE_TABLES)})""",
                 _ARCHIVE_TABLES,
             ).fetchone()
         total = int(row["total"]) if row and row["total"] else 0

@@ -92,9 +92,7 @@ class ApiV2ContractTests(unittest.TestCase):
             params = {"limit": "3"}
             if cursor:
                 params["cursor"] = cursor
-            page = self.client.get(
-                "/api/v2/conversations", params=params, headers=self.headers
-            )
+            page = self.client.get("/api/v2/conversations", params=params, headers=self.headers)
             self.assertEqual(page.status_code, 200)
             body = page.json()
             seen.extend(item["customer_name"] for item in body["data"])
@@ -161,9 +159,7 @@ class ApiV2ContractTests(unittest.TestCase):
         # Replaying the drain must not re-deliver (consumer dedup by event_id).
         self.assertEqual(outbox.drain(delivered.append), 0)
         matches = [
-            event
-            for event in delivered
-            if event["payload"]["conversation_id"] == conversation_id
+            event for event in delivered if event["payload"]["conversation_id"] == conversation_id
         ]
         self.assertEqual(len(matches), 1)
         event = matches[0]

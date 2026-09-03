@@ -139,7 +139,12 @@ class ReferenceJsonAdapterTests(unittest.TestCase):
     def test_attachment_refs_normalized(self) -> None:
         body = self._event_body(
             attachments=[
-                {"id": "a1", "filename": "f.pdf", "content_type": "application/pdf", "url": "https://x/f.pdf"}
+                {
+                    "id": "a1",
+                    "filename": "f.pdf",
+                    "content_type": "application/pdf",
+                    "url": "https://x/f.pdf",
+                }
             ]
         )
         event = self.adapter.parse(body)

@@ -65,9 +65,7 @@ class SettingsValidationTests(unittest.TestCase):
         self._assert_rejects("ATTACHMENT_SCAN_MODE", "async", "ATTACHMENT_SCAN_MODE")
 
     def test_rejects_redis_backend_without_url(self) -> None:
-        with mock.patch.dict(
-            os.environ, _env(QUEUE_BACKEND="redis", REDIS_URL=""), clear=False
-        ):
+        with mock.patch.dict(os.environ, _env(QUEUE_BACKEND="redis", REDIS_URL=""), clear=False):
             with self.assertRaisesRegex(ValueError, "REDIS_URL is required"):
                 Settings.from_env()
 
@@ -168,19 +166,29 @@ class SettingsValidationTests(unittest.TestCase):
         self._assert_rejects("PROMPT_CANARY_RATIO", "1.5", "PROMPT_CANARY_RATIO")
 
     def test_rejects_webhook_interval_out_of_range(self) -> None:
-        self._assert_rejects("WEBHOOK_DELIVERY_INTERVAL_SECONDS", "1", "WEBHOOK_DELIVERY_INTERVAL_SECONDS")
+        self._assert_rejects(
+            "WEBHOOK_DELIVERY_INTERVAL_SECONDS", "1", "WEBHOOK_DELIVERY_INTERVAL_SECONDS"
+        )
 
     def test_rejects_channel_replay_window_out_of_range(self) -> None:
-        self._assert_rejects("CHANNEL_WEBHOOK_REPLAY_WINDOW_SECONDS", "10", "CHANNEL_WEBHOOK_REPLAY_WINDOW_SECONDS")
+        self._assert_rejects(
+            "CHANNEL_WEBHOOK_REPLAY_WINDOW_SECONDS", "10", "CHANNEL_WEBHOOK_REPLAY_WINDOW_SECONDS"
+        )
 
     def test_rejects_archive_after_days(self) -> None:
-        self._assert_rejects("CONVERSATION_ARCHIVE_AFTER_DAYS", "3", "CONVERSATION_ARCHIVE_AFTER_DAYS")
+        self._assert_rejects(
+            "CONVERSATION_ARCHIVE_AFTER_DAYS", "3", "CONVERSATION_ARCHIVE_AFTER_DAYS"
+        )
 
     def test_rejects_widget_frame_ancestors_empty(self) -> None:
-        self._assert_rejects("WIDGET_FRAME_ANCESTORS", "", "WIDGET_FRAME_ANCESTORS")
+        # Windows os.environ treats "" as deleted, so a space-only value
+        # produces the same empty tuple after the strip filter.
+        self._assert_rejects("WIDGET_FRAME_ANCESTORS", " ", "WIDGET_FRAME_ANCESTORS")
 
     def test_rejects_widget_frame_ancestors_bad_source(self) -> None:
-        self._assert_rejects("WIDGET_FRAME_ANCESTORS", "javascript:alert(1)", "WIDGET_FRAME_ANCESTORS")
+        self._assert_rejects(
+            "WIDGET_FRAME_ANCESTORS", "javascript:alert(1)", "WIDGET_FRAME_ANCESTORS"
+        )
 
 
 if __name__ == "__main__":

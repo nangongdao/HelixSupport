@@ -52,7 +52,7 @@ def _dashboard(title: str, tags: list[str], panels: list[dict]) -> dict:
 
 
 def build_dashboards() -> dict[str, dict]:
-    per_tenant = 'sum by (tenant_id) ({metric})'
+    per_tenant = "sum by (tenant_id) ({metric})"
     dashboards: dict[str, dict] = {}
 
     dashboards["tenant-noisy-neighbor"] = _dashboard(
@@ -89,7 +89,10 @@ def build_dashboards() -> dict[str, dict]:
             _panel(
                 "Turn job duration p50/p95",
                 "ms",
-                ["helix_turn_job_duration_ms{quantile='0.5'}", "helix_turn_job_duration_ms{quantile='0.95'}"],
+                [
+                    "helix_turn_job_duration_ms{quantile='0.5'}",
+                    "helix_turn_job_duration_ms{quantile='0.95'}",
+                ],
                 "Fairness shows up as tail latency, not averages.",
             ),
             _panel(

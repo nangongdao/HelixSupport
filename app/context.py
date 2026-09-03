@@ -44,9 +44,7 @@ _SCOPE_TENANT = "tenant"
 _SCOPE_MAINTENANCE = "maintenance"
 
 # (mode, id-or-reason) pair; None means "no scope established yet".
-tenant_scope_context: ContextVar[tuple[str, str] | None] = ContextVar(
-    "tenant_scope", default=None
-)
+tenant_scope_context: ContextVar[tuple[str, str] | None] = ContextVar("tenant_scope", default=None)
 
 
 def current_request_id() -> str | None:
@@ -86,9 +84,7 @@ def tenant_scope(tenant_id: str) -> Iterator[str]:
     if not tenant_id or not tenant_id.strip():
         raise ValueError("tenant_scope requires a non-empty tenant id")
     cleaned = tenant_id.strip()
-    token: Token[tuple[str, str] | None] = tenant_scope_context.set(
-        (_SCOPE_TENANT, cleaned)
-    )
+    token: Token[tuple[str, str] | None] = tenant_scope_context.set((_SCOPE_TENANT, cleaned))
     try:
         yield cleaned
     finally:
@@ -106,9 +102,7 @@ def maintenance_scope(reason: str) -> Iterator[str]:
     if not reason or not reason.strip():
         raise ValueError("maintenance_scope requires a reason for the audit trail")
     cleaned = reason.strip()
-    token: Token[tuple[str, str] | None] = tenant_scope_context.set(
-        (_SCOPE_MAINTENANCE, cleaned)
-    )
+    token: Token[tuple[str, str] | None] = tenant_scope_context.set((_SCOPE_MAINTENANCE, cleaned))
     logger.info("rls.maintenance_scope_entered reason=%s", cleaned)
     try:
         yield cleaned

@@ -101,9 +101,7 @@ def audit_high_risk(
     # Phase 43.2: high-risk events are written from authenticated request
     # paths (already scoped) and from system paths (not scoped) — bind the
     # event's own tenant so enforced RLS never rejects the evidence append.
-    ambient_scope = (
-        nullcontext() if current_scope_mode() == "tenant" else tenant_scope(tenant_id)
-    )
+    ambient_scope = nullcontext() if current_scope_mode() == "tenant" else tenant_scope(tenant_id)
     with ambient_scope:
         with database.audit_transaction() as connection:
             try:

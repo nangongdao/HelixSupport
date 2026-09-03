@@ -352,9 +352,7 @@ class TurnJobWorker:
         # 43.2: the retention sweep scans every tenant's resolved rows.
         with maintenance_scope("conversation-archive"):
             cutoff = utc_after_seconds(-self.archive_after_days * 86400)
-            archived = self.database.archive_resolved_conversations(
-                cutoff, self.archive_batch
-            )
+            archived = self.database.archive_resolved_conversations(cutoff, self.archive_batch)
         with self._lock:
             self._archived += archived
         return archived

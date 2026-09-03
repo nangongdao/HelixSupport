@@ -150,9 +150,7 @@ class WebhookEventConsumerTests(unittest.TestCase):
         # Retry now succeeds and creates exactly one delivery.
         self.assertEqual(consumer.drain_and_deliver()["deliveries"], 1)
         with self.database.connect() as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) AS n FROM webhook_deliveries"
-            ).fetchone()["n"]
+            count = conn.execute("SELECT COUNT(*) AS n FROM webhook_deliveries").fetchone()["n"]
         self.assertEqual(int(count), 1)
         self.assertEqual(consumer.pending_count(), 0)
 
@@ -277,9 +275,7 @@ class OutboxConsumerRuntimeTests(unittest.TestCase):
                 "SELECT event_type, payload_json FROM webhook_deliveries WHERE tenant_id = 'demo'"
             ).fetchone()
         self.assertEqual(row["event_type"], EVENT_CONVERSATION_CREATED)
-        self.assertEqual(
-            json.loads(row["payload_json"])["conversation_id"], conversation_id
-        )
+        self.assertEqual(json.loads(row["payload_json"])["conversation_id"], conversation_id)
 
 
 if __name__ == "__main__":

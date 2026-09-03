@@ -94,6 +94,7 @@ class AttachmentScanner:
     # Any archive payload may not expand beyond this multiple of the blob
     # itself (compression-bomb guard for future archive content types).
     _BOMB_RATIO = 20
+
     def scan(self, data: bytes, filename: str, content_type: str) -> tuple[bool, str]:
         extension = Path(filename).suffix.lower().lstrip(".")
         if extension in _DENIED_EXTENSIONS:
@@ -173,7 +174,9 @@ class TimeoutMalwareScanner:
         finally:
             # Never block on a hung engine thread; the budget already expired.
             pool.shutdown(wait=False, cancel_futures=True)
-        if not isinstance(clean, bool) or (clean and str(verdict).lower() not in {"clean", "ok", "pass"}):
+        if not isinstance(clean, bool) or (
+            clean and str(verdict).lower() not in {"clean", "ok", "pass"}
+        ):
             # Unknown/ambiguous verdicts never pass (fail closed).
             return False, f"unrecognized scanner verdict: {verdict!r}"
         return clean, str(verdict)
@@ -450,9 +453,7 @@ class AttachmentService:
         if self.store is not None:
             # Object tampering is detectable: the stored digest must match.
             if expected and not self.store.verify(storage_key, str(expected)):
-                logger.error(
-                    "attachment.integrity_failed", extra={"storage_key": storage_key}
-                )
+                logger.error("attachment.integrity_failed", extra={"storage_key": storage_key})
                 return None
             try:
                 path = self.store.path_for(storage_key)

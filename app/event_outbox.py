@@ -133,9 +133,7 @@ class DomainEventOutbox:
                     )
                 raise
             delivered += 1
-            logger.info(
-                "outbox.published event_id=%s type=%s", row["event_id"], row["event_type"]
-            )
+            logger.info("outbox.published event_id=%s type=%s", row["event_id"], row["event_type"])
         return delivered
 
     def pending_count(self) -> int:

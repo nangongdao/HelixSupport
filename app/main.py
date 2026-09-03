@@ -699,10 +699,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         if reports:
             logger.warning(
                 "drift.canaries_stopped %s",
-                [
-                    {"tenant": r.tenant_id, "signals": [s.kind for s in r.signals]}
-                    for r in reports
-                ],
+                [{"tenant": r.tenant_id, "signals": [s.kind for s in r.signals]} for r in reports],
             )
 
     if settings.drift_enabled:
@@ -953,9 +950,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
             headers={"Retry-After": "30"},
         )
 
-    def _versioned_problem_response(
-        request: Request, **kwargs: Any
-    ) -> JSONResponse:
+    def _versioned_problem_response(request: Request, **kwargs: Any) -> JSONResponse:
         response = problem_response(request, **kwargs)
         # 43.3: v2 responses always disclose their API version, errors included.
         if request.url.path.startswith("/api/v2/"):

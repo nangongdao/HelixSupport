@@ -29,9 +29,7 @@ class AuditArchiveObjectStoreTests(unittest.TestCase):
         # Production wiring (create_app) attaches the store to the database
         # so the read path can stream payloads.
         self.db.archive_object_store = self.store
-        self.service = RetentionService(
-            self.db, archive_object_store=self.store
-        )
+        self.service = RetentionService(self.db, archive_object_store=self.store)
 
     def tearDown(self) -> None:
         self.db.close()
@@ -73,7 +71,9 @@ class AuditArchiveObjectStoreTests(unittest.TestCase):
         archive = self.db.get_audit_archive("test-tenant", archive_id)
         assert archive is not None
         events = archive["events"]
-        self.assertEqual([event["event_type"] for event in events], ["retention.one", "retention.two"])
+        self.assertEqual(
+            [event["event_type"] for event in events], ["retention.one", "retention.two"]
+        )
         self.assertEqual([int(event["seq"]) for event in events], [1, 2])
 
     def test_tampered_object_fails_closed_on_read(self) -> None:
@@ -92,7 +92,9 @@ class AuditArchiveObjectStoreTests(unittest.TestCase):
     def test_missing_object_fails_closed_on_read(self) -> None:
         self._archive_two_events()
         row = self._row()
-        (Path(self._tmp.name) / "objects" / "test-tenant" / f"{row['object_key']}.jsonl.gz").unlink()
+        (
+            Path(self._tmp.name) / "objects" / "test-tenant" / f"{row['object_key']}.jsonl.gz"
+        ).unlink()
         archive_id = self.db.list_audit_archives("test-tenant")[0]["id"]
         with self.assertRaises(ArchiveIntegrityError):
             self.db.get_audit_archive("test-tenant", archive_id)
@@ -100,9 +102,7 @@ class AuditArchiveObjectStoreTests(unittest.TestCase):
     def test_legacy_inline_path_unchanged_without_store(self) -> None:
         legacy_service = RetentionService(self.db)
         self.db.audit("test-tenant", None, "admin", "retention.legacy", {"safe": True})
-        deleted = legacy_service.enforce_retention(
-            "test-tenant", "audit_events", retention_days=-1
-        )
+        deleted = legacy_service.enforce_retention("test-tenant", "audit_events", retention_days=-1)
         self.assertEqual(deleted, 1)
         row = self._row()
         self.assertIsNone(row["object_key"])

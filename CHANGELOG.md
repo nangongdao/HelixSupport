@@ -232,6 +232,13 @@
 - **runbook 非作者执行预检**(Gate B 项):两个 runbook 的 `APP_VERSION` 检查从 `import app.main`(触发整个应用初始化:建库/起 worker/刷日志)改为 AST 静态读取——零副作用,输出可预测。`docs/OPERATIONS.md` 补「Performance Gate Failing (Browser Layer)」故障排查段(桌面/网页两轨同升是系统负载信号、`PERF_PRECISE_MEMORY` 语义、泄漏探针失效形态、`--update` 使用纪律);`docs/PERF_NOTES.md` 补 §43.6 浏览器性能预算实测表与测量环境要点(桌面 LCP 860–984ms 贴线、`--expose-gc` 隔离、INP 受信输入要求、sourcemap 桌面包排除)。
 - **覆盖率补测自抓一个已发货 fail-open(2026-09-03 修复)**:新测试 `test_rejects_widget_frame_ancestors_empty` 暴露 `WIDGET_FRAME_ANCESTORS=""` 被 `from_env` 的生成器过滤成空元组后,又经 `widget_frame_ancestors or ("'self'",)` **静默回退到默认值**——显式配置错误被吞,与该测试文件钉住的「env 校验 fail-fast,绝不静默回退」契约相反。修复:`from_env` 区分未设置(取 `'self'` 默认)与显式置空(保留空元组,由 `__post_init__` 的 `must contain at least one source` 校验抛错);删除构造处的 `or` 回退。这也是本仓库反复出现的同一类缺陷的第 N 例:回退写法让「看似存在的校验」对特定输入路径失效。
 
+### ruff 门禁浮动版本静默改口径 + format 检查从未绿过(2026-09-03)
+
+- **又一个「门禁看似存在,实则从未运行」**:`ci.yml` 装 `ruff>=0.9,<1`(浮动),而 ruff 的默认规则集与 formatter 风格随每个 minor 演化——同一棵树,0.9.9 lint 只报 1 个错误,0.16.5 报 **494 个**(BLE001/SIM117/UP035/I001/RUF100 等 0.9 时代从未主动选择的规则),format 待重排 79 对 64。更早:`ruff format --check` 这一步在 e51b972(1.3.0 发布)加入时起**在任何 ruff 版本下都从未绿过**——推送基线 833e277 上 0.9.9 也报 64 个文件待重排,即 CI 的「Ruff format check」自引入以来只会红。浮动范围让两条门禁的口径随时间静默漂移,与昨天 CHANGELOG 记录的「本地 0.16.x 473 项属版本差异噪音」是同一根因的另一面。
+- **修复:钉定 + 一次性收口**。`ruff==0.9.9`(pyproject dev deps 与 ci.yml 同步钉定,与本地 `artifacts/ruff-099-pkg` 同口径,注释写明钉定理由);`ruff format app tests scripts` 一次性格式化 79 个文件(纯格式:+384/-355 行,无语义变化);顺手消灭 0.9.9 口径下唯一的真实 lint 错误(`test_small_module_branches.py` 未用 `Any` 导入)。0.9.9 口径下 format+lint 双绿,全量 pytest 复跑 exit 0。
+- **`scan_secrets` 误报 Rust 构建缓存**:`IGNORED_DIR_NAMES` 漏了 `target`——src-tauri 的增量编译缓存把 CSP 哈希表(`'sha256-<43 base64>='`)编进 `.o` 文件,正中 fernet 形状正则;本机 `cargo build` 后门禁恒红(CI 无 target 目录所以从未暴露)。补入忽略列表(与 node_modules/build 同类:gitignored 的本地工具状态)+ 注释写明误报机理 + 测试用真实 CSP 哈希形态锁定。全仓扫描 clean。
+- **RELEASE_1_4 runbook §1 门禁复核**(Gate B 非作者预演的自动化部分):pytest 全量、ruff format/lint(钉定后)、openapi 快照、frontend_gate(351 tests)、SBOM(26 components)、release manifest build+verify、threat_model_gate、tauri_config_gate(空 pubkey 豁免)、pip check 全绿;pyright/pip_audit 本地无包,属 CI 步骤。manifest 仅余「base_image_digest 未固定」警告——需真实 registry,既有记录。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

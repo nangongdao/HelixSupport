@@ -87,9 +87,7 @@ class PatchDrill:
             database_path=self.db_path,
             auth_mode="api_key",
             api_keys_json=json.dumps(
-                {
-                    self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"}
-                }
+                {self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"}}
             ),
             rate_limit_per_minute=20000,
             docs_enabled=False,
@@ -113,7 +111,13 @@ class PatchDrill:
     def run(self, cosign_key: str | None, registry: str | None) -> list[dict[str, object]]:
         # 1. Sign: release manifest + (simulated or real) signature.
         manifest = _run(
-            [sys.executable, "scripts/release_manifest.py", "--build", "--out", str(self.root / "rm.json")]
+            [
+                sys.executable,
+                "scripts/release_manifest.py",
+                "--build",
+                "--out",
+                str(self.root / "rm.json"),
+            ]
         )
         self._record("manifest_build", manifest.returncode == 0, manifest.stderr[:200])
         if manifest.returncode != 0:
@@ -152,7 +156,9 @@ class PatchDrill:
             "signature must be deterministic for a given manifest",
         )
         changed = _simulate_sign({**payload, "note": "tamper"}, "patch-drill")
-        self._record("sign_binding_tamper", changed != ss, "any manifest change must change the signature")
+        self._record(
+            "sign_binding_tamper", changed != ss, "any manifest change must change the signature"
+        )
 
         # 4. Post-release monitoring: the fix removed the alarm marker.
         #    Scratch data was lost in rollback; check the surviving export
@@ -164,9 +170,7 @@ class PatchDrill:
     def admin_headers(self) -> dict[str, str]:
         return {"X-API-Key": self.admin_key, "X-Tenant-Id": "demo"}
 
-    def _real_cosign(
-        self, payload: dict[str, object], key: str, registry: str
-    ) -> tuple[bool, str]:
+    def _real_cosign(self, payload: dict[str, object], key: str, registry: str) -> tuple[bool, str]:
         """Sign the release image with real cosign; fail-closed on any error.
 
         The release manifest identifies the deployable artifact by
@@ -185,9 +189,7 @@ class PatchDrill:
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="supplychain/patch-drills.json")
     parser.add_argument("--cosign-key", help="real cosign key (external registry)")

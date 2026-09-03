@@ -57,7 +57,11 @@ class RotationDrill(unittest.TestCase):
             auth_mode="api_key",
             api_keys_json=json.dumps(
                 {
-                    self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"},
+                    self.admin_key: {
+                        "tenant_id": "demo",
+                        "actor_id": "admin.user",
+                        "role": "admin",
+                    },
                     self.survivor_key: {
                         "tenant_id": "demo",
                         "actor_id": "survivor",
@@ -100,7 +104,11 @@ class RotationDrill(unittest.TestCase):
         promoted_json = json.loads(
             json.dumps(
                 {
-                    self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"},
+                    self.admin_key: {
+                        "tenant_id": "demo",
+                        "actor_id": "admin.user",
+                        "role": "admin",
+                    },
                     self.survivor_key: {
                         "tenant_id": "demo",
                         "actor_id": "survivor",

@@ -120,9 +120,7 @@ class ProviderConformanceTests(unittest.TestCase):
             merged = {"Content-Type": "application/json", **headers}
         else:
             merged = {"Content-Type": "application/json", **merged}
-        return self.client.post(
-            f"/api/channels/{account_id}/webhook", content=body, headers=merged
-        )
+        return self.client.post(f"/api/channels/{account_id}/webhook", content=body, headers=merged)
 
     def _normalize(self, payload: dict[str, Any]) -> NormalizedEvent:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -329,9 +327,7 @@ class ProviderConformanceTests(unittest.TestCase):
         self.assertIsNone(self.services.database.get_conversation("demo", conversation_id))
         self.assertIsNotNone(self.services.database.get_conversation("acme", conversation_id))
         # And the demo account's secret cannot authenticate on the acme path.
-        swapped = self._deliver(
-            _event(seq=21), account_id=OTHER_ACCOUNT, secret=SECRET.encode()
-        )
+        swapped = self._deliver(_event(seq=21), account_id=OTHER_ACCOUNT, secret=SECRET.encode())
         self.assertEqual(swapped.status_code, 401)
 
 

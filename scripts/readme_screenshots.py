@@ -149,7 +149,9 @@ def main() -> int:
         # 3) quality-dashboard — supervisor quality view with trend chart.
         page.get_by_role("button", name="关闭低配模式")
         page.locator('.nav-item[data-view="quality"]').click()
-        page.wait_for_selector("#qualityView[aria-busy='false'], #qualityViewBuckets", timeout=15000)
+        page.wait_for_selector(
+            "#qualityView[aria-busy='false'], #qualityViewBuckets", timeout=15000
+        )
         page.wait_for_timeout(600)
         page.screenshot(path=OUT / "quality-dashboard.png", full_page=False)
         print("captured quality-dashboard.png")

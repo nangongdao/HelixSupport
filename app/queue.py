@@ -167,8 +167,12 @@ class SQLiteTaskQueue:
         retryable: bool = True,
     ) -> dict[str, Any] | None:
         return self.database.fail_turn_job(
-            job_id, worker_id, error_code, retry_base_seconds,
-            retryable=retryable, lease_seconds=lease_seconds,
+            job_id,
+            worker_id,
+            error_code,
+            retry_base_seconds,
+            retryable=retryable,
+            lease_seconds=lease_seconds,
         )
 
     def recover(self, lease_seconds: int) -> dict[str, int]:
@@ -372,8 +376,12 @@ class RedisTaskQueue:
         retryable: bool = True,
     ) -> dict[str, Any] | None:
         result = self.database.fail_turn_job(
-            job_id, worker_id, error_code, retry_base_seconds,
-            retryable=retryable, lease_seconds=lease_seconds,
+            job_id,
+            worker_id,
+            error_code,
+            retry_base_seconds,
+            retryable=retryable,
+            lease_seconds=lease_seconds,
         )
         try:
             self._cleanup_claim(job_id)

@@ -7,7 +7,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
 
 from app.channel_webhooks import (
-
     ChannelWebhookAuthError,
     InboundChannelAccount,
     channel_message_key,

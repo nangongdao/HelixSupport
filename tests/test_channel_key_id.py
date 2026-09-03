@@ -168,7 +168,9 @@ class RegistryConfigValidationTests(unittest.TestCase):
 
     def test_bad_account_id_rejected(self) -> None:
         with self.assertRaises(Exception):
-            _registry(json.dumps({"bad id!": {"tenant_id": "demo", "channel": "x", "secret": SECRET}}))
+            _registry(
+                json.dumps({"bad id!": {"tenant_id": "demo", "channel": "x", "secret": SECRET}})
+            )
 
     def test_non_object_account_value_rejected(self) -> None:
         with self.assertRaises(Exception):
@@ -180,7 +182,11 @@ class RegistryConfigValidationTests(unittest.TestCase):
 
     def test_invalid_channel_rejected(self) -> None:
         with self.assertRaises(Exception):
-            _registry(json.dumps({"ok": {"tenant_id": "demo", "channel": "bad channel!", "secret": SECRET}}))
+            _registry(
+                json.dumps(
+                    {"ok": {"tenant_id": "demo", "channel": "bad channel!", "secret": SECRET}}
+                )
+            )
 
     def test_short_secret_rejected(self) -> None:
         with self.assertRaises(Exception):

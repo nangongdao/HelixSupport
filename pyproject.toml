@@ -24,7 +24,10 @@ dev = [
   "pip-audit>=2.7,<3",
   "playwright>=1.50,<2",
   "pyright>=1.1.390,<2",
-  "ruff>=0.9,<1",
+  # Pinned, not ranged: ruff's default rule set and formatter style evolve
+  # with every minor, so a floating range silently re-scopes the lint/format
+  # gates (ruff 0.16 selects rules the 0.9-era codebase never opted into).
+  "ruff==0.9.9",
 ]
 # Production tracing: install ``pip install -e '.[otel]'`` and set
 # ``OTEL_EXPORTER_OTLP_ENDPOINT`` to forward spans to an OTLP collector.

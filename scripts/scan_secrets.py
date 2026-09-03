@@ -48,6 +48,10 @@ IGNORED_DIR_NAMES: frozenset[str] = frozenset(
         "data",
         "dist",
         "node_modules",
+        # Rust/Cargo build state (src-tauri).  Incremental caches embed the
+        # CSP hash lists (``'sha256-<43 base64>='``) compiled into the binary,
+        # which trip the Fernet-shaped matcher — build artifacts, not secrets.
+        "target",
         "tests",
     }
 )

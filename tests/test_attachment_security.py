@@ -61,9 +61,7 @@ class ScannerHardeningTests(unittest.TestCase):
         clean, verdict = self.scanner.scan(b"MZ\x90\x00fake", "notes.txt", "text/plain")
         self.assertFalse(clean)
         self.assertIn("executable magic", verdict)
-        clean, verdict = self.scanner.scan(
-            b"PK\x03\x04zipdata", "notes.txt", "text/plain"
-        )
+        clean, verdict = self.scanner.scan(b"PK\x03\x04zipdata", "notes.txt", "text/plain")
         self.assertFalse(clean)
         self.assertIn("binary container", verdict)
 
@@ -157,8 +155,9 @@ class QuarantineFlowTests(unittest.TestCase):
         self.db.ensure_tenant("t1")
         conv = self.db.create_conversation("t1", "Conv", "C-Q", "web", "admin", 120)
         self.conv_id = conv["id"]
-        self.settings = _settings(root, attachment_storage_dir=root / "objects",
-                                  attachment_scan_mode="external")
+        self.settings = _settings(
+            root, attachment_storage_dir=root / "objects", attachment_scan_mode="external"
+        )
         self.service = AttachmentService(
             self.db, self.settings, store=DiskAttachmentStore(root / "objects")
         )
@@ -255,7 +254,9 @@ class SignedUrlAndIntegrityTests(unittest.TestCase):
             "t2", str(self.att["id"]), ttl_seconds=60
         )
         self.assertFalse(
-            self.service.verify_download_url_token("t1", str(self.att["id"]), other_token, other_exp),
+            self.service.verify_download_url_token(
+                "t1", str(self.att["id"]), other_token, other_exp
+            ),
             "a token minted for another tenant must not validate here",
         )
 

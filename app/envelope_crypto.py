@@ -139,8 +139,7 @@ class KeyManagementServiceProtocol(Protocol):
         """Revoke one KEK version; further unwraps through it fail closed."""
         ...
 
-    def list_versions(self) -> list[dict[str, Any]]:
-        ...
+    def list_versions(self) -> list[dict[str, Any]]: ...
 
 
 class DiskKeyManagementService:
@@ -243,7 +242,9 @@ class DiskKeyManagementService:
         try:
             return _aesgcm(key).decrypt(raw[:12], raw[12:], None)
         except Exception as exc:
-            raise EnvelopeTamperError(f"KEK v{kek_version} could not authenticate wrapped DEK") from exc
+            raise EnvelopeTamperError(
+                f"KEK v{kek_version} could not authenticate wrapped DEK"
+            ) from exc
 
     def rotate(self) -> int:
         versions = self.list_versions()
@@ -274,13 +275,11 @@ class DiskKeyManagementService:
 
 
 class DekKeystoreProtocol(Protocol):
-    def list_versions(self, tenant_id: str) -> list[dict[str, Any]]:
-        ...
+    def list_versions(self, tenant_id: str) -> list[dict[str, Any]]: ...
 
     def save(
         self, tenant_id: str, dek_version: int, wrapped_dek: str, kek_version: int
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def replace_wrapped(
         self, tenant_id: str, dek_version: int, wrapped_dek: str, kek_version: int
@@ -288,8 +287,7 @@ class DekKeystoreProtocol(Protocol):
         """Rewrite a stored DEK's wrapped material under a new KEK version."""
         ...
 
-    def set_status(self, tenant_id: str, dek_version: int, status: str) -> None:
-        ...
+    def set_status(self, tenant_id: str, dek_version: int, status: str) -> None: ...
 
 
 class EnvelopeCipherProtocol(Protocol):
@@ -300,11 +298,9 @@ class EnvelopeCipherProtocol(Protocol):
     protocol (rather than ``Any``) keeps the envelope contract explicit.
     """
 
-    def encrypt_text(self, tenant_id: str, plaintext: str) -> dict[str, Any]:
-        ...
+    def encrypt_text(self, tenant_id: str, plaintext: str) -> dict[str, Any]: ...
 
-    def decrypt_text(self, tenant_id: str, envelope: dict[str, Any]) -> str:
-        ...
+    def decrypt_text(self, tenant_id: str, envelope: dict[str, Any]) -> str: ...
 
 
 class DatabaseDekKeystore:
@@ -496,7 +492,9 @@ class TenantEnvelopeCipher:
                 continue
             dek = self.kms.unwrap(str(row["wrapped_dek"]), int(row["kek_version"]))
             fresh_wrapped, fresh_kek = self.kms.wrap(dek)
-            self.keystore.replace_wrapped(tenant_id, int(row["dek_version"]), fresh_wrapped, fresh_kek)
+            self.keystore.replace_wrapped(
+                tenant_id, int(row["dek_version"]), fresh_wrapped, fresh_kek
+            )
             rewrapped += 1
         if rewrapped:
             self._audit(tenant_id, "security.dek.rewrapped", {"count": rewrapped})
@@ -514,7 +512,9 @@ class TenantEnvelopeCipher:
         dek_version = int(dek_row["dek_version"])
         dek = self.kms.unwrap(str(dek_row["wrapped_dek"]), int(dek_row["kek_version"]))
         nonce = secrets.token_bytes(12)
-        ciphertext = _aesgcm(dek).encrypt(nonce, plaintext.encode("utf-8"), _aad(tenant_id, dek_version))
+        ciphertext = _aesgcm(dek).encrypt(
+            nonce, plaintext.encode("utf-8"), _aad(tenant_id, dek_version)
+        )
         return {
             "v": ENVELOPE_VERSION,
             "tenant_id": tenant_id,
@@ -580,8 +580,7 @@ def ensure_searchable_fields_are_classified(field_names: list[str]) -> dict[str,
     unclassified = [name for name in field_names if name not in FIELD_REGISTRY]
     if unclassified:
         raise ValueError(
-            "searchable fields must be classified in FIELD_REGISTRY first: "
-            f"{sorted(unclassified)}"
+            f"searchable fields must be classified in FIELD_REGISTRY first: {sorted(unclassified)}"
         )
     return {name: classify_field(name) for name in field_names}
 

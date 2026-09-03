@@ -239,9 +239,7 @@ class PostgresDatabase(Database):
         if mode == "tenant":
             tenant = current_tenant()
             assert tenant is not None  # guaranteed by the "tenant" mode
-            connection.execute(
-                f"SELECT set_config('{TENANT_CONTEXT_GUC}', ?, true)", (tenant,)
-            )
+            connection.execute(f"SELECT set_config('{TENANT_CONTEXT_GUC}', ?, true)", (tenant,))
         elif mode is None:
             raise TenantContextError(
                 "row-level security is enforced: database access requires "
