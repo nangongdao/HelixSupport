@@ -12,10 +12,10 @@
 
 ### Changed
 
-- **代码风格自动修复**（2026-09-03，commit 0854a3f）：
-  - 应用 ruff 自动修复规则跨 163 个文件，共 579 处新增、648 处删除（净减少 69 行）。
-  - 主要修复：`re.I` → `re.IGNORECASE` 规范化（26 处正则表达式，FURB167）、`yield` in for loop → `yield from` 优化（UP028）、多个 `startswith` 调用合并为元组形式（PIE810，如 `if head.startswith(b"MZ") or head.startswith(b"\x7fELF"):` → `if head.startswith((b"MZ", b"\x7fELF")):`）、`fromisoformat` Z 替换优化（FURB162）、嵌套 if 语句合并（SIM102）、移除未使用导入和尾随逗号。
-  - 剩余 144 项警告需人工审查（主要为 BLE001 盲异常捕获 63 项、RUF012 可变类默认值 8 项等），这些涉及业务逻辑判断，不适合自动修复。
+- **代码风格自动修复**（2026-09-03，commit 0854a3f + 5dd1c34）：
+  - 第一轮（0854a3f）：应用 ruff 自动修复规则跨 163 个文件，共 579 处新增、648 处删除（净减少 69 行）。主要修复：`re.I` → `re.IGNORECASE` 规范化（26 处正则表达式，FURB167）、`yield` in for loop → `yield from` 优化（UP028）、多个 `startswith` 调用合并为元组形式（PIE810）、`fromisoformat` Z 替换优化（FURB162）、嵌套 if 语句合并（SIM102）、移除未使用导入和尾随逗号。警告从 182 降至 144 项。
+  - 第二轮（5dd1c34）：修复 5 个可自动修复的 ruff 警告，从 72 个降至 67 个。**F841**：删除 3 个未使用的 `run_id` 变量（`desktop/verify_bulk_toolbar_desktop.py`、`desktop/verify_queue_strip_desktop.py`、`tests/test_queue_error_paths.py`）；**F541**：移除 1 个无占位符的 f-string（`desktop/verify_admin_island_desktop.py`）；**F401**：自动清理未使用的导入。
+  - 剩余 67 个 E402 警告（模块级导入位置）均为 `scripts/` 中需要在导入前设置 `sys.path` 的合理模式，不影响运行时行为。
 
 - **队列模块测试覆盖提升**（2026-09-03，commit b500944）：
   - 新增 `tests/test_queue_error_paths.py`（21 例）完整覆盖 Redis 队列错误处理路径、stats() 方法、retry() 方法和工厂函数 fallback 场景。
