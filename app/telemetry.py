@@ -214,3 +214,25 @@ class TelemetryMetrics:
 
 
 metrics = TelemetryMetrics()
+
+
+def record_shadow_comparison(
+    result: str,
+    latency_diff_ms: int | None = None,
+    route: str | None = None,
+) -> None:
+    """Record a shadow traffic comparison result.
+
+    Args:
+        result: "match", "mismatch", or "error"
+        latency_diff_ms: v2_latency - v1_latency (positive = v2 slower)
+        route: optional route identifier for per-endpoint tracking
+    """
+    tags = {"result": result}
+    if route:
+        tags["route"] = route
+
+    metrics.increment("shadow.comparison_result", 1, **tags)
+
+    if latency_diff_ms is not None:
+        metrics.observe("shadow.latency_diff_ms", float(latency_diff_ms), **tags)

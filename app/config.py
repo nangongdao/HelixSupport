@@ -247,6 +247,12 @@ class Settings:
     # turn.budget_exceeded / tool.denied); None disables that counter.
     drift_max_model_denials: int | None = 50
     drift_max_tool_denials: int | None = 50
+    # ROADMAP 2.1.x: shadow traffic opt-in. When true, sampled v1 requests are
+    # replayed to v2 endpoints; results are compared and logged to
+    # shadow_traffic_comparisons for automated monitoring. The sampling rate
+    # controls overhead (0.0 = disabled, 1.0 = shadow every request).
+    shadow_traffic_enabled: bool = False
+    shadow_traffic_sample_rate: float = 0.05
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -394,6 +400,8 @@ class Settings:
                 if os.getenv("DRIFT_MAX_TOOL_DENIALS")
                 else None
             ),
+            shadow_traffic_enabled=_env_bool("SHADOW_TRAFFIC_ENABLED", False),
+            shadow_traffic_sample_rate=float(os.getenv("SHADOW_TRAFFIC_SAMPLE_RATE", "0.05")),
         )
         settings.validate()
         return settings

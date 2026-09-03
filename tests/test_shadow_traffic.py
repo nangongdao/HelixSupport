@@ -1,0 +1,312 @@
+"""Tests for shadow traffic system (ROADMAP 2.1.x).
+
+Verifies:
+- Sampling logic respects configuration
+- Request snapshots capture necessary fields
+- Response comparison detects field-level diffs
+- Comparison results are persisted correctly
+- Shadow monitor evaluates health thresholds
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from app.config import Settings
+from app.database import Database
+from app.shadow_monitor import (
+    ShadowMonitorThresholds,
+    ShadowSignals,
+    collect_shadow_signals,
+    evaluate_shadow_health,
+)
+from app.shadow_traffic import (
+    ShadowComparison,
+    _compare_responses,
+    _deep_equal,
+    _record_comparison,
+    should_shadow_request,
+)
+
+
+class ShadowTrafficTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        db_path = Path(self._tmp.name) / "shadow.db"
+        self.settings = Settings(
+            database_path=db_path,
+            shadow_traffic_enabled=True,
+            shadow_traffic_sample_rate=0.05,
+        )
+        self.db = Database(
+            path=db_path,
+            pool_size=1,
+            busy_timeout_ms=5000,
+        )
+        self.db.initialize()
+
+        # Create shadow_traffic_comparisons table for tests
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shadow_traffic_comparisons (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    route TEXT NOT NULL,
+                    v1_status_code INTEGER,
+                    v2_status_code INTEGER,
+                    fields_matched TEXT NOT NULL DEFAULT '[]',
+                    fields_mismatched TEXT NOT NULL DEFAULT '[]',
+                    v1_latency_ms INTEGER,
+                    v2_latency_ms INTEGER,
+                    sampling_rate REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_shadow_comparisons_tenant_route "
+                "ON shadow_traffic_comparisons(tenant_id, route, created_at)"
+            )
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self._tmp.cleanup()
+
+    def test_sampling_disabled_when_shadow_traffic_disabled(self) -> None:
+        settings_disabled = Settings(
+            shadow_traffic_enabled=False,
+            shadow_traffic_sample_rate=1.0,
+        )
+        self.assertFalse(should_shadow_request(settings_disabled))
+
+    def test_sampling_always_shadows_at_100_percent(self) -> None:
+        settings_full = Settings(
+            shadow_traffic_enabled=True,
+            shadow_traffic_sample_rate=1.0,
+        )
+        self.assertTrue(should_shadow_request(settings_full))
+
+    def test_sampling_never_shadows_at_zero_percent(self) -> None:
+        settings_zero = Settings(
+            shadow_traffic_enabled=True,
+            shadow_traffic_sample_rate=0.0,
+        )
+        self.assertFalse(should_shadow_request(settings_zero))
+
+    def test_sampling_respects_probabilistic_rate(self) -> None:
+        settings_50pct = Settings(
+            shadow_traffic_enabled=True,
+            shadow_traffic_sample_rate=0.5,
+        )
+        # Run 100 trials and expect roughly 50% to sample
+        with patch("random.random", side_effect=[i / 100 for i in range(100)]):
+            samples = [should_shadow_request(settings_50pct) for _ in range(100)]
+            sampled_count = sum(samples)
+            self.assertTrue(40 <= sampled_count <= 60)  # tolerance for probabilistic test
+
+    def test_deep_equal_primitives(self) -> None:
+        self.assertTrue(_deep_equal(1, 1))
+        self.assertTrue(_deep_equal("foo", "foo"))
+        self.assertFalse(_deep_equal(1, 2))
+        self.assertFalse(_deep_equal("foo", "bar"))
+        self.assertFalse(_deep_equal(1, "1"))
+
+    def test_deep_equal_lists(self) -> None:
+        self.assertTrue(_deep_equal([1, 2, 3], [1, 2, 3]))
+        self.assertFalse(_deep_equal([1, 2], [1, 2, 3]))
+        self.assertFalse(_deep_equal([1, 2], [2, 1]))
+
+    def test_deep_equal_dicts(self) -> None:
+        self.assertTrue(_deep_equal({"a": 1, "b": 2}, {"a": 1, "b": 2}))
+        self.assertTrue(_deep_equal({"b": 2, "a": 1}, {"a": 1, "b": 2}))  # order-independent
+        self.assertFalse(_deep_equal({"a": 1}, {"a": 2}))
+        self.assertFalse(_deep_equal({"a": 1}, {"a": 1, "b": 2}))
+
+    def test_deep_equal_nested(self) -> None:
+        v1 = {"user": {"id": "123", "roles": ["admin"]}}
+        v2 = {"user": {"id": "123", "roles": ["admin"]}}
+        v3 = {"user": {"id": "123", "roles": ["user"]}}
+        self.assertTrue(_deep_equal(v1, v2))
+        self.assertFalse(_deep_equal(v1, v3))
+
+    def test_compare_responses_identical(self) -> None:
+        v1 = {"id": "123", "status": "active", "count": 42}
+        v2 = {"id": "123", "status": "active", "count": 42}
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(set(matched), {"id", "status", "count"})
+        self.assertEqual(mismatched, [])
+
+    def test_compare_responses_partial_mismatch(self) -> None:
+        v1 = {"id": "123", "status": "active", "count": 42}
+        v2 = {"id": "123", "status": "inactive", "count": 42}
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(set(matched), {"id", "count"})
+        self.assertEqual(mismatched, ["status"])
+
+    def test_compare_responses_missing_fields(self) -> None:
+        v1 = {"id": "123", "status": "active"}
+        v2 = {"id": "123"}
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(matched, ["id"])
+        self.assertEqual(mismatched, ["status"])
+
+    def test_compare_responses_extra_fields(self) -> None:
+        v1 = {"id": "123"}
+        v2 = {"id": "123", "extra": "field"}
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(matched, ["id"])
+        self.assertEqual(mismatched, ["extra"])
+
+    def test_compare_responses_handles_none(self) -> None:
+        matched, mismatched = _compare_responses(None, {"id": "123"})
+        self.assertEqual(matched, [])
+        self.assertEqual(mismatched, [])
+
+        matched, mismatched = _compare_responses({"id": "123"}, None)
+        self.assertEqual(matched, [])
+        self.assertEqual(mismatched, [])
+
+    def test_record_comparison_persists_to_database(self) -> None:
+        comparison = ShadowComparison(
+            id="shadow-req-001",
+            tenant_id="tenant-test",
+            request_id="req-001",
+            route="/api/conversations",
+            v1_status_code=200,
+            v2_status_code=200,
+            fields_matched=["id", "status"],
+            fields_mismatched=["updated_at"],
+            v1_latency_ms=120,
+            v2_latency_ms=135,
+            sampling_rate=0.05,
+        )
+
+        _record_comparison(self.db, comparison)
+
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shadow_traffic_comparisons WHERE id = ?",
+                ("shadow-req-001",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["tenant_id"], "tenant-test")
+        self.assertEqual(row["request_id"], "req-001")
+        self.assertEqual(row["route"], "/api/conversations")
+        self.assertEqual(row["v1_status_code"], 200)
+        self.assertEqual(row["v2_status_code"], 200)
+        self.assertEqual(json.loads(row["fields_matched"]), ["id", "status"])
+        self.assertEqual(json.loads(row["fields_mismatched"]), ["updated_at"])
+        self.assertEqual(row["v1_latency_ms"], 120)
+        self.assertEqual(row["v2_latency_ms"], 135)
+        self.assertEqual(row["sampling_rate"], 0.05)
+
+    def test_evaluate_shadow_health_insufficient_sample(self) -> None:
+        signals = ShadowSignals(
+            total_comparisons=50,
+            mismatch_count=5,
+            mismatch_rate=0.10,
+            v1_p95_latency_ms=100.0,
+            v2_p95_latency_ms=110.0,
+            latency_regression_ms=10.0,
+        )
+        thresholds = ShadowMonitorThresholds(min_comparisons=100)
+
+        is_healthy, reason = evaluate_shadow_health(signals, thresholds)
+        self.assertTrue(is_healthy)
+        self.assertEqual(reason, "insufficient_sample")
+
+    def test_evaluate_shadow_health_mismatch_rate_breach(self) -> None:
+        signals = ShadowSignals(
+            total_comparisons=200,
+            mismatch_count=15,
+            mismatch_rate=0.075,  # 7.5% exceeds 5% threshold
+            v1_p95_latency_ms=100.0,
+            v2_p95_latency_ms=110.0,
+            latency_regression_ms=10.0,
+        )
+        thresholds = ShadowMonitorThresholds(max_mismatch_rate=0.05)
+
+        is_healthy, reason = evaluate_shadow_health(signals, thresholds)
+        self.assertFalse(is_healthy)
+        self.assertIn("mismatch_rate", reason)
+        self.assertIn("7.50%", reason)
+
+    def test_evaluate_shadow_health_latency_regression_breach(self) -> None:
+        signals = ShadowSignals(
+            total_comparisons=200,
+            mismatch_count=5,
+            mismatch_rate=0.025,
+            v1_p95_latency_ms=100.0,
+            v2_p95_latency_ms=350.0,
+            latency_regression_ms=250.0,  # exceeds 200ms threshold
+        )
+        thresholds = ShadowMonitorThresholds(max_latency_regression_ms=200.0)
+
+        is_healthy, reason = evaluate_shadow_health(signals, thresholds)
+        self.assertFalse(is_healthy)
+        self.assertIn("latency_regression", reason)
+        self.assertIn("250ms", reason)
+
+    def test_evaluate_shadow_health_all_green(self) -> None:
+        signals = ShadowSignals(
+            total_comparisons=200,
+            mismatch_count=8,
+            mismatch_rate=0.04,  # 4% under 5%
+            v1_p95_latency_ms=100.0,
+            v2_p95_latency_ms=180.0,
+            latency_regression_ms=80.0,  # under 200ms
+        )
+        thresholds = ShadowMonitorThresholds()
+
+        is_healthy, reason = evaluate_shadow_health(signals, thresholds)
+        self.assertTrue(is_healthy)
+        self.assertEqual(reason, "healthy")
+
+    def test_collect_shadow_signals_empty_window(self) -> None:
+        signals = collect_shadow_signals(
+            self.db,
+            tenant_id=None,
+            route=None,
+            window_hours=24,
+        )
+        self.assertEqual(signals.total_comparisons, 0)
+        self.assertEqual(signals.mismatch_count, 0)
+        self.assertEqual(signals.mismatch_rate, 0.0)
+        self.assertIsNone(signals.v1_p95_latency_ms)
+        self.assertIsNone(signals.v2_p95_latency_ms)
+
+    def test_collect_shadow_signals_aggregates_correctly(self) -> None:
+        # Insert 10 comparisons: 8 match, 2 mismatch
+        for i in range(10):
+            mismatched = ["field"] if i < 2 else []
+            comparison = ShadowComparison(
+                id=f"shadow-{i}",
+                tenant_id="tenant-test",
+                request_id=f"req-{i}",
+                route="/api/conversations",
+                v1_status_code=200,
+                v2_status_code=200,
+                fields_matched=["id"],
+                fields_mismatched=mismatched,
+                v1_latency_ms=100 + i * 10,
+                v2_latency_ms=110 + i * 10,
+                sampling_rate=0.05,
+            )
+            _record_comparison(self.db, comparison)
+
+        signals = collect_shadow_signals(self.db, tenant_id=None, route=None, window_hours=24)
+
+        self.assertEqual(signals.total_comparisons, 10)
+        self.assertEqual(signals.mismatch_count, 2)
+        self.assertAlmostEqual(signals.mismatch_rate, 0.20, places=2)  # 20%
+        self.assertIsNotNone(signals.v1_p95_latency_ms)
+        self.assertIsNotNone(signals.v2_p95_latency_ms)
+        # v2 latencies are consistently 10ms higher
+        self.assertIsNotNone(signals.latency_regression_ms)
+        self.assertTrue(8 <= signals.latency_regression_ms <= 12)  # roughly 10ms

@@ -6,6 +6,13 @@
 
 ### Added
 
+- **Version 2.1.0 影子流量系统（ROADMAP 2.1.x）** (2026-09-03):
+  - `app/shadow_traffic.py` (254 行): v1→v2 请求异步复制、字段级差异对比、延迟追踪；`ShadowRequest` 快照、`ShadowComparison` 结果、`should_shadow_request` 采样逻辑（可配置 0-100%）、`shadow_request_to_v2` 异步重放（从不阻塞 v1 响应）、`_compare_responses` 递归深度对比、`_record_comparison` 持久化到数据库。
+  - `app/shadow_monitor.py` (158 行): 影子流量健康监控与自动降级；`ShadowSignals` 聚合指标（总对比数/不匹配数/不匹配率/v1&v2 P95 延迟）、`ShadowMonitorThresholds` 阈值（max_mismatch_rate=5%、max_latency_regression_ms=200ms）、`evaluate_shadow_health` 纯函数评估、`collect_shadow_signals` 24 小时滚动窗口查询、`monitor_shadow_traffic` 周期性清扫钩子。
+  - Migration v42 (phase="expand"): `shadow_traffic_comparisons` 表记录每次影子请求对比（request_id/route/status_codes/matched&mismatched_fields/latencies/sampling_rate）；索引 `(tenant_id, route, created_at)` 和 `(request_id)`。
+  - 配置: `SHADOW_TRAFFIC_ENABLED` (默认 false) 和 `SHADOW_TRAFFIC_SAMPLE_RATE` (默认 0.05 即 5%)；遵循 drift_monitor 架构模式（纯函数评估器 + fail-safe 默认）。
+  - 测试: `tests/test_shadow_traffic.py` 20 例全绿（采样逻辑/深度相等/响应对比/持久化/健康评估/信号聚合）。
+
 ### Changed
 
 ### Fixed
