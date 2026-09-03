@@ -10,6 +10,86 @@
 
 ### Fixed
 
+## 1.3.0 — 商用级可信：安全、可靠性、运维 (2026-09-03)
+
+Phase 28-30（通过 M0/Phase 40-41 实现）完成，标志着 Helix Support 从"企业级平台"升级为**通过外部安全评审不需临时补救的商用成熟平台**。本版本闭环了 M0 停止线四项关键安全风险（SEC-001/002、REL-001、SEC-007），实现了统一凭据生命周期、供应链五道 gate、审计外部锚定、安全治理自动化，完善了 SLO/runbook/灾备/用户文档体系。
+
+**成熟度提升**: 总评 3.7 → 4.2；安全 3.5 → 4.5；可靠性 3.8 → 4.2；交付工程 4.0 → 4.5。
+
+**发布亮点**:
+- ✅ **M0 停止线闭环**：OIDC 完整验证（36 测试）、DSR maker-checker（23 测试）、队列 fail-closed（四类故障演练）、安全报告最小闭环
+- ✅ **统一凭据生命周期**：API key 双活轮换、跨实例即时吊销、审计脱敏、`X-Helix-Key-Id` 版本化签名
+- ✅ **供应链五道 gate**：secret 扫描、license 策略、漏洞例外、CI pin 一致性、发布 manifest
+- ✅ **审计外部锚定**：高危变更同事务持久化、KMS Ed25519 签名链头、WORM 存储、三证据互验
+- ✅ **安全治理自动化**：threat-model delta gate、季度桌面演练、90 天到期检查
+- ✅ **SLO 与告警**：四指标（可用性/延迟/队列/SSE）+ 错误预算 + Prometheus 规则
+- ✅ **Runbook 与诊断**：按症状组织、`GET /api/admin/diagnostics` 诊断包
+- ✅ **容量与灾备**：压测基线、RTO/RPO 声明、故障演练脚本化
+
+**完成报告**:
+- `IMPLEMENTATION_REPORT_PHASE_40.md`（M0 停止线，69 行）
+- `IMPLEMENTATION_REPORT_PHASE_41.md`（凭据/供应链/审计锚定，173 行）
+- `IMPLEMENTATION_REPORT_PHASE_41_5.md`、`PHASE_41_6.md`、`PHASE_41_7.md`（Phase 41 续，257 行）
+
+### Added
+
+- **Phase 40 (M0 停止线) 安全风险闭环**（2026-09-03）：
+  - **40.1 SEC-001 OIDC 加固**：一次性 `auth_transactions`（migration 28）防重放，state/nonce/PKCE S256 verifier/redirect_uri/tenant_hint 绑定，RS256-only + kid 轮换 JWKS 缓存，iss/aud/exp/iat/nonce 强制校验，identity 仅来自已验证 claims + tenant_members（无 demo/admin 回退）。实现：`app/oidc_flow.py`。测试：36 passed（覆盖授权码重放、PKCE 一次性、nonce/iss/aud/exp/iat 校验、算法混淆拒绝、JWKS kid 轮换）。
+  - **40.2 SEC-002 DSR maker-checker**：申请人≠审批人≠执行人（migration 29），`idempotency_key` 唯一索引幂等重放，导出物 Fernet 加密、一次性下载 token ≤15 分钟、导出对象 ≤24 小时、无 `DSR_EXPORT_SECRET` 时 501 fail-closed。隐私权限（`privacy:request/approve/execute`）仅 ADMIN 持有。实现：`app/dsr.py`。测试：23 passed。
+  - **40.3 REL-001 多实例队列 fail-closed**：Redis 不可用时 API 返回 503 + `Retry-After: 30`（`urn:helix:error:queue_unavailable`），绝不静默降级为 SQLite，readiness 报告 degraded，`deployment_profile=multi` 强制 PostgreSQL+Redis+fail-closed。实现：`app/queue.py`。测试：12 passed + 四类 Redis 故障演练 ALL PASS。
+  - **40.4 SEC-007 安全报告最小闭环**：`SECURITY.md` 部署前配置检查清单，威胁模型见 `docs/SECURITY_MODEL.md`，负向测试进入 CI。
+
+- **Phase 41.1 + 41.1b 统一凭据生命周期（SEC-004）**（2026-08-20）：
+  - `CredentialStore` / `Credential` / `CredentialLifecycle` 状态机（pending → active → retiring → revoked），注册表仅存 SHA-256 指纹（`key_ref`）绝不存明文，`hk-` 前缀 160-bit API key 分组格式，`is_allowed` 强制 not_before / ±5s 时钟偏差 / expires_at / retiring 有界重叠窗口（24h 默认）。
+  - migration 30：`credential_registry` 表 + `(type, key_ref)` 唯一索引，legacy `revoked_api_keys` → registry 状态种子同步。
+  - 管理 API：`POST/GET /api/admin/keys`（secret 只显示一次，DB 只存指纹）、`POST /api/admin/keys/{id}/revoke`（registry 持久裁决 → 跨实例即时吊销）。
+  - 渠道签名：`X-Helix-Key-Id` 选择已轮换的 registry 凭据，未知/错类型/跨租户/已吊销 key_id 统一 401 fail-closed。
+  - 审计脱敏：issuance/revocation 审计事件只含 credential_id，序列化后绝无原始 secret。
+  - 测试：`tests/test_credentials.py` 11 passed + `tests/test_phase41.py` 12 passed（覆盖跨实例吊销、过期边界、时钟偏差、并发轮换竞争收敛、审计脱敏）。
+
+- **Phase 41.2 供应链与可复现发布（SEC-003）**（2026-08-20）：
+  - `supplychain/` 配置目录 + 五个正交 gate 全进 CI `supply-chain` job：
+    - **secret 扫描**（`scripts/scan_secrets.py`）：已知凭证形态扫描（私钥/Anthropic/OpenAI/AWS/GitHub/Slack/服务账号/Fernet），忽略 build/测试夹具/npm integrity。
+    - **license 策略**（`scripts/license_gate.py` + `supplychain/license-policy.json`）：逐包登记许可，新包未登记红灯，`LicenseRef-TBD` + `approved_until` 临时批准到期红灯。
+    - **漏洞例外**（`scripts/vuln_review.py` + `supplychain/vulnerability-exceptions.json`）：例外含不可达证据/补偿控制/owner/due_date，open 到期自动红灯，`--audit --require-coverage` 覆盖 pip-audit 上报。
+    - **CI pin 一致性**（`scripts/check_workflows.py` + `supplychain/ci-pins.json`）：`uses:` 引用必须与登记一致，commit SHA 固定留给受控更新机器人（warning）。
+    - **发布 manifest**（`scripts/release_manifest.py` + `supplychain/base-image-pin.json`）：`--build` 哈希 `requirements.lock`/`pyproject.toml`/`Dockerfile`/`app/` 树/SBOM + 基础镜像 pin，`--verify` 重算比对，篡改/漂移失败。
+  - 设计：`docs/adr/0010-supply-chain.md`。测试：5 个 gate 各有对应测试套件。
+
+- **Phase 41.3 审计证据外部锚定（SEC-005）**（2026-08-20）：
+  - 高危安全/权限/DSR/策略变更与审计证据**同事务持久化**（`app/db/audit.py::audit_high_risk` + migration 31 `audit_anchors`），`BEGIN IMMEDIATE` 事务内追加事件 + 读取链尾 + 写 frontier tip（`fr_{event_id}`），任一失败整体回滚并 fail-closed 503（`code="audit_unavailable"`、`Retry-After: 30`）。
+  - 12 类 `HIGH_RISK_EVENT_TYPES`（`api_key.*`、`data_subject_request.*`、`member.invited/role_updated/deactivated`、`retention.policy_updated`、`sla_policy.set`、`webhook.registered/deleted`）由 audit wrapper 强制走该路径。
+  - 链头 `{last_seq, last_hash, timestamp, environment}` 经 Ed25519 KMS 签名导出 WORM 锚点（`app/worm_store.py::DiskWormStore`），kid 白名单轮换语义。
+  - `scripts/verify_audit_chain.py` 一次校验本地全链 + DB frontier anchors + WORM claims 三证据。
+  - 设计：`docs/adr/0011-audit-external-anchoring.md`。测试：`tests/test_audit_anchors.py` 8 passed（覆盖重算全链/删 anchor/替换 manifest/错序/重复 seq/KMS 轮换/WORM 不可用）。
+
+- **Phase 41.7 安全治理自动化（SEC-008）**（2026-08-20）：
+  - 每发布提交 threat-model delta（`supplychain/threat-model-deltas/*.json`）：新增入口/资产/信任边界、关闭/新增风险、控制与验证证据，named owner/审批人。
+  - `scripts/threat_model_gate.py` 校验缺失 delta、未命名/placeholder owner、未来日期、空 control/evidence。
+  - 季度桌面演练（报告接收/依赖漏洞/密钥泄露/跨租户告警）记录于 `supplychain/security-drills.json`，`--check-today` 校验最近演练未过期（90 天）。
+  - CI `supply-chain` job 接入 nil-tolerant gate。
+  - 设计：`docs/adr/0012-security-governance.md`。测试：`tests/test_threat_model_gate.py` 14 passed。
+
+- **Phase 28-30 核心内容集成**（2026-09-03）：
+  - **Phase 28 安全深化**：威胁模型（`docs/SECURITY_MODEL.md` STRIDE 分析 + 控制矩阵），凭据轮换（41.1），审计防篡改（41.3 哈希链 + WORM），应用层加固（OIDC 完整验证 + DSR maker-checker + CSRF 防护），供应链（41.2 五道 gate）。
+  - **Phase 29 可靠性与过载工程**：优雅关闭（SIGTERM 后停止接受新请求 → 等待 in-flight turn → SSE 重连提示），背压与过载保护（队列深度阈值、429 + `Retry-After`、租户并发限制），降级矩阵（`docs/DEGRADATION.md`），混沌测试（`tests/test_chaos.py`）。
+  - **Phase 30 可运维性与文档体系**：SLO 与告警（`docs/SLO.md` 四指标 + 错误预算），Runbook 与诊断（`docs/runbooks/` + `GET /api/admin/diagnostics`），容量与压测（`docs/CAPACITY.md`），灾备与合规（RTO/RPO 声明、跨区备份流程、故障演练脚本化），用户文档（`docs/guides/operator-manual.md` + `tenant-admin-manual.md`），发布工程（`docs/RELEASE_CHECKLIST.md` 迁移演练门禁 + SemVer 纪律）。
+
+### Changed
+
+- 安全成熟度从 3.5 提升至 4.5（M0 风险闭环 + 凭据生命周期 + 供应链 gate + 审计锚定）
+- 可靠性成熟度从 3.8 提升至 4.2（队列 fail-closed + 故障演练 + 降级矩阵）
+- 交付工程成熟度从 4.0 提升至 4.5（五道供应链 gate + 发布 manifest + 迁移演练）
+- 总评成熟度从 3.7 提升至 4.2（超越 4.0+ 目标）
+- 分支覆盖率从 85% 提升至 86%
+- 后端测试从 723+ 增加至 757+（新增 M0/Phase 41 测试）
+
+### Fixed
+
+- DSR 未配置 `DSR_EXPORT_SECRET` 时返回 501（之前为 500）
+- Redis 不可用时不再静默降级为 SQLite，返回 503 + `Retry-After: 30`
+- OIDC 完整验证强化了安全边界，修复算法混淆、重放攻击、租户混淆等潜在风险
+
 ## 1.2.0 — 平台化：租户运营、渠道、前端工程 (2026-09-03)
 
 Phase 22-23-26-27 完成，标志着 Helix Support 从"可被第三方集成的商用级平台"升级为**支持多租户自助运营与渠道接入的企业级平台**。本版本实现了租户开通与成员生命周期管理、可嵌入 Web Chat 与渠道 webhook、前端模块化拆分（48 模块 + 351 测试）以及后端结构治理（database.py 拆分为 70 行）。
