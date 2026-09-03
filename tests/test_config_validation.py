@@ -190,6 +190,39 @@ class SettingsValidationTests(unittest.TestCase):
             "WIDGET_FRAME_ANCESTORS", "javascript:alert(1)", "WIDGET_FRAME_ANCESTORS"
         )
 
+    def test_rejects_conversation_archive_batch_zero(self) -> None:
+        self._assert_rejects("CONVERSATION_ARCHIVE_BATCH", "0", "CONVERSATION_ARCHIVE_BATCH")
+
+    def test_rejects_conversation_archive_cadence_zero(self) -> None:
+        self._assert_rejects(
+            "CONVERSATION_ARCHIVE_CADENCE_HOURS", "0", "CONVERSATION_ARCHIVE_CADENCE_HOURS"
+        )
+
+    def test_rejects_bad_channel_webhooks_file(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            _env(CHANNEL_WEBHOOKS_FILE="/nonexistent/path.json"),
+            clear=False,
+        ):
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                Settings.from_env()
+
+    def test_rejects_production_without_api_keys(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DATABASE_PATH": "data/support.db",
+                "AUTH_MODE": "api_key",
+                "TURN_WORKER_ENABLED": "0",
+                "RATE_LIMIT_PER_MINUTE": "10000",
+                "APP_ENV": "production",
+                "API_KEYS_JSON": "{}",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "API keys must configure"):
+                Settings.from_env()
+
 
 if __name__ == "__main__":
     unittest.main()

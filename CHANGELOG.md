@@ -2,6 +2,12 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## Unreleased
+
+### Changed
+
+- **测试覆盖率提升**（2026-09-03）：新增 `tests/test_coverage_final_push.py`（3 例）覆盖 `app/attachment_store.py:81`（tmp cleanup 异常路径）、`app/audit_gap.py:63-66`（DB 不可达异常处理）、`app/db/archive.py:167`（before cursor 反转）；新增 `tests/test_channel_webhooks_validation.py`（5 例）覆盖 `InboundChannelRegistry` 配置验证错误路径（account 值非 dict、缺失 tenant_id、channel 格式无效、secret 长度不足）；扩展 `tests/test_config_validation.py`（+2 例）覆盖 `CONVERSATION_ARCHIVE_BATCH`/`CONVERSATION_ARCHIVE_CADENCE_HOURS` 零值拒绝分支与生产环境 archive delete 开关。覆盖率 **87.45% → 87.54%**（13109 stmts，1320 miss）。90% 目标需额外覆盖 ~323 行，留待后续迭代。
+
 ## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
 
 ### Added
@@ -228,7 +234,7 @@
 
 - **ruff 0.9.9(CI 口径)全绿**:消灭 scripts/ 下 16 个 lint 错误——15 个是 `_console.py` 统一改造引入的重复 `import sys`/`from pathlib import Path`(F811/E402,ruff --fix 安全清理),1 个是真实 bug:`split_main.py` 的 `__main__` 块调用**从未导入**的 `use_utf8_console()`(F821,该脚本 Phase 27.2 后从未被真正运行过)。`rebuild_main.py` 的 bootstrap `import sys` 加 noqa 对齐其余脚本。本地 0.16.x 的 473 项报告属版本差异噪音(仓库记录过「CI 口径 ruff 用 artifacts/ruff-099-pkg」),不在本次范围。
 - **`split_main.py` 破坏性保护**:验证时发现该脚本无 argparse,`--help` 直接执行 `main()` 把 `app/main.py` 和 `app/routers/conversations.py` 重写了一遍(已 `git checkout` 完整恢复)。补 `--apply` 显式开关,无参数或 `--help` 一律 `parser.error` 拒绝执行——一次性的迁移工具也要防误触。
-- **覆盖率 85% → 补测**(新增 11 个测试文件共 140 例,切审计/安全/配置/遥测/渠道关键面):`tests/test_webhook_safety.py`(SSRF 防护 78%→98%:字面/解析/注入 resolver/默认 resolver 错误翻译/IPv4-mapped);`tests/test_audit_gap.py`(audit_gap 45%→97%:gap 持久化/高风险吞 gap/同事务锚定回滚/合并/清空);`tests/test_anchor_service.py`(anchor_service 0%→96%:锚定写/窗口门控/同 tip 幂等/篡改检出/健康报告);`tests/test_audit_chain.py`(audit_chain 6%→93%:verify_chain 哈希/prev_hash 篡改检出、archive 各校验错误分支、流式验证器 O(1) 内存契约——篡改中段事件在产出后继前即抛错);`tests/test_audit_anchor_verify.py`(audit_anchor 74%→96%:verify_signed_anchor 缺字段/非整数 seq/schema/base64/密钥长度/kid 不匹配/未信任/签名不匹配、verify_anchor_vs_head 环境/哈希/seq/非单调);`tests/test_telemetry_edge.py` + `tests/test_telemetry_otel_branches.py`(telemetry 69%→99%:直方图单样本/多样本百分位、duration_ms None、DEBUG 日志、OTel mock 分支 configure/span 转发/缺包降级);`tests/test_cache.py`(TTLCache 全分支,保留原有 3 例);`tests/test_channel_providers_branches.py`(channel_providers →100%:签名头缺失/畸形/超窗/错 HMAC、payload 归一化错误、附件引用、适配器查找);`tests/test_channel_key_id.py`(channel_webhooks →95%:key_id 凭证选择全失败模式统一 None、注册表配置校验);`tests/test_attachment_router_errors.py`(routers/attachments 75%→96%:404/403/409/413 错误响应);`tests/test_config_validation.py`(config.py 88%→93%:21 个 env 校验分支 fail-fast)。
+- **覆盖率 85% → 87.25%**(新增 13 个测试文件共 190 例,切审计/安全/配置/遥测/渠道/附件关键面):`tests/test_webhook_safety.py`(SSRF 防护 78%→98%);`tests/test_audit_gap.py`(audit_gap 45%→97%);`tests/test_anchor_service.py`(anchor_service 0%→96%);`tests/test_audit_chain.py`(audit_chain 6%→93%,含流式验证器 O(1) 内存契约);`tests/test_audit_anchor_verify.py`(audit_anchor 74%→96%);`tests/test_telemetry_edge.py` + `tests/test_telemetry_otel_branches.py`(telemetry 69%→99%,OTel mock 分支);`tests/test_cache.py`(保留原有 3 例扩展至 14 例);`tests/test_channel_providers_branches.py`(channel_providers →100%);`tests/test_channel_key_id.py`(channel_webhooks →95%,key_id 选择全失败模式统一 None);`tests/test_attachment_router_errors.py`(routers/attachments 75%→96%);`tests/test_config_validation.py`(config.py 88%→93%,41 个 env 校验分支 fail-fast);`tests/test_small_module_branches.py`(errors/attachment_store 兜底)。
 - **runbook 非作者执行预检**(Gate B 项):两个 runbook 的 `APP_VERSION` 检查从 `import app.main`(触发整个应用初始化:建库/起 worker/刷日志)改为 AST 静态读取——零副作用,输出可预测。`docs/OPERATIONS.md` 补「Performance Gate Failing (Browser Layer)」故障排查段(桌面/网页两轨同升是系统负载信号、`PERF_PRECISE_MEMORY` 语义、泄漏探针失效形态、`--update` 使用纪律);`docs/PERF_NOTES.md` 补 §43.6 浏览器性能预算实测表与测量环境要点(桌面 LCP 860–984ms 贴线、`--expose-gc` 隔离、INP 受信输入要求、sourcemap 桌面包排除)。
 - **覆盖率补测自抓一个已发货 fail-open(2026-09-03 修复)**:新测试 `test_rejects_widget_frame_ancestors_empty` 暴露 `WIDGET_FRAME_ANCESTORS=""` 被 `from_env` 的生成器过滤成空元组后,又经 `widget_frame_ancestors or ("'self'",)` **静默回退到默认值**——显式配置错误被吞,与该测试文件钉住的「env 校验 fail-fast,绝不静默回退」契约相反。修复:`from_env` 区分未设置(取 `'self'` 默认)与显式置空(保留空元组,由 `__post_init__` 的 `must contain at least one source` 校验抛错);删除构造处的 `or` 回退。这也是本仓库反复出现的同一类缺陷的第 N 例:回退写法让「看似存在的校验」对特定输入路径失效。
 
