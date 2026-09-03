@@ -6,6 +6,14 @@
 
 ### Added
 
+- **桌面壳自动更新机制**（2026-09-03）：
+  - 实现基于 `tauri-plugin-updater` 的自动更新检查与安装流程。新增 `src-tauri/src/updater.rs` 模块（132 行）提供 `check_and_prompt_update()` 和 `check_on_startup()` 接口，在应用启动时后台检查 GitHub Releases 更新源。
+  - 更新流程：启动时非阻塞后台检查 → 发现新版本时弹出对话框显示当前版本与目标版本 → 用户确认后下载并验证签名 → 安装完成后自动重启应用。下载进度实时输出到 stderr 日志。
+  - 安全机制：所有更新包通过 `tauri.conf.json` 中配置的 `pubkey` 进行签名验证（当前为空，等待 D5 阶段代码签名证书采购，见 `DEPLOYMENT_DESKTOP.md` §5）。未签名的更新包将被拒绝安装。
+  - 用户体验：更新检查失败不阻塞应用正常使用，仅记录日志；用户可选择"立即更新"或"稍后提醒"；未来可扩展为周期性后台检查（当前每次启动检查）。
+  - 配置：更新源在 `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints` 配置，默认指向 `https://github.com/nangongdao/helix-support/releases/latest/download/latest.json`；`createUpdaterArtifacts: true` 确保构建时生成更新清单。
+  - 剩余工作：OV 代码签名证书采购（1-2 周周期）→ 生成签名密钥对 → 填充 `pubkey` → CI 构建时签名 → 发布到 GitHub Releases（D5 阶段，见 `DESKTOP_TAURI_PLAN.md` §7 D5 节）。
+
 - **React 岛渲染性能优化**（2026-09-03）：
   - 队列岛核心组件 memo 化：`QueueRow`、`BulkToolbar`、`QueueStrip` 使用 `React.memo` 包装，仅在 props 实际变化时重渲染。`QueueRow` 使用自定义比较函数，精确检查所有影响渲染的会话字段（id/customer_name/status/preview/sla_due_at/sla_breached/assigned_agent/intent/claim_active/claimed_by/labels）以及视觉状态（active/selected/canOperate/compact），避免 SSE 事件更新单行时触发整个队列重渲染。
   - SLA 格式化优化：在 `QueueRow` 内使用 `useMemo` 缓存 `formatSla()` 计算结果，仅在相关字段（status/sla_due_at/sla_breached）变化时重新计算，减少重复日期计算开销。

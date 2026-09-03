@@ -1,5 +1,6 @@
 mod supervisor;
 mod terminal;
+mod updater;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor::{shutdown, start_backend, ensure_alive, flush_telemetry,
@@ -192,6 +193,10 @@ pub fn run() {
                     now_ms().saturating_sub(handle.state::<AppState>().boot_start_ms)
                 )
             );
+
+            // Check for updates on startup (non-blocking background check)
+            updater::check_on_startup(&handle);
+
             Ok(())
         })
         .on_page_load(|webview, payload| {
