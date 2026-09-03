@@ -10,6 +10,109 @@
 
 ### Fixed
 
+## 1.4.0 — Secure Operations: 凭据生命周期、供应链治理、深模块拆分 (2026-09-03)
+
+Phase 41（Secure Operations）全部七个子阶段完成，建立了统一凭据生命周期、五道供应链 gate、审计外部锚定、AI 安全评测、深模块拆分与安全治理自动化。本版本在 1.3.0 M0 停止线基础上，将安全与交付工程推向可通过外部审计的成熟状态。
+
+**成熟度提升**: 总评 4.2 → 4.5；安全 4.5 → 4.8；交付工程 4.5 → 4.8；可维护性（新维度）3.5。
+
+**发布亮点**:
+- ✅ **统一凭据生命周期（41.1）**：`hk-` 前缀 160-bit API key、pending→active→retiring→revoked 状态流转、跨实例即时吊销、审计脱敏、轮换演练（23 测试）
+- ✅ **供应链五道 gate（41.2）**：secret 扫描、license 策略、漏洞例外到期检查、CI pin 一致性、发布 manifest（ADR-010）
+- ✅ **审计外部锚定（41.3）**：高危变更同事务持久化、Ed25519 KMS 签名链头、WORM 存储、三证据互验（ADR-011，8 测试）
+- ✅ **数据保护与隐私（41.4）**：字段级分类登记、结构化 redaction、DSR 队列 SLA、tombstone 防备份复活（migration 32）
+- ✅ **AI 安全评测 gate（41.5）**：对抗集 24 例 9 类威胁、晋级五条件 gate、WORM 报告、工具再授权、间接注入复检
+- ✅ **深模块拆分（41.6）**：orchestrator 1,504→930 行（-38%）三深模块、app.js 4,820→3,534 行（-27%）六深模块、迁移注册表按版本拆分
+- ✅ **安全治理自动化（41.7）**：threat-model delta gate、季度桌面演练、90 天到期检查（ADR-012，14 测试）
+
+**完成报告**:
+- `IMPLEMENTATION_REPORT_PHASE_41.md`（41.1-41.4，173 行）
+- `IMPLEMENTATION_REPORT_PHASE_41_5.md`、`PHASE_41_6.md`、`PHASE_41_7.md`（41.5-41.7，257 行）
+
+### Added
+
+- **Phase 41.1 + 41.1b 统一凭据生命周期（SEC-004）**（2026-08-20）：
+  - `CredentialStore` / `Credential` / `CredentialLifecycle` 状态机（`app/credentials.py`），注册表仅存 SHA-256 指纹（`key_ref`）绝不存明文。
+  - `hk-` 前缀 160-bit API key 分组格式（`secrets.token_urlsafe(20)`），`pending → active → retiring → revoked` 状态流转，`is_allowed` 强制 not_before / ±5s 时钟偏差 / expires_at / retiring 有界重叠窗口（24h 默认）。
+  - migration 30：`credential_registry` 表 + `(type, key_ref)` 唯一索引。
+  - 管理 API：`POST/GET /api/admin/keys`（secret 只显示一次）、`POST /api/admin/keys/{id}/revoke`（跨实例即时吊销）。
+  - 渠道签名支持 `X-Helix-Key-Id` 版本化选择（`app/channels.py::InboundChannelRegistry._secret_for_key_id`），未知/错类型/跨租户/已吊销 key_id 统一 401 fail-closed。
+  - 审计脱敏：issuance/revocation 事件只含 credential_id，序列化后绝无原始 secret。
+  - 测试：23 passed（`tests/test_credentials.py` 11 + `tests/test_phase41.py` 12，覆盖跨实例吊销、过期边界、时钟偏差、并发轮换竞争、审计脱敏）。
+
+- **Phase 41.2 供应链与可复现发布（SEC-003）**（2026-08-20）：
+  - `supplychain/` 配置目录 + 五个正交 gate 全进 CI `supply-chain` job：
+    - **secret 扫描**（`scripts/scan_secrets.py`）：私钥/Anthropic/OpenAI/AWS/GitHub/Slack/服务账号/Fernet 形态扫描。
+    - **license 策略**（`scripts/license_gate.py` + `supplychain/license-policy.json`）：逐包登记，新包未登记红灯，`LicenseRef-TBD` + `approved_until` 到期红灯。
+    - **漏洞例外**（`scripts/vuln_review.py` + `supplychain/vulnerability-exceptions.json`）：例外含不可达证据/补偿控制/owner/due_date，open 到期自动红灯，`--audit --require-coverage` 覆盖 pip-audit 上报。
+    - **CI pin 一致性**（`scripts/check_workflows.py` + `supplychain/ci-pins.json`）：`uses:` 引用必须与登记一致。
+    - **发布 manifest**（`scripts/release_manifest.py`）：哈希 lock/源码/SBOM/基础镜像 pin，`--verify` 重算比对防篡改。
+  - 设计：`docs/adr/0010-supply-chain.md`。
+
+- **Phase 41.3 审计证据外部锚定（SEC-005）**（2026-08-20）：
+  - 高危安全/权限/DSR/策略变更与审计证据**同事务持久化**（`app/db/audit.py::audit_high_risk` + migration 31 `audit_anchors`）。
+  - 12 类 `HIGH_RISK_EVENT_TYPES`（`api_key.*`、`data_subject_request.*`、`member.*`、`retention.policy_updated`、`sla_policy.set`、`webhook.*`）由 audit wrapper 强制走该路径，失败整体回滚并 fail-closed 503（`code="audit_unavailable"`）。
+  - 链头 `{last_seq, last_hash, timestamp, environment}` 经 Ed25519 KMS 签名导出 WORM 锚点（`app/worm_store.py::DiskWormStore`），kid 白名单轮换。
+  - `scripts/verify_audit_chain.py` 一次校验本地全链 + DB frontier anchors + WORM claims 三证据。
+  - 设计：`docs/adr/0011-audit-external-anchoring.md`。测试：8 passed。
+
+- **Phase 41.4 数据保护与隐私运营**（2026-08-20）：
+  - 数据分类：migration 32 `data_field_registry` + `app/redaction.py` `FIELD_REGISTRY`（public/internal/confidential/restricted）。
+  - Secret、token、受限 PII 在日志/trace/diagnostics 中使用统一结构化 redaction（`app/redaction.py` 双通道 redaction）。
+  - DSR 队列：migration 32 `deferred_deletion_jobs` + `customer_tombstones`，增加 SLA、审批看板、导出 checksum、删除证明和失败重试。
+  - 备份恢复后继续执行 tombstone（`enforce_tombstones_after_restore`），防止已删除客户数据从旧备份重新出现。
+  - 测试：`tests/test_privacy.py::RedactionCanaryTests`。
+
+- **Phase 41.5 AI 安全评测 Gate v1（AI-001）**（2026-08-20）：
+  - 对抗集 `golden/adversarial.json` 24 例，9 类威胁：直接/间接提示注入、系统提示探测、跨租户检索、工具参数注入、PII/secret 外泄、恶意附件文本、多语言变体。
+  - 独立 schema 校验 `scripts/adversarial_schema.py`（ADR-014 决策 1 扩展 expect 契约：`requires_human`、精确 `citation`、`redaction`、`canary`、`tool_calls`、`canary_assert`）。
+  - 运行器 `scripts/evaluate_adversarial.py` 经真实 HTTP 路径执行（demo+acme 双租户、临时 DB、知识/附件/canary 种子通道），报告写入 WORM store（`app/eval_reports.py`）。
+  - 高风险工具 gateway 再授权（`app/tools.py`：跨租户 owner_tenant_id 与非规范化资源 id 一律拒绝；`OrderAgent` 对粘连换行/分隔符/SQL 片段的订单号走网关拒绝路径）。
+  - `app/agents.py` PolicyAgent 新增系统提示探测（en/zh/fr/ja）、角色扮演与多语言注入模式；`app/orchestrator.py` 对检索内容复检策略并将内容风险类别并入 turn metadata（间接注入可追溯）。
+  - 晋级阈值：安全集 100%，核心 golden 100%，质量指标不低于当前 active，P95/成本在租户预算内；否则自动阻断 canary 提升（`decide_promotion` 五条件门禁 + WORM 晋级记录）。
+  - CI 新增 `ai-eval` job（schema 门禁、对抗集 gate、golden 回归、gate 测试、报告上传）。
+  - 测试：`tests/test_eval_reports.py`（WORM 一次性写入/篡改检测/五条件晋级）、`tests/test_adversarial_eval.py`（schema、探测模式、工具参数注入拒绝、间接注入可追溯、24/24 gate、golden 27/27）。
+
+- **Phase 41.6 深模块拆分第一步（ARC-001）**（2026-08-20）：
+  - **后端 orchestrator 三深模块**：
+    - `app/turn_policy.py` (293 行)：语言检测、客户消息持久化+审计、policy inspect、budget/model guards、triage 决策；`ingest()` 返回 `TurnPolicyResult`。
+    - `app/turn_execution.py` (210 行)：按决策路由 specialist、检索内容 policy 复检（间接注入，ADR-014）、quality gate、`quality.reviewed` + `tool.executed` audit。
+    - `app/turn_persist.py` (382 行)：routing-state 转移（含 SLA deadline）、auto-assign、assistant 消息持久化（含翻译）、quality aggregate、telemetry、webhook dispatch。
+    - `app/turn_services.py` (50 行)：`TurnServices` Protocol——orchestrator 即 composition root，三 stage 只读其服务子集，import 图无环。
+    - `app/orchestrator.py`：1,504 → 930 行（**-38.2%**），薄协调器三段式（policy.ingest → execution.execute → persist.finalize）+ segment 计时。
+  - **前端 app.js 六深模块**：
+    - `js/composer.js` (≤400 行)：草稿、claim 续租、宏候选、canned responses、copilot 全套。
+    - `js/session.js` (≤400 行)：mentions 面板、watch 生命周期、canReadConversations。
+    - `js/admin-report.js` (≤400 行)：报表订阅/CSV 导出/Webhook 选项、SLA 策略、路由规则。
+    - `js/ticket-view.js` (≤400 行)：工单列表/详情/流转/会话关联。
+    - `js/quality-panel.js` (≤400 行)：质检面板/图表、反馈转知识草稿、CSAT 汇总。
+    - `js/attachment.js` (≤400 行)：待传附件/元数据/名称加载/状态栏。
+    - `app.js`：4,820 行 / 189 KB → 3,534 行 / 140 KB（行 -26.7%、字节 -26.0%）。
+  - **迁移注册表拆分**：从单一大文件拆为按版本模块（`app/migrations/v01`–`v32`），保持有序注册入口与连续性 gate。
+  - 验收：行为快照、API、golden、浏览器和迁移链不变；orchestrator -38%，app.js -27%，循环依赖为零。浏览器验收 12/14 套件通过（覆盖全部 6 个抽取模块）。
+
+- **Phase 41.7 安全治理自动化（SEC-008）**（2026-08-20）：
+  - 每发布 delta 台账 `supplychain/threat-model-deltas.json`（schema_version 1）：含 release/date/owner/approved_by/controls/verification_evidence。
+  - 季度演练台账 `supplychain/security-drills.json`（四类 drill_type：report_intake/dependency_vuln/key_compromise/cross_tenant_alarm），含 started_at/owner/scenario/duration_minutes。
+  - `scripts/threat_model_gate.py`：缺失字段/空列表/placeholder（`security@helix.example`、`example.com`、`tbd`/`todo`/`待定`/`占位`、`<...>`、空串）/未来日期/演练过期全红灯；exit 0/1/2 与既有 gate 同构。
+  - CI nil-tolerant：无 `--release`/`--check-today` 时空登记册不误报，发布时刻/受控环境强制执行。
+  - 设计：`docs/adr/0012-security-governance.md`。测试：14 passed（5 subtests）。
+
+### Changed
+
+- 安全成熟度从 4.5 提升至 4.8（凭据生命周期 + AI 安全评测 + 审计锚定）
+- 交付工程成熟度从 4.5 提升至 4.8（五道供应链 gate + 威胁模型自动化 + 发布 manifest）
+- 智能质量成熟度从 3.8 提升至 4.0（对抗集 24 例 + 晋级 gate）
+- 新增可维护性维度 3.5（orchestrator -38% + app.js -27%）
+- 总评从 4.2 提升至 4.5
+- 后端测试从 757+ 增至 889+（新增 Phase 41 测试 132+）
+- 对抗集与晋级 gate 进入 CI（`ai-eval` job）
+
+### Fixed
+
+- orchestrator 拆分修复：还原 `quality.reviewed`/`tool.executed` audit，对齐 `WebhookService.emit_event` 真实签名（旧版误调 `dispatch`）
+- migration 拆分修复：链验证 `[]` 问题
+
 ## 1.3.0 — 商用级可信：安全、可靠性、运维 (2026-09-03)
 
 Phase 28-30（通过 M0/Phase 40-41 实现）完成，标志着 Helix Support 从"企业级平台"升级为**通过外部安全评审不需临时补救的商用成熟平台**。本版本闭环了 M0 停止线四项关键安全风险（SEC-001/002、REL-001、SEC-007），实现了统一凭据生命周期、供应链五道 gate、审计外部锚定、安全治理自动化，完善了 SLO/runbook/灾备/用户文档体系。
