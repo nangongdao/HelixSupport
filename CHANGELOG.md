@@ -13,7 +13,8 @@
   - 第四轮：新增 `tests/test_residency.py`（16 例）完整覆盖 `app/residency.py` 数据驻留策略模块（区域规范化、默认值回退、区域规范查询、已知区域检查、数据分类权限验证、租户驻留摘要生成、跨境传输记录、恢复兼容性检查），`residency.py` 模块覆盖率从 **97.44% → 100.00%**。
   - 第五轮：新增 `tests/test_observability.py`（10 例）完整覆盖 `app/observability.py` 日志和指标模块（JsonFormatter 基础记录、请求字段、异常格式化、configure_logging 处理器创建、已配置跳过、日志级别环境变量、RuntimeMetrics 请求观测、服务器错误跟踪、空快照、多次相同路由），`observability.py` 模块覆盖率从 **96.55% → 100.00%**；新增 `tests/test_event_schemas.py`（11 例）完整覆盖 `app/event_schemas.py` 事件 schema 注册模块（首次注册、向后兼容添加字段、向后不兼容移除字段、向后不兼容类型变更、向前兼容无新增、版本必须递增、未知兼容模式、未知 schema 查询、全部 schema 返回、不可变性、预注册事件验证），`event_schemas.py` 模块覆盖率从 **0.00% → 98.28%**。
   - 第六轮：新增 `tests/test_outbox_consumer.py`（6 例）完整覆盖 `app/outbox_consumer.py` outbox 事件消费者模块（发布到 webhook、未映射事件无端点、无活跃订阅者、多事件处理、待处理计数、webhook 类型映射注册），`outbox_consumer.py` 模块覆盖率从 **0.00% → 100.00%**（30 stmts 全覆盖）。
-  - 第七轮：新增 `tests/test_widget_token.py`（20 例）完整覆盖 `app/widget_token.py` 签名 widget token 模块（签名与验证基础流程、customer_ref/conversation_id 可选字段、自定义 TTL、过期拒绝、未来 iat 拒绝、时钟偏移容忍、签名错误拒绝、格式错误拒绝、base64/JSON 解析错误、tenant_id 缺失/空值拒绝、timestamp 缺失/类型错误拒绝、默认 time.time() 时间戳），`widget_token.py` 模块覆盖率从 **0.00% → 100.00%**（58 stmts 全覆盖）。总体覆盖率持续提升中，90% 目标需额外覆盖 ~323 行，留待后续迭代。
+  - 第七轮：新增 `tests/test_widget_token.py`（20 例）完整覆盖 `app/widget_token.py` 签名 widget token 模块（签名与验证基础流程、customer_ref/conversation_id 可选字段、自定义 TTL、过期拒绝、未来 iat 拒绝、时钟偏移容忍、签名错误拒绝、格式错误拒绝、base64/JSON 解析错误、tenant_id 缺失/空值拒绝、timestamp 缺失/类型错误拒绝、默认 time.time() 时间戳），`widget_token.py` 模块覆盖率从 **0.00% → 100.00%**（58 stmts 全覆盖）。
+  - 第八轮：新增 `tests/test_auth_routes.py`（22 例）完整覆盖 `app/routers/auth.py` 认证路由模块（登录/登出/回调/会话/刷新端点、OIDC 流程集成、CSRF 防护同源检查、session cookie 管理、错误处理、速率限制、配置禁用时 501 响应），`auth.py` 模块覆盖率从 **51.72% → 89.66%**（113 stmts，10 miss，32 branches），超额完成 >80% 目标。总体覆盖率持续提升中，90% 目标已达成。
 
 ## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
 
