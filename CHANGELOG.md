@@ -6,6 +6,13 @@
 
 ### Added
 
+- **Phase 19 智能质量与集成成熟**（2026-09-03）：
+  - **19.1 提示词/模型注册表**：新增 `prompt_versions` 表（迁移 v06），支持多版本管理（draft/active/canary/retired 状态）。`app/prompts.py` 的 `PromptRegistry` 类提供完整生命周期 API：`create_version()`、`activate()`、`set_canary()`、`clear_canary()`、`rollback()`。Admin API 端点：`GET/POST /api/prompts`、`POST /api/prompts/{version_id}/action`（权限：`admin:manage`）。全部操作记录审计事件（`prompt_version.created/activated/canary/canary_cleared/rollback/resolved`）。
+  - **19.2 Canary 对照部署**：配置 `PROMPT_CANARY_RATIO` (0.0-1.0) 控制流量分配。`PromptRegistry.canary_bucket()` 基于 SHA-256 哈希稳定分桶，同一会话 ID 始终路由到相同版本（canary 或 active）。`turn_policy.py` 每次 turn 解析版本并记录 `prompt_version.resolved` 审计事件。助手消息元数据包含 `prompt_channel`/`prompt_version_id`/`prompt_version`。遥测计数器 `turn.processed` 按 `prompt_channel` 维度标记。测试覆盖：`tests/test_prompt_canary.py`（15 例，包含分桶确定性、ratio 边界、租户优先级、端到端验证）。
+  - **19.3 Golden Set 扩展**：从 6 例扩展至 **27 例**（超出 ≥25 目标）。覆盖维度：知识检索（中英文、CJK 长查询）11 例、订单工具（身份验证、跨客户隔离、不存在订单）6 例、敏感升级（退款投诉、支付卡号检测）5 例、提示注入防护（角色扮演、忽略指令、系统提示泄露）3 例、多轮上下文（连续查询、升级后抑制）3 例、边界场景（无知识匹配、订单号缺失）2 例。测试文件：`golden/set.json`，门禁测试：`tests/test_golden_set.py`（100% 通过）。
+  - **19.4 租户模型策略与预算**：迁移 v07 新增 `tenants.allowed_models_json`/`daily_turn_budget` 字段和 `tenant_usage_daily` 表。`app/db/tenancy.py` 提供策略 CRUD 和用例计数 API。`turn_policy.py` 实现预算检查（`_check_budget()`）和模型允许列表检查（`_model_allowed()`），超限时 `allow_model=False` 触发确定性降级并审计 `turn.budget_exceeded`/`turn.model_denied`。Admin API：`GET/PUT /api/admin/tenants/{tenant_id}/model-policy`（跨租户访问保护，403 拒绝）。Schema：`TenantModelPolicyRequest`/`TenantModelPolicyOut`。测试覆盖：`tests/test_tenant_model_policy.py`（16 例，包含 DB 层、编排层降级、API 端到端、跨租户拒绝）。
+  - **完成报告**：`docs/PHASE_19_COMPLETION.md` 记录全部实现细节、测试结果、验收门槛检查、成熟度评分变化（智能质量维度 2.5 → 3.8）。Phase 19.5（流式取消、供应商故障切换）未实现，建议并入 Phase 20 统一设计。
+
 - **桌面应用快捷键系统**（2026-09-03）：
   - 桌面应用已具备完整的全局快捷键支持，通过 `app/static/js/shortcuts.js` 模块实现。单键快捷键包括：`/` 聚焦搜索框、`c` 新建会话、`r` 刷新队列、`i` 切换检查器面板、`l` 切换低配模式、`j/k` 上下导航队列行。所有快捷键尊重用户输入上下文（在表单控件中自动禁用）且不与浏览器原生快捷键冲突（保留 Ctrl/Cmd/Alt 修饰键组合如 Ctrl+K 命令面板）。
   - 菜单栏快捷键：`CommandOrControl+Q` 退出应用（跨平台，Windows 为 Ctrl+Q，macOS 为 Cmd+Q）。未来可扩展更多菜单快捷键（如 CommandOrControl+W 关闭窗口、CommandOrControl+M 最小化等）。
