@@ -83,9 +83,8 @@ class SettingsValidationTests(unittest.TestCase):
             os.environ,
             _env(DEPLOYMENT_PROFILE="multi", DATABASE_BACKEND="sqlite"),
             clear=False,
-        ):
-            with self.assertRaisesRegex(ValueError, "multi requires DATABASE_BACKEND"):
-                Settings.from_env()
+        ), self.assertRaisesRegex(ValueError, "multi requires DATABASE_BACKEND"):
+            Settings.from_env()
 
     def test_rejects_multi_with_redis_fallback_mode(self) -> None:
         with mock.patch.dict(
@@ -97,9 +96,8 @@ class SettingsValidationTests(unittest.TestCase):
                 QUEUE_FAILURE_MODE="fallback",
             ),
             clear=False,
-        ):
-            with self.assertRaisesRegex(ValueError, "multi requires QUEUE_FAILURE_MODE"):
-                Settings.from_env()
+        ), self.assertRaisesRegex(ValueError, "multi requires QUEUE_FAILURE_MODE"):
+            Settings.from_env()
 
     def test_rejects_bad_anchor_cadence(self) -> None:
         self._assert_rejects("AUDIT_ANCHOR_CADENCE_HOURS", "0", "AUDIT_ANCHOR_CADENCE_HOURS")
@@ -134,9 +132,8 @@ class SettingsValidationTests(unittest.TestCase):
     def test_rejects_postgres_without_url(self) -> None:
         with mock.patch.dict(
             os.environ, _env(DATABASE_BACKEND="postgresql", DATABASE_URL=""), clear=False
-        ):
-            with self.assertRaisesRegex(ValueError, "DATABASE_URL is required"):
-                Settings.from_env()
+        ), self.assertRaisesRegex(ValueError, "DATABASE_URL is required"):
+            Settings.from_env()
 
     def test_rejects_rls_without_postgres(self) -> None:
         self._assert_rejects("DATABASE_RLS_ENABLED", "1", "DATABASE_RLS_ENABLED")
@@ -203,9 +200,8 @@ class SettingsValidationTests(unittest.TestCase):
             os.environ,
             _env(CHANNEL_WEBHOOKS_FILE="/nonexistent/path.json"),
             clear=False,
-        ):
-            with self.assertRaises((ValueError, FileNotFoundError)):
-                Settings.from_env()
+        ), self.assertRaises((ValueError, FileNotFoundError)):
+            Settings.from_env()
 
     def test_rejects_production_without_api_keys(self) -> None:
         with mock.patch.dict(
@@ -219,9 +215,8 @@ class SettingsValidationTests(unittest.TestCase):
                 "API_KEYS_JSON": "{}",
             },
             clear=False,
-        ):
-            with self.assertRaisesRegex(ValueError, "API keys must configure"):
-                Settings.from_env()
+        ), self.assertRaisesRegex(ValueError, "API keys must configure"):
+            Settings.from_env()
 
 
 if __name__ == "__main__":

@@ -30,14 +30,14 @@ def _settings(db_path: Path, **overrides: Any) -> Settings:
         ADMIN_KEY: {"tenant_id": "demo", "actor_id": "admin", "role": "admin"},
         VIEWER_KEY: {"tenant_id": "demo", "actor_id": "viewer", "role": "viewer"},
     }
-    defaults: dict[str, Any] = dict(
-        database_path=db_path,
-        auth_mode="api_key",
-        api_keys_json=json.dumps(principals),
-        rate_limit_per_minute=10000,
-        docs_enabled=False,
-        turn_worker_enabled=False,
-    )
+    defaults: dict[str, Any] = {
+        "database_path": db_path,
+        "auth_mode": "api_key",
+        "api_keys_json": json.dumps(principals),
+        "rate_limit_per_minute": 10000,
+        "docs_enabled": False,
+        "turn_worker_enabled": False,
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 

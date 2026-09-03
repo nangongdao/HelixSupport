@@ -28,10 +28,11 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 
 from app.connectors import (
     CRMConnector,
@@ -303,7 +304,7 @@ class ResilientKnowledgeConnector:
             tenant_id,
             self.connector_name,
             self.config,
-            fallback=lambda: [],
+            fallback=list,
         )
 
 

@@ -26,7 +26,7 @@ from playwright.sync_api import Page, expect, sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8766").rstrip("/")
 WIDGET_SECRET = os.getenv("WIDGET_SECRET", "helix-widget-dev-secret")

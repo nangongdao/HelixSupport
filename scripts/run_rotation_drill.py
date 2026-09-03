@@ -33,12 +33,11 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.config import Settings  # noqa: E402
-from app.credentials import key_ref_for  # noqa: E402
-from app.db._util import utc_now  # noqa: E402
-from app.main import create_app  # noqa: E402
+from app.config import Settings
+from app.credentials import key_ref_for
+from app.db._util import utc_now
+from app.main import create_app
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -181,7 +180,7 @@ class RotationDrill(unittest.TestCase):
 def _record(out_path: Path, passed: bool, details: str) -> None:
     import datetime as dt
 
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now = dt.datetime.now(dt.UTC).isoformat()
     if out_path.exists():
         ledger = json.loads(out_path.read_text(encoding="utf-8"))
     else:

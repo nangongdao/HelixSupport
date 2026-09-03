@@ -100,7 +100,7 @@ class ScannerHardeningTests(unittest.TestCase):
 
         wrapped = TimeoutMalwareScanner(SlowEngine(), timeout_seconds=0.1)
         started = time.monotonic()
-        clean, verdict = wrapped.scan(b"data", "a.txt", "text/plain")
+        clean, _verdict = wrapped.scan(b"data", "a.txt", "text/plain")
         self.assertFalse(clean, "timeout must never pass as clean")
         self.assertLess(time.monotonic() - started, 0.9)
 

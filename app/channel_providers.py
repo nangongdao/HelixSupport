@@ -25,8 +25,9 @@ import hashlib
 import hmac
 import json
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol
+from typing import Protocol
 
 from app.channel_webhooks import ChannelWebhookAuthError
 

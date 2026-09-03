@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.migrations import migration
-from app.migrations import _ensure_column
-from app.migrations import _create_seq_trigger_if_table_exists
+from app.migrations import _create_seq_trigger_if_table_exists, _ensure_column, migration
 
 
 @migration(4, "first response timestamp and monotonic seq")

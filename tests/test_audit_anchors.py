@@ -33,7 +33,7 @@ def _signer(salt: str = "") -> Ed25519KmsSigner:
     # exact expected kid without a key-material round-trip.
     import hashlib
 
-    seed_digest = hashlib.sha256(f"phase41.3-seed{salt}".encode("utf-8")).digest()
+    seed_digest = hashlib.sha256(f"phase41.3-seed{salt}".encode()).digest()
     return Ed25519KmsSigner(private_key=seed_digest)
 
 

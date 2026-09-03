@@ -9,9 +9,8 @@ both paths).
 
 from __future__ import annotations
 
-import unittest
-
 import ipaddress
+import unittest
 
 from app.webhook_safety import _is_blocked_ip, assert_public_webhook_url
 
@@ -79,7 +78,7 @@ class WebhookUrlSafetyTests(unittest.TestCase):
     def test_default_resolver_oserror_becomes_value_error(self) -> None:
         # The default resolver translates DNS failure into the ValueError the
         # registration API surfaces to callers.
-        import unittest.mock as mock
+        from unittest import mock
 
         with mock.patch("app.webhook_safety.socket.getaddrinfo", side_effect=OSError("NXDOMAIN")):
             with self.assertRaisesRegex(ValueError, "could not be resolved"):

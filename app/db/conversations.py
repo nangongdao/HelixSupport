@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import json
 import sqlite3
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import uuid4
 
 from app.db._util import (

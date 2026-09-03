@@ -34,4 +34,3 @@ def migration_30(connection: sqlite3.Connection) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_registry_type_ref
                 ON credential_registry(type, key_ref);
             """)
-    return

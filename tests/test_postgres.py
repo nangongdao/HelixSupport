@@ -30,8 +30,8 @@ from unittest.mock import patch
 from app.domain import ConversationStatus
 from app.pg_compat import (
     COMPAT_FUNCTIONS,
-    install_csat_summary_index,
     install_compatibility,
+    install_csat_summary_index,
     install_functions,
     install_ordering_columns,
     install_triggers,
@@ -242,7 +242,7 @@ class BackendParityTests(unittest.TestCase):
 class FakeCursor:
     """Minimal DB-API cursor recording the statements it is given."""
 
-    def __init__(self, connection: "FakeConnection") -> None:
+    def __init__(self, connection: FakeConnection) -> None:
         self._connection = connection
         self.description = None
         self.rowcount = -1

@@ -9,10 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-import sys  # noqa: E402 — sys.path bootstrap before scripts._console import
+import sys
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 BAK = ROOT / "app" / "main.py.bak"
 MAIN = ROOT / "app" / "main.py"

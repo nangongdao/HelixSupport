@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false, reportCallIssue=false, reportOptionalSubscript=false
-
 import argparse
 import sys
 import tomllib
@@ -23,7 +22,7 @@ from packaging.requirements import Requirement
 ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 
 def _locked_requirements(lock_path: Path) -> list[tuple[str, str]]:
@@ -51,10 +50,10 @@ def generate(
     lock_path: Path = ROOT / "requirements.lock",
 ) -> None:
     try:
-        from cyclonedx.output import make_outputter
-        from cyclonedx.schema import OutputFormat, SchemaVersion
         from cyclonedx.model.bom import Bom
         from cyclonedx.model.component import Component, ComponentType
+        from cyclonedx.output import make_outputter
+        from cyclonedx.schema import OutputFormat, SchemaVersion
     except ImportError as exc:  # pragma: no cover
         print(
             "cyclonedx-python-lib is not installed; run: pip install cyclonedx-python-lib",

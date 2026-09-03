@@ -31,7 +31,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from app.connectors_http import HttpCRMConnector, HttpConnectorConfig, HttpOrderConnector
+from app.connectors_http import HttpConnectorConfig, HttpCRMConnector, HttpOrderConnector
 from app.connectors_runtime import (
     CircuitBreaker,
     CircuitBreakerConfig,
@@ -357,8 +357,8 @@ class WebhookAuditTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self.service.check_sla_breaches(), 1)
         # Resolve, reopen with a fresh SLA window, breach again.
-        from app.orchestrator import ConversationOrchestrator
         from app.config import Settings
+        from app.orchestrator import ConversationOrchestrator
 
         orchestrator = ConversationOrchestrator(
             self.database, Settings(database_path=self.db_path, auth_mode="demo")
@@ -483,8 +483,8 @@ class AllowedModelsEnforcementTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_model_ref_outside_allowlist_denied(self) -> None:
-        from app.orchestrator import ConversationOrchestrator
         from app.config import Settings
+        from app.orchestrator import ConversationOrchestrator
 
         self.database.set_tenant_model_policy("demo", ["allowed-model"], None)
         registry = PromptRegistry(self.database)
@@ -510,8 +510,8 @@ class AllowedModelsEnforcementTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
 
     def test_model_ref_in_allowlist_not_denied(self) -> None:
-        from app.orchestrator import ConversationOrchestrator
         from app.config import Settings
+        from app.orchestrator import ConversationOrchestrator
 
         self.database.set_tenant_model_policy("demo", ["allowed-model"], None)
         registry = PromptRegistry(self.database)

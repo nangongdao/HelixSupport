@@ -17,7 +17,6 @@ from app.connectors_runtime import (
     TransientConnectorError,
 )
 
-
 _CONFIG = CircuitBreakerConfig(
     failure_threshold=3,
     recovery_timeout_seconds=60.0,

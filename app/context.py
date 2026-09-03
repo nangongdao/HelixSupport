@@ -32,9 +32,9 @@ Scope modes
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Iterator
 
 logger = logging.getLogger("helix")
 

@@ -9,7 +9,6 @@ from uuid import uuid4
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect, sync_playwright
 
-
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts"
 

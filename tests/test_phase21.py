@@ -648,7 +648,7 @@ class QualityGateOrderNoNumberTests(unittest.TestCase):
     """
 
     def test_order_response_without_orders_lookup_is_flagged(self) -> None:
-        from app.agents import AgentResult, AgentName, QualityAgent
+        from app.agents import AgentName, AgentResult, QualityAgent
 
         result = AgentResult(
             agent=AgentName.ORDER,
@@ -670,7 +670,7 @@ class QualityGateOrderNoNumberTests(unittest.TestCase):
 
     def test_crm_unavailable_handoff_still_approved(self) -> None:
         """A CRM-unavailable handoff already requires human and must pass the gate."""
-        from app.agents import AgentResult, AgentName, QualityAgent
+        from app.agents import AgentName, AgentResult, QualityAgent
 
         result = AgentResult(
             agent=AgentName.ORDER,

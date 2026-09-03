@@ -72,7 +72,7 @@ class TenantPolicy:
         }
 
     @classmethod
-    def from_canonical(cls, raw: dict[str, Any]) -> "TenantPolicy":
+    def from_canonical(cls, raw: dict[str, Any]) -> TenantPolicy:
         return cls(
             plan=str(raw.get("plan") or "standard"),
             region=str(raw.get("region") or "local"),
@@ -82,7 +82,7 @@ class TenantPolicy:
             credential_reference=raw.get("credential_reference"),
         )
 
-    def differs_in_high_risk_fields(self, other: "TenantPolicy") -> bool:
+    def differs_in_high_risk_fields(self, other: TenantPolicy) -> bool:
         return any(self.canonical()[name] != other.canonical()[name] for name in _HIGH_RISK_FIELDS)
 
 
@@ -123,7 +123,7 @@ class ConfigSnapshot:
         }
 
     @classmethod
-    def from_row(cls, row: Any) -> "ConfigSnapshot":
+    def from_row(cls, row: Any) -> ConfigSnapshot:
         return cls(
             tenant_id=str(row["tenant_id"]),
             version=int(row["version"]),

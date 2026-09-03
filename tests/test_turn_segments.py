@@ -24,7 +24,8 @@ from pathlib import Path
 from app.config import Settings
 from app.database import Database
 from app.orchestrator import ConversationOrchestrator
-from app.telemetry import TelemetryMetrics, metrics as telemetry_metrics
+from app.telemetry import TelemetryMetrics
+from app.telemetry import metrics as telemetry_metrics
 
 
 class TurnSegmentProfilingTests(unittest.TestCase):

@@ -26,9 +26,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.residency import summarize_tenant_residency  # noqa: E402
+from app.residency import summarize_tenant_residency
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +106,8 @@ def backup_database(
         import gzip
 
         compressed_path = backup_path.with_suffix(".db.gz")
-        with open(backup_path, "rb") as f_in:
-            with gzip.open(compressed_path, "wb") as f_out:
-                f_out.writelines(f_in)
+        with open(backup_path, "rb") as f_in, gzip.open(compressed_path, "wb") as f_out:
+            f_out.writelines(f_in)
         backup_path.unlink()
         backup_path = compressed_path
         manifest["backup_file"] = backup_path.name

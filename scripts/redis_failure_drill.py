@@ -45,13 +45,11 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-
-from app.config import Settings  # noqa: E402
-from app.database import Database  # noqa: E402
-from app.main import create_app  # noqa: E402
-from app.queue import QueueUnavailableError, RedisTaskQueue  # noqa: E402
+from app.config import Settings
+from app.database import Database
+from app.main import create_app
+from app.queue import QueueUnavailableError, RedisTaskQueue
+from scripts._console import use_utf8_console
 
 QUEUE_KEYS = (
     "helix:q:dispatch",
@@ -341,7 +339,7 @@ class RecoveryTests(unittest.TestCase):
 
 
 def main() -> int:
-    import unittest  # noqa: F811  # local import keeps argparse help import-light
+    import unittest  # local import keeps argparse help import-light
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

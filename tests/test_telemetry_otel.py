@@ -31,10 +31,10 @@ def _otel_importable() -> bool:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: F401
             OTLPSpanExporter,
         )
+        from opentelemetry.sdk.trace import TracerProvider  # noqa: F401
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: F401
             InMemorySpanExporter,
         )
-        from opentelemetry.sdk.trace import TracerProvider  # noqa: F401
 
         return True
     except Exception:
@@ -46,8 +46,9 @@ class OpenTelemetryEndToEndTests(unittest.TestCase):
     ADMIN_KEY = "otel-admin-key-0001"
 
     def setUp(self) -> None:
-        import app.telemetry as telemetry
         from opentelemetry import trace as otel_trace
+
+        from app import telemetry
 
         self._telemetry = telemetry
         self._otel_trace = otel_trace
@@ -153,10 +154,9 @@ class OpenTelemetryEndToEndTests(unittest.TestCase):
         exporter = self._route_spans_to_memory()
         from app.telemetry import span
 
-        with span("parent", service="helix") as parent:
-            with span("child", depth=1) as child:
-                child.set_attribute("after_start", "forwarded")
-                parent.add_event("note", {"k": "v"})
+        with span("parent", service="helix") as parent, span("child", depth=1) as child:
+            child.set_attribute("after_start", "forwarded")
+            parent.add_event("note", {"k": "v"})
 
         finished = exporter.get_finished_spans()
         by_name = {s.name: s for s in finished}

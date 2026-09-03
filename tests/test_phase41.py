@@ -48,11 +48,11 @@ def _settings(db_path: Path, **overrides: Any) -> Settings:
         ADMIN_KEY: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"},
         OPERATOR_KEY: {"tenant_id": "demo", "actor_id": "op.user", "role": "operator"},
     }
-    defaults: dict[str, Any] = dict(
-        database_path=db_path,
-        auth_mode="api_key",
-        api_keys_json=json.dumps(principals),
-        channel_webhooks_json=json.dumps(
+    defaults: dict[str, Any] = {
+        "database_path": db_path,
+        "auth_mode": "api_key",
+        "api_keys_json": json.dumps(principals),
+        "channel_webhooks_json": json.dumps(
             {
                 "support-main": {
                     "tenant_id": "demo",
@@ -66,10 +66,10 @@ def _settings(db_path: Path, **overrides: Any) -> Settings:
                 },
             }
         ),
-        rate_limit_per_minute=10000,
-        docs_enabled=False,
-        turn_worker_enabled=False,
-    )
+        "rate_limit_per_minute": 10000,
+        "docs_enabled": False,
+        "turn_worker_enabled": False,
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 

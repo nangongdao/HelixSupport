@@ -44,8 +44,8 @@ def _settings() -> Settings:
 def _report(pass_rate: float = 1.0, **overrides: float) -> dict[str, object]:
     report: dict[str, object] = {
         "total": 10,
-        "passed": int(round(10 * pass_rate)),
-        "failed": int(round(10 * (1 - pass_rate))),
+        "passed": round(10 * pass_rate),
+        "failed": round(10 * (1 - pass_rate)),
         "pass_rate": pass_rate,
         "mean_confidence": 0.9,
         "citation_coverage": 0.8,

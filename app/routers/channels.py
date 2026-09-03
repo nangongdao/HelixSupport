@@ -19,7 +19,6 @@ from app.main import AppServices, _conversation_quota_exceeded
 from app.orchestrator import IdempotencyConflictError, InvalidTransitionError
 from app.schemas import ChannelWebhookAccepted, ChannelWebhookMessageRequest
 
-
 router = APIRouter(prefix="/api/channels", tags=["channels"])
 MAX_WEBHOOK_BODY_BYTES = 16 * 1024
 

@@ -112,7 +112,7 @@ def main() -> int:
     passed = not failures
     ledger.setdefault("game_days", []).append(
         {
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "focus": args.focus,
             "passed": passed,
             "exercises": exercises,

@@ -15,7 +15,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
@@ -76,7 +76,7 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def _note(
-        self, conversation_id: str, content: str, headers, reply_to: Optional[str] = None
+        self, conversation_id: str, content: str, headers, reply_to: str | None = None
     ) -> Any:
         payload: dict[str, Any] = {"content": content}
         if reply_to:
@@ -260,7 +260,7 @@ class CollaborationTests(unittest.TestCase):
     def test_live_event_stream_emits_changed_event(self) -> None:
         conversation_id = self._open("watch2")
         self._accept(conversation_id)
-        collected: dict[str, Optional[str]] = {"revision": None}
+        collected: dict[str, str | None] = {"revision": None}
         with self.client.stream(
             "GET",
             f"/api/conversations/{conversation_id}/events?timeout=7",
@@ -324,7 +324,7 @@ class CollaborationTests(unittest.TestCase):
     def _drain_sse_until(
         response,
         event_name: str,
-        collected: dict[str, Optional[str]],
+        collected: dict[str, str | None],
         attempts: int = 50,
     ) -> list[str]:
         """Read SSE lines until the named event's ``data:`` line is parsed."""

@@ -44,15 +44,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim  # noqa: E402
-from app.attachments import AttachmentService  # noqa: E402
-from app.config import Settings  # noqa: E402
-from app.database import Database  # noqa: E402
-from app.privacy import DataProtectionService  # noqa: E402
-from app.retention import RetentionService  # noqa: E402
-from app.worm_store import DiskWormStore  # noqa: E402
+from app.attachments import AttachmentService
+from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
+from app.config import Settings
+from app.database import Database
+from app.privacy import DataProtectionService
+from app.retention import RetentionService
+from app.worm_store import DiskWormStore
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -368,7 +367,7 @@ def main() -> int:
     ledger.setdefault("drills", []).append(
         {
             "drill_type": "pitr_restore",
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "passed": passed,
             "rto_seconds": round(rto_seconds, 3) if rto_seconds >= 0 else None,
             "rto_budget_seconds": args.rto_budget_seconds,

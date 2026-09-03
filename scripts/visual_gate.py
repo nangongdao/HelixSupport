@@ -40,11 +40,11 @@ _DESCRIPTION = (__doc__ or "visual regression gate").strip().splitlines()[0]
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
+from PIL import Image
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page, sync_playwright
 
-from PIL import Image  # noqa: E402
-from playwright.sync_api import Error as PlaywrightError  # noqa: E402
-from playwright.sync_api import Page, sync_playwright  # noqa: E402
+from scripts._console import use_utf8_console
 
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
 WIDGET_SECRET = os.getenv("WIDGET_SECRET", "helix-widget-dev-secret")
@@ -122,8 +122,8 @@ def compare(name: str, current: Image.Image, update: bool = False) -> tuple[bool
         return (
             False,
             1.0,
-            f"{name}: geometry changed {baseline.size}->{current.size}; "
-            f"capture at {_drift_path(name)}. Re-run with --update if intended",
+            (f"{name}: geometry changed {baseline.size}->{current.size}; "
+            f"capture at {_drift_path(name)}. Re-run with --update if intended"),
         )
     diff_pixels = 0
     total_pixels = baseline.size[0] * baseline.size[1]

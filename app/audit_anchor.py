@@ -84,7 +84,7 @@ class Ed25519KmsSigner:
     signature_scheme: str = DEFAULT_SIGNATURE_SCHEME
 
     @classmethod
-    def generate(cls) -> "Ed25519KmsSigner":
+    def generate(cls) -> Ed25519KmsSigner:
         return cls(
             private_key=ed25519.Ed25519PrivateKey.generate().private_bytes(
                 encoding=serialization.Encoding.Raw,

@@ -23,4 +23,3 @@ def migration_28(connection: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_auth_transactions_state
                 ON auth_transactions(state);
             """)
-    return

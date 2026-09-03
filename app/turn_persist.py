@@ -11,10 +11,11 @@ module's internals.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from app.agents import AgentResult

@@ -45,7 +45,7 @@ logger = logging.getLogger("helix")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 DEFAULT_PIN = ROOT / "supplychain" / "base-image-pin.json"
 DEFAULT_MANIFEST = ROOT / "artifacts" / "release-manifest.json"

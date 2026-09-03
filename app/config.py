@@ -249,7 +249,7 @@ class Settings:
     drift_max_tool_denials: int | None = 50
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         origins = tuple(
             origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()
         )

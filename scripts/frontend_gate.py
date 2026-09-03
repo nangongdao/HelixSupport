@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 # Same bootstrap as the other repo-root importers (visual_gate, readme_screenshots,
 # run_rls_drill, …). Without it a direct `python scripts/frontend_gate.py` — the
@@ -43,7 +43,7 @@ from scripts._console import use_utf8_console  # noqa: E402
 # package happens to be installed editable, which only CI does.
 sys.path.insert(0, str(ROOT))
 
-from app.assets import STATIC_ASSET_VERSION  # noqa: E402
+from app.assets import STATIC_ASSET_VERSION
 
 JS_DIR = ROOT / "app" / "static" / "js"
 # D3: the React island sources are the second shipped frontend track, held to

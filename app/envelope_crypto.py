@@ -587,10 +587,10 @@ def ensure_searchable_fields_are_classified(field_names: list[str]) -> dict[str,
 
 __all__ = [
     "DEK_SIZE_BYTES",
+    "ENVELOPE_VERSION",
     "DatabaseDekKeystore",
     "DekKeystoreProtocol",
     "DiskKeyManagementService",
-    "ENVELOPE_VERSION",
     "EnvelopeCipherProtocol",
     "EnvelopeCryptoError",
     "EnvelopeTamperError",

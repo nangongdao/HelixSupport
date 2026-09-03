@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, Self
 from unittest.mock import patch
 
 import httpx
@@ -107,10 +107,10 @@ class _FakeClient:
     def __init__(self, response: _FakeResponse, **_: Any) -> None:
         self._response = response
 
-    def __enter__(self) -> "_FakeClient":
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         return None
 
     def post(self, *args: Any, **kwargs: Any) -> _FakeResponse:

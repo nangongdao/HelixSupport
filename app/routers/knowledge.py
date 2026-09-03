@@ -8,6 +8,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from app.main import (
+    canned_response_out,
+    knowledge_out,
+    require_permission,
+)
+from app.orchestrator import InvalidTransitionError
+from app.routers.common import RouteDeps
 from app.schemas import (
     AuditArchiveDetailOut,
     AuditArchiveOut,
@@ -20,13 +27,6 @@ from app.schemas import (
     KnowledgeReviewRequest,
     KnowledgeUpdateRequest,
 )
-from app.main import (
-    canned_response_out,
-    knowledge_out,
-    require_permission,
-)
-from app.orchestrator import InvalidTransitionError
-from app.routers.common import RouteDeps
 from app.security import Principal
 
 logger = logging.getLogger("helix")

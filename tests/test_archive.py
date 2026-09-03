@@ -22,7 +22,6 @@ from app.main import create_app
 from app.migrations import all_migrations, run_migrations
 from app.retention import RetentionService
 
-
 ADMIN_KEY = "archive-admin-key-0001"
 
 

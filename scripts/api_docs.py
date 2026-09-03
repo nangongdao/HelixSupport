@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 SNAPSHOT = ROOT / "api" / "openapi.json"
 OUTPUT = ROOT / "docs" / "api" / "reference.md"
@@ -137,10 +137,10 @@ def generate() -> str:
         "",
         f"Version: `{info.get('version', 'unknown')}`",
         "",
-        "This reference is generated from the OpenAPI contract snapshot "
+        ("This reference is generated from the OpenAPI contract snapshot "
         "(`api/openapi.json`) by `scripts/api_docs.py`. The error contract is "
         "documented in [ERRORS.md](../ERRORS.md); versioning and deprecation "
-        "policy in [API_POLICY.md](../API_POLICY.md).",
+        "policy in [API_POLICY.md](../API_POLICY.md)."),
         "",
     ]
     # Group by first tag.

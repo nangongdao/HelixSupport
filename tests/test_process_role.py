@@ -46,11 +46,10 @@ class ProcessRoleConfigTests(unittest.TestCase):
             self.assertFalse(s.runs_turn_worker)
 
     def test_invalid_role_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                Settings(
-                    database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="edge"
-                ).validate()
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            Settings(
+                database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="edge"
+            ).validate()
 
 
 class ProcessRoleAppTests(unittest.TestCase):

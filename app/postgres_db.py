@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any
 
 from app.context import current_scope_mode, current_tenant, maintenance_scope
 from app.database import Database

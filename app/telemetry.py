@@ -16,11 +16,12 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from statistics import quantiles
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,9 @@ try:
     )
     from opentelemetry.sdk.resources import Resource  # type: ignore[reportMissingImports]
     from opentelemetry.sdk.trace import TracerProvider  # type: ignore[reportMissingImports]
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[reportMissingImports]
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor,  # type: ignore[reportMissingImports]
+    )
 
     _otel_available = True
 except ImportError:

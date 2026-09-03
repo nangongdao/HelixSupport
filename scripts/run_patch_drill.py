@@ -48,10 +48,9 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.config import Settings  # noqa: E402
-from app.main import create_app  # noqa: E402
+from app.config import Settings
+from app.main import create_app
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -217,7 +216,7 @@ def main() -> int:
     drills.append(
         {
             "drill_type": "security_patch_release",
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "passed": passed,
             "steps": ops,
             "real_signing": bool(args.cosign_key and args.registry),

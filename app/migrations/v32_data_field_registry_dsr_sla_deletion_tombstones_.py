@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.migrations import migration
-from app.migrations import _ensure_column
+from app.migrations import _ensure_column, migration
 
 
 @migration(32, "data field registry + DSR SLA + deletion tombstones (Phase 41.4 DATA)")
@@ -54,4 +53,3 @@ def migration_32(connection: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_deferred_deletion_jobs_status
                 ON deferred_deletion_jobs(status, created_at);
             """)
-    return

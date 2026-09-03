@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from threading import Lock
-from typing import Any, Iterator, Sequence
+from typing import Any
 from uuid import uuid4
 
 from app.context import current_request_id, current_scope_mode, tenant_scope
@@ -90,10 +90,9 @@ class DatabaseAuditMixin:
     @contextmanager
     def audit_transaction(self) -> Iterator[Any]:
         """Yield a transaction holding the process and database chain locks."""
-        with _AUDIT_CHAIN_LOCK:
-            with self.connect() as connection:
-                self._acquire_audit_chain_write_lock(connection)
-                yield connection
+        with _AUDIT_CHAIN_LOCK, self.connect() as connection:
+            self._acquire_audit_chain_write_lock(connection)
+            yield connection
 
     def _append_audit_event(
         self,
@@ -242,16 +241,15 @@ class DatabaseAuditMixin:
     ) -> None:
         # Phase 28.3/29: serialize chain appends so two concurrent calls can
         # never both link to the same prev_hash (chain fork).
-        with self._audit_scope(tenant_id):
-            with self.audit_transaction() as connection:
-                self._append_audit_event(
-                    connection,
-                    tenant_id,
-                    conversation_id,
-                    actor,
-                    event_type,
-                    payload,
-                )
+        with self._audit_scope(tenant_id), self.audit_transaction() as connection:
+            self._append_audit_event(
+                connection,
+                tenant_id,
+                conversation_id,
+                actor,
+                event_type,
+                payload,
+            )
 
     def audit_many(
         self,
@@ -265,54 +263,53 @@ class DatabaseAuditMixin:
 
         request_id = current_request_id()
         now = utc_now()
-        with self._audit_scope(tenant_id):
-            with self.audit_transaction() as connection:
-                prev_hash, tail_seq = self._audit_chain_tail(connection)
-                rows: list[tuple[str, str, str, str | None, str, str, str, str, int, str, str]] = []
-                sequences: list[tuple[int, str]] = []
-                for conversation_id, event_type, payload in events:
-                    event_id = f"evt_{uuid4().hex[:12]}"
-                    payload_json = json.dumps(sanitize_for_audit(payload), ensure_ascii=False)
-                    tail_seq += 1
-                    event_hash_value = event_hash(
-                        prev_hash=prev_hash,
-                        event_id=event_id,
-                        tenant_id=tenant_id,
-                        conversation_id=conversation_id,
-                        request_id=request_id,
-                        actor=str(actor),
-                        event_type=event_type,
-                        payload_json=payload_json,
-                        created_at=now,
+        with self._audit_scope(tenant_id), self.audit_transaction() as connection:
+            prev_hash, tail_seq = self._audit_chain_tail(connection)
+            rows: list[tuple[str, str, str, str | None, str, str, str, str, int, str, str]] = []
+            sequences: list[tuple[int, str]] = []
+            for conversation_id, event_type, payload in events:
+                event_id = f"evt_{uuid4().hex[:12]}"
+                payload_json = json.dumps(sanitize_for_audit(payload), ensure_ascii=False)
+                tail_seq += 1
+                event_hash_value = event_hash(
+                    prev_hash=prev_hash,
+                    event_id=event_id,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                    actor=str(actor),
+                    event_type=event_type,
+                    payload_json=payload_json,
+                    created_at=now,
+                )
+                rows.append(
+                    (
+                        event_id,
+                        tenant_id,
+                        conversation_id,
+                        request_id,
+                        str(actor),
+                        event_type,
+                        payload_json,
+                        now,
+                        tail_seq,
+                        prev_hash,
+                        event_hash_value,
                     )
-                    rows.append(
-                        (
-                            event_id,
-                            tenant_id,
-                            conversation_id,
-                            request_id,
-                            str(actor),
-                            event_type,
-                            payload_json,
-                            now,
-                            tail_seq,
-                            prev_hash,
-                            event_hash_value,
-                        )
-                    )
-                    sequences.append((tail_seq, event_id))
-                    prev_hash = event_hash_value
-                connection.executemany(
-                    """INSERT INTO audit_events
+                )
+                sequences.append((tail_seq, event_id))
+                prev_hash = event_hash_value
+            connection.executemany(
+                """INSERT INTO audit_events
                     (id, tenant_id, conversation_id, request_id, actor, event_type,
                      payload_json, created_at, seq, prev_hash, event_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    rows,
-                )
-                connection.executemany(
-                    "UPDATE audit_events SET seq = ? WHERE id = ?",
-                    sequences,
-                )
+                rows,
+            )
+            connection.executemany(
+                "UPDATE audit_events SET seq = ? WHERE id = ?",
+                sequences,
+            )
 
     def list_audit(self, tenant_id: str, conversation_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:

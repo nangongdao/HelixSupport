@@ -34,7 +34,7 @@ def _pillow_available() -> bool:
 @unittest.skipUnless(_pillow_available(), "Requires Pillow (browser gate dependency)")
 class CompareVerdictTests(unittest.TestCase):
     def setUp(self) -> None:
-        import scripts.visual_gate as visual_gate
+        from scripts import visual_gate
 
         self.visual_gate = visual_gate
         self._tmp = tempfile.TemporaryDirectory()
@@ -124,7 +124,7 @@ class UpdateFlagWiringTests(unittest.TestCase):
     def test_every_compare_call_forwards_update(self) -> None:
         import inspect
 
-        import scripts.visual_gate as visual_gate
+        from scripts import visual_gate
 
         source = inspect.getsource(visual_gate.main)
         calls = [line for line in source.splitlines() if "compare(" in line]

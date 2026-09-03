@@ -23,30 +23,30 @@ if TYPE_CHECKING:
 class PolicyAgent:
     name = AgentName.POLICY
     _INJECTION_PATTERNS = (
-        re.compile(r"ignore (all|any|the|your) (previous|prior|system) instructions", re.I),
-        re.compile(r"reveal (the )?(system prompt|hidden instructions)", re.I),
+        re.compile(r"ignore (all|any|the|your) (previous|prior|system) instructions", re.IGNORECASE),
+        re.compile(r"reveal (the )?(system prompt|hidden instructions)", re.IGNORECASE),
         re.compile(r"忽略.{0,8}(之前|系统).{0,8}(指令|提示)"),
         re.compile(r"(泄露|输出).{0,8}(系统提示|隐藏指令|prompt)"),
         # Phase 41.5 (AI-001): system-prompt probing variants -- a direct ask
         # for the protected prompt is treated like an injection attempt.
-        re.compile(r"\b(output|print|paste|show|send|copy)\b.{0,30}\bsystem prompt\b", re.I),
-        re.compile(r"\bsystem prompt\b.{0,20}\b(verbatim|exactly|in full)\b", re.I),
+        re.compile(r"\b(output|print|paste|show|send|copy)\b.{0,30}\bsystem prompt\b", re.IGNORECASE),
+        re.compile(r"\bsystem prompt\b.{0,20}\b(verbatim|exactly|in full)\b", re.IGNORECASE),
         re.compile(r"(一字不差|原样|完整|全部).{0,8}(系统提示|提示词)"),
         re.compile(r"(把|将|请).{0,10}(系统提示|提示词).{0,12}(发给|输出|提供|复制|给我|发我)"),
         # Roleplay / debug-mode asks for hidden instructions.
         re.compile(r"(系统|隐藏).{0,4}(指令|提示词?).{0,8}(输出|发(给|我)?|泄露|提供|复制)"),
         # Phase 41.5 (AI-001): multilingual injection variants (fr/ja) so a
         # translated override is not a bypass.
-        re.compile(r"ignor(ez|er|e).{0,40}(instructions|consignes|précédentes|précédents)", re.I),
-        re.compile(r"révél(ez|er|e).{0,20}(prompt|système)", re.I),
-        re.compile(r"prompt système", re.I),
+        re.compile(r"ignor(ez|er|e).{0,40}(instructions|consignes|précédentes|précédents)", re.IGNORECASE),
+        re.compile(r"révél(ez|er|e).{0,20}(prompt|système)", re.IGNORECASE),
+        re.compile(r"prompt système", re.IGNORECASE),
         re.compile(r"システムプロンプト"),
         re.compile(r"(プロンプト|指示).{0,10}(出力|無視|漏らす|公開)"),
     )
-    _EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+    _EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
     _PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
     _CARD = re.compile(r"(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)")
-    _CREDENTIAL = re.compile(r"(密码|验证码|支付口令|cvv|password|one[- ]time code)", re.I)
+    _CREDENTIAL = re.compile(r"(密码|验证码|支付口令|cvv|password|one[- ]time code)", re.IGNORECASE)
 
     def inspect(self, content: str) -> RiskAssessment:
         categories: list[str] = []
@@ -217,13 +217,13 @@ class KnowledgeAgent:
     # is scanned before it is echoed, so a poisoned knowledge entry cannot
     # smuggle instruction-override or secret material into the reply.
     _RETRIEVED_INJECTION_PATTERNS = (
-        re.compile(r"ignore (all|any|the|your) (previous|prior|system) instructions", re.I),
-        re.compile(r"reveal (the )?(system prompt|hidden instructions)", re.I),
+        re.compile(r"ignore (all|any|the|your) (previous|prior|system) instructions", re.IGNORECASE),
+        re.compile(r"reveal (the )?(system prompt|hidden instructions)", re.IGNORECASE),
         re.compile(r"忽略.{0,8}(之前|系统).{0,8}(指令|提示)"),
         re.compile(r"(泄露|输出).{0,8}(系统提示|隐藏指令|prompt)"),
     )
     _RETRIEVED_SECRET_PATTERN = re.compile(
-        r"(密钥|token|secret|password|密码|验证码|支付口令|cvv|one[- ]time code)", re.I
+        r"(密钥|token|secret|password|密码|验证码|支付口令|cvv|one[- ]time code)", re.IGNORECASE
     )
 
     def __init__(
@@ -319,7 +319,7 @@ class OrderAgent:
     # a bare ``ORD-<digits>``; anything else glued to it (newline, statement
     # separator, SQL comment/keyword) must not be executed or reflected.
     _INJECTION_FRAGMENT = re.compile(
-        r"[\n;]|--|/\*|\b(drop|truncate|alter)\s+table\b|\bunion\s+select\b", re.I
+        r"[\n;]|--|/\*|\b(drop|truncate|alter)\s+table\b|\bunion\s+select\b", re.IGNORECASE
     )
 
     def __init__(self, tools: ToolGateway) -> None:

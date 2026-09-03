@@ -178,10 +178,10 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> lis
 
 
 __all__ = [
-    "TOKEN_SCHEMA",
-    "CapabilityError",
     "DEFAULT_TOKEN_TTL_SECONDS",
     "SIDEEFFECT_CLASSES",
+    "TOKEN_SCHEMA",
+    "CapabilityError",
     "ToolPolicy",
     "issue_capability_token",
     "validate_arguments",

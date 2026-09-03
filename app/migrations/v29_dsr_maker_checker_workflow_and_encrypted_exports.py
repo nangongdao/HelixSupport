@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.migrations import migration
-from app.migrations import _ensure_column
+from app.migrations import _ensure_column, migration
 
 
 @migration(29, "DSR maker-checker workflow and encrypted exports (M0 SEC-002)")

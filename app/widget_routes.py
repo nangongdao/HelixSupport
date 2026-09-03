@@ -22,18 +22,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, cast
+from collections.abc import AsyncIterator
 from time import perf_counter
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from typing_extensions import Annotated
 
 from app.config import Settings
 from app.context import bind_tenant_scope
 from app.database import Database
-from app.main import AppServices, message_out
 from app.intake import backpressure_reason
+from app.main import AppServices, message_out
 from app.orchestrator import ConversationOrchestrator
 from app.schemas import (
     ConversationOut,

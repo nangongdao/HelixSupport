@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 SNAPSHOT = ROOT / "api" / "openapi.json"
 

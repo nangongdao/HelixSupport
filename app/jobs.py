@@ -4,8 +4,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from time import monotonic
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from app.context import maintenance_scope, request_id_context, tenant_scope
@@ -18,7 +19,6 @@ from app.orchestrator import (
 from app.queue import QueueUnavailableError, SQLiteTaskQueue, TaskQueue
 from app.telemetry import metrics as telemetry_metrics
 from app.webhooks import WebhookService
-
 
 logger = logging.getLogger("helix")
 

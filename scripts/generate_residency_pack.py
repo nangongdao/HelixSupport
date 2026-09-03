@@ -35,16 +35,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.control_plane import ControlPlaneError, TenantControlPlane  # noqa: E402
-from app.residency import (  # noqa: E402
+from app.control_plane import ControlPlaneError, TenantControlPlane
+from app.residency import (
     DATA_CLASSES,
     REGION_INVENTORY,
     get_region_spec,
     is_known_region,
     resolve_region,
 )
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +245,7 @@ class _DatabaseShim:
     def __init__(self, database_path: Path) -> None:
         self._path = database_path
 
-    def connect(self) -> "_ConnectionScope":
+    def connect(self) -> _ConnectionScope:
         connection = sqlite3.connect(str(self._path))
         connection.row_factory = sqlite3.Row
         return _ConnectionScope(connection)

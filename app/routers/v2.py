@@ -23,8 +23,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from app.event_outbox import DomainEventOutbox
 from app.db._util import utc_now
+from app.event_outbox import DomainEventOutbox
 from app.main import require_permission
 from app.pagination import (
     InvalidCursorError,

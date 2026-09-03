@@ -18,8 +18,8 @@ from unittest import mock
 from fastapi import Request
 
 from app.attachment_store import DiskAttachmentStore
-from app.errors import bad_request_response, forbidden_response, not_found_response
 from app.db.archive import DatabaseArchiveMixin  # noqa: F401  (import path check)
+from app.errors import bad_request_response, forbidden_response, not_found_response
 
 
 class ErrorBuilderTests(unittest.TestCase):

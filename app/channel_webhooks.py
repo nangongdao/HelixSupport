@@ -15,7 +15,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-
 ACCOUNT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 SIGNATURE_PATTERN = re.compile(r"^sha256=([0-9a-fA-F]{64})$")
@@ -200,7 +199,7 @@ class InboundChannelRegistry:
 
 def channel_message_key(account_id: str, message_id: str) -> str:
     """Return a bounded, character-safe turn idempotency key."""
-    digest = hashlib.sha256(f"{account_id}\0{message_id}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{account_id}\0{message_id}".encode()).hexdigest()
     return f"channel_{digest[:48]}"
 
 

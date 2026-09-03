@@ -223,6 +223,6 @@ def _epoch_of(value: str) -> int:
     from datetime import datetime
 
     try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+        return int(datetime.fromisoformat(value).timestamp())
     except ValueError:
         return 0

@@ -11,7 +11,6 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 from app.widget_token import sign_token
 
-
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8774").rstrip("/")
 WIDGET_SECRET = os.getenv("WIDGET_SECRET", "helix-widget-dev-secret")
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts"

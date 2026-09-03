@@ -32,7 +32,7 @@ _DESCRIPTION = (__doc__ or "supply-chain gate").strip().splitlines()[0]
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 APP_DIR = ROOT / "app"
 DEFAULT_PIN = ROOT / "supplychain" / "base-image-pin.json"
@@ -67,7 +67,7 @@ def _tree_sha256(directory: Path) -> str | None:
         entries.append((rel, hashlib.sha256(path.read_bytes()).hexdigest()))
     aggregate = hashlib.sha256()
     for rel, hex_digest in entries:
-        aggregate.update(f"{rel}:{hex_digest}\n".encode("utf-8"))
+        aggregate.update(f"{rel}:{hex_digest}\n".encode())
     return aggregate.hexdigest()
 
 

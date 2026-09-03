@@ -52,7 +52,7 @@ def _reload_without_otel() -> object:
 
 class TelemetryOtelTests(unittest.TestCase):
     def test_configure_tracing_initializes_provider(self) -> None:
-        tel, otel = _reload_with_otel()
+        tel, _otel = _reload_with_otel()
         self.addCleanup(lambda: _reload_without_otel())
         sdk_trace = _OTEL_MOCKS["opentelemetry.sdk.trace"]
         with mock.patch.dict(os.environ, {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}):
@@ -63,7 +63,7 @@ class TelemetryOtelTests(unittest.TestCase):
         self.assertEqual(sdk_trace.TracerProvider.call_count, 1)
 
     def test_span_forwards_attributes_and_events_to_otel(self) -> None:
-        tel, otel = _reload_with_otel()
+        tel, _otel = _reload_with_otel()
         self.addCleanup(lambda: _reload_without_otel())
         tel.configure_tracing()
         provider = tel._tracer_provider

@@ -31,13 +31,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.migrations import (  # noqa: E402
+from app.migrations import (
     all_migrations,
     check_migration_phases,
     verify_migration_chain,
 )
+from scripts._console import use_utf8_console
 
 
 def main() -> int:

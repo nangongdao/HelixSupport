@@ -29,7 +29,7 @@ _DESCRIPTION = (__doc__ or "supply-chain gate").strip().splitlines()[0]
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 DEFAULT_WORKFLOWS = ROOT / ".github" / "workflows"
 DEFAULT_PINS = ROOT / "supplychain" / "ci-pins.json"

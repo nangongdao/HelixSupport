@@ -37,9 +37,9 @@ import psycopg
 from psycopg.rows import dict_row
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts._console import use_utf8_console  # noqa: E402
-from app.jobs import split_stream_tokens  # noqa: E402
-from scripts.verify_audit_chain import verify_chain  # noqa: E402
+from app.jobs import split_stream_tokens
+from scripts._console import use_utf8_console
+from scripts.verify_audit_chain import verify_chain
 
 API_KEY = "helix-demo-key"
 TENANT = "demo"

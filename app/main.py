@@ -4,11 +4,12 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated, Any, Callable, Sequence
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -17,9 +18,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.anchor_service import AnchorService
 from app.assets import STATIC_ASSET_VERSION, VERSIONED_STATIC_CACHE_CONTROL
-from app.config import Settings
+from app.audit_anchor import Ed25519KmsSigner
+from app.audit_gap import AuditGapTracker, AuditUnavailableError
 from app.channel_webhooks import InboundChannelRegistry
+from app.config import Settings
 from app.context import bind_tenant_scope, request_id_context
 from app.database import Database
 from app.db._util import utc_now
@@ -29,11 +33,7 @@ from app.errors import (
     not_found_response,
     problem_response,
 )
-from app.audit_anchor import Ed25519KmsSigner
-from app.anchor_service import AnchorService
-from app.audit_gap import AuditGapTracker, AuditUnavailableError
 from app.jobs import TurnJobWorker
-from app.queue import QueueUnavailableError, TaskQueue, create_task_queue
 from app.model_provider import OpenAICompatibleProvider
 from app.observability import RuntimeMetrics, configure_logging
 from app.orchestrator import (
@@ -42,15 +42,10 @@ from app.orchestrator import (
     InvalidTransitionError,
     TurnInProgressError,
 )
-from app.retention import RetentionService
-from app.webhooks import WebhookService
-from app.quality import QualityService
 from app.prompts import PromptRegistry
-from app.session_auth import (
-    OIDCConfig,
-    OIDCAuthenticator,
-)
-from app.telemetry import configure_tracing, metrics as telemetry_metrics, span
+from app.quality import QualityService
+from app.queue import QueueUnavailableError, TaskQueue, create_task_queue
+from app.retention import RetentionService
 from app.schemas import (
     CannedResponseOut,
     ConversationOut,
@@ -66,7 +61,13 @@ from app.security import (
     Principal,
     SlidingWindowRateLimiter,
 )
-
+from app.session_auth import (
+    OIDCAuthenticator,
+    OIDCConfig,
+)
+from app.telemetry import configure_tracing, span
+from app.telemetry import metrics as telemetry_metrics
+from app.webhooks import WebhookService
 
 configure_logging()
 configure_tracing()
@@ -1019,16 +1020,16 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         )
 
     # Phase 27.2: domain routers (extracted from create_app).
-    from app.routers.common import RouteDeps
-    from app.routers.system import build_router as build_system_router
-    from app.routers.conversations import build_router as build_conversations_router
-    from app.routers.knowledge import build_router as build_knowledge_router
     from app.routers.admin import build_router as build_admin_router
-    from app.routers.auth import build_router as build_auth_router
-    from app.routers.copilot import build_router as build_copilot_router
-    from app.routers.tickets import build_router as build_tickets_router
-    from app.routers.reports import build_router as build_reports_router
     from app.routers.attachments import build_router as build_attachments_router
+    from app.routers.auth import build_router as build_auth_router
+    from app.routers.common import RouteDeps
+    from app.routers.conversations import build_router as build_conversations_router
+    from app.routers.copilot import build_router as build_copilot_router
+    from app.routers.knowledge import build_router as build_knowledge_router
+    from app.routers.reports import build_router as build_reports_router
+    from app.routers.system import build_router as build_system_router
+    from app.routers.tickets import build_router as build_tickets_router
 
     route_deps = RouteDeps(
         settings=settings,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import json
 from typing import Any
 

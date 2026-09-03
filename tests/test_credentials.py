@@ -26,15 +26,15 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.credentials import (
+    MAX_CLOCK_SKEW_SECONDS,
     Credential,
     CredentialStatus,
     CredentialStore,
     InvalidCredentialTransition,
-    MAX_CLOCK_SKEW_SECONDS,
     key_ref_for,
     register_configured_from_json,
 )
-from app.db._util import utc_now, utc_after_seconds
+from app.db._util import utc_after_seconds, utc_now
 from app.main import create_app
 
 ADMIN_KEY = "creds-admin-key-001"
@@ -52,13 +52,13 @@ def _settings(db_path: Path, **overrides: Any) -> Settings:
             "role": "operator",
         },
     }
-    defaults: dict[str, Any] = dict(
-        database_path=db_path,
-        auth_mode="api_key",
-        api_keys_json=json.dumps(principals),
-        rate_limit_per_minute=10000,
-        docs_enabled=False,
-    )
+    defaults: dict[str, Any] = {
+        "database_path": db_path,
+        "auth_mode": "api_key",
+        "api_keys_json": json.dumps(principals),
+        "rate_limit_per_minute": 10000,
+        "docs_enabled": False,
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 

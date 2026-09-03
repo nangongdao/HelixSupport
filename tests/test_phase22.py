@@ -505,7 +505,7 @@ class PermissionMatrixTests(unittest.TestCase):
         for role, key in self.ROLE_KEYS.items():
             headers = {"X-API-Key": key, "X-Tenant-Id": "demo"}
             expected = ROLE_PERMISSIONS[Role(role)]
-            for (method, path), _cross in self.ADMIN_ENDPOINTS.items():
+            for (method, path) in self.ADMIN_ENDPOINTS:
                 with self.subTest(role=role, method=method, path=path):
                     response = self.client.request(method, path, headers=headers, json={})
                     allowed = response.status_code != 403

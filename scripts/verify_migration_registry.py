@@ -30,9 +30,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.migrations import all_migrations, verify_migration_registry  # noqa: E402
+from app.migrations import all_migrations, verify_migration_registry
+from scripts._console import use_utf8_console
 
 _DESCRIPTION = (__doc__ or "migration registry gate").strip().splitlines()[0]
 

@@ -33,11 +33,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim  # noqa: E402
-from app.database import Database  # noqa: E402
-from app.worm_store import DiskWormStore  # noqa: E402
+from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
+from app.database import Database
+from app.worm_store import DiskWormStore
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -230,7 +229,7 @@ def main() -> int:
     ledger.setdefault("drills", []).append(
         {
             "drill_type": "audit_anchor_restore",
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "passed": passed,
             "details": "; ".join(failures)
             if failures

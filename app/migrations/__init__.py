@@ -66,9 +66,9 @@ import importlib
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from app.database import utc_now
 

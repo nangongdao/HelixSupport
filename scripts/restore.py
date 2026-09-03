@@ -27,9 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts._console import use_utf8_console  # noqa: E402
-
-from app.residency import check_restore_compatibility  # noqa: E402
+from app.residency import check_restore_compatibility
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +61,8 @@ def decompress_backup(backup_path: Path) -> Path:
     """Decompress a .db.gz backup, returning a temporary .db path."""
     if backup_path.suffix == ".gz":
         decompressed = backup_path.with_suffix("")
-        with gzip.open(backup_path, "rb") as f_in:
-            with open(decompressed, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
+        with gzip.open(backup_path, "rb") as f_in, open(decompressed, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
         return decompressed
     return backup_path
 

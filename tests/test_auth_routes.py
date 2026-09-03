@@ -18,9 +18,9 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from app.routers.auth import build_router, _require_same_origin
+from app.routers.auth import _require_same_origin, build_router
 from app.routers.common import RouteDeps
-from app.session_auth import SessionPrincipal, SESSION_COOKIE_NAME
+from app.session_auth import SESSION_COOKIE_NAME, SessionPrincipal
 
 
 # Mock settings

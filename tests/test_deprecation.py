@@ -40,7 +40,6 @@ from app.deprecation import (
 )
 from app.main import create_app
 
-
 _SAMPLE = Deprecation(
     operation="GET /api/conversations",
     deprecated_on="2026-08-22",

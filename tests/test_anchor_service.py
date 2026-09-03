@@ -21,7 +21,7 @@ from app.worm_store import DiskWormStore
 
 
 def _signer(salt: str = "") -> Ed25519KmsSigner:
-    seed_digest = hashlib.sha256(f"anchor-service-seed{salt}".encode("utf-8")).digest()
+    seed_digest = hashlib.sha256(f"anchor-service-seed{salt}".encode()).digest()
     return Ed25519KmsSigner(private_key=seed_digest)
 
 

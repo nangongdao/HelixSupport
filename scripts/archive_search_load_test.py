@@ -40,9 +40,9 @@ import tracemalloc
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts._console import use_utf8_console  # noqa: E402
-
-from scripts.pagination_load_test import (  # noqa: E402
+from app.database import Database, utc_now
+from scripts._console import use_utf8_console
+from scripts.pagination_load_test import (
     DENSE_MESSAGE_SEARCH_TERM,
     SELECTIVE_MESSAGE_SEARCH_TERM,
     BenchStats,
@@ -51,7 +51,6 @@ from scripts.pagination_load_test import (  # noqa: E402
     measure,
     seed_dataset,
 )
-from app.database import Database, utc_now  # noqa: E402
 
 # 42.3 REL-002: fixed cold-data tiers. The tier names are relative to the
 # §18.5 hot baseline (2k conversations / 20k messages): the archive tier is

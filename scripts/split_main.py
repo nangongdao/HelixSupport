@@ -12,10 +12,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-import sys  # noqa: E402 — sys.path bootstrap before scripts._console import
+import sys
 
 sys.path.insert(0, str(ROOT))
-from scripts._console import use_utf8_console  # noqa: E402
+from scripts._console import use_utf8_console
 
 MAIN_BAK = ROOT / "app" / "main.py.bak"
 ROUTER = ROOT / "app" / "routers" / "conversations.py"
@@ -28,7 +28,7 @@ def generate_router() -> str:
     lines = MAIN_BAK.read_text(encoding="utf-8").splitlines()
     block = "\n".join(lines[START:END])
     # Rewrite decorators
-    block = re.sub(r"^    @app\.", "    @router.", block, flags=re.M)
+    block = re.sub(r"^    @app\.", "    @router.", block, flags=re.MULTILINE)
     header = '''"""Conversations, saved views, canned responses, audit, and knowledge routes (27.2)."""
 
 from __future__ import annotations

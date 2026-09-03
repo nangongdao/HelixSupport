@@ -22,7 +22,6 @@ from app.config import Settings
 from app.envelope_crypto import EnvelopeTamperError, TenantEnvelopeCipher
 from app.main import create_app
 
-
 ADMIN_KEY = "admin-test-key-0001"
 ACME_KEY = "acme-admin-key-0001"
 

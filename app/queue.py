@@ -221,7 +221,7 @@ return nil
 
 
 def _iso_to_epoch(value: str) -> int:
-    return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    return int(datetime.fromisoformat(value).timestamp())
 
 
 class RedisTaskQueue:

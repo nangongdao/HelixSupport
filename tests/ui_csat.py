@@ -20,7 +20,7 @@ import json
 import os
 import re
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -101,7 +101,7 @@ def main() -> None:
     expect_total = base_total + added
     # responded_at 由 utc_now() 写入,responded 日趋势取 UTC 日期——必须用
     # UTC 时钟,不能用本地 date.today()(UTC+8 时区 0–8 点会差一天,H1)。
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
 
     with sync_playwright() as playwright:
         try:

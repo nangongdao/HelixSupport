@@ -7,19 +7,18 @@ RBAC: ``metrics:read`` for viewer/supervisor/admin.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from typing_extensions import Annotated
 
 from app.main import AppServices, require_permission
+from app.pagination import InvalidCursorError
 from app.quality import (
     decode_quality_cursor,
     encode_quality_cursor,
 )
-from app.pagination import InvalidCursorError
-from app.security import Principal
 from app.schemas import QualityBucketOut
+from app.security import Principal
 
 router = APIRouter(prefix="/api/supervisor", tags=["quality"])
 
