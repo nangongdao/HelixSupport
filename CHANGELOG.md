@@ -9,7 +9,8 @@
 - **测试覆盖率提升**（2026-09-03）：
   - 第一轮：新增 `tests/test_coverage_final_push.py`（3 例）覆盖 `app/attachment_store.py:81`（tmp cleanup 异常路径）、`app/audit_gap.py:63-66`（DB 不可达异常处理）、`app/db/archive.py:167`（before cursor 反转）；新增 `tests/test_channel_webhooks_validation.py`（5 例）覆盖 `InboundChannelRegistry` 配置验证错误路径；扩展 `tests/test_config_validation.py`（+2 例）覆盖 archive 配置零值拒绝。覆盖率 **87.45% → 87.54%**（13109 stmts，1320 miss）。
   - 第二轮：新增 `tests/test_worm_store_errors.py`（11 例）覆盖 `app/worm_store.py` 异常路径（object_id 验证失败、目录创建失败、写入失败、重复写入、读取失败、journal 读取失败、孤立对象、哈希不匹配、mtime 篡改、对象丢失），`worm_store.py` 模块覆盖率从 **76.34% → 86.26%**。
-  - 第三轮：新增 `tests/test_labels.py`（11 例）完整覆盖 `app/labels.py` 的 `normalize_conversation_labels` 函数（基础规范化、去重、空值拒绝、长度限制、非打印字符拒绝、最大标签数限制、边界条件）；新增 `tests/test_intake.py`（6 例）完整覆盖 `app/intake.py` 的 `backpressure_reason` 函数（全局队列过载、租户并发上限、边界条件、优先级检查）。总体覆盖率持续提升中，90% 目标需额外覆盖 ~323 行，留待后续迭代。
+  - 第三轮：新增 `tests/test_labels.py`（11 例）完整覆盖 `app/labels.py` 的 `normalize_conversation_labels` 函数（基础规范化、去重、空值拒绝、长度限制、非打印字符拒绝、最大标签数限制、边界条件）；新增 `tests/test_intake.py`（6 例）完整覆盖 `app/intake.py` 的 `backpressure_reason` 函数（全局队列过载、租户并发上限、边界条件、优先级检查）。
+  - 第四轮：新增 `tests/test_residency.py`（16 例）完整覆盖 `app/residency.py` 数据驻留策略模块（区域规范化、默认值回退、区域规范查询、已知区域检查、数据分类权限验证、租户驻留摘要生成、跨境传输记录、恢复兼容性检查），`residency.py` 模块覆盖率从 **97.44% → 100.00%**。总体覆盖率持续提升中，90% 目标需额外覆盖 ~323 行，留待后续迭代。
 
 ## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
 
