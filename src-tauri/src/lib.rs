@@ -1,6 +1,7 @@
 mod supervisor;
 mod terminal;
 mod updater;
+mod menu;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor::{shutdown, start_backend, ensure_alive, flush_telemetry,
@@ -97,6 +98,22 @@ pub fn run() {
                 let _ = win.set_focus();
             }
         }))
+        .setup(|app| {
+            // Build and set the application menu
+            let menu = menu::build_menu(&app.handle())?;
+            app.set_menu(menu)?;
+
+            // Handle menu events
+            app.on_menu_event(move |app, event| {
+                let app_handle = app.clone();
+                let event_id = event.id().as_ref().to_string();
+                tauri::async_runtime::spawn(async move {
+                    menu::handle_menu_event(&app_handle, &event_id).await;
+                });
+            });
+
+            Ok(())
+        })
         .manage(state)
         .manage(terminal::PtyManager::new())
         .invoke_handler(tauri::generate_handler![
