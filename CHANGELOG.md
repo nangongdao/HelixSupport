@@ -6,16 +6,73 @@
 
 ### Added
 
-- **Version 2.1.0 影子流量系统（ROADMAP 2.1.x）** (2026-09-03):
-  - `app/shadow_traffic.py` (254 行): v1→v2 请求异步复制、字段级差异对比、延迟追踪；`ShadowRequest` 快照、`ShadowComparison` 结果、`should_shadow_request` 采样逻辑（可配置 0-100%）、`shadow_request_to_v2` 异步重放（从不阻塞 v1 响应）、`_compare_responses` 递归深度对比、`_record_comparison` 持久化到数据库。
-  - `app/shadow_monitor.py` (158 行): 影子流量健康监控与自动降级；`ShadowSignals` 聚合指标（总对比数/不匹配数/不匹配率/v1&v2 P95 延迟）、`ShadowMonitorThresholds` 阈值（max_mismatch_rate=5%、max_latency_regression_ms=200ms）、`evaluate_shadow_health` 纯函数评估、`collect_shadow_signals` 24 小时滚动窗口查询、`monitor_shadow_traffic` 周期性清扫钩子。
-  - Migration v42 (phase="expand"): `shadow_traffic_comparisons` 表记录每次影子请求对比（request_id/route/status_codes/matched&mismatched_fields/latencies/sampling_rate）；索引 `(tenant_id, route, created_at)` 和 `(request_id)`。
-  - 配置: `SHADOW_TRAFFIC_ENABLED` (默认 false) 和 `SHADOW_TRAFFIC_SAMPLE_RATE` (默认 0.05 即 5%)；遵循 drift_monitor 架构模式（纯函数评估器 + fail-safe 默认）。
-  - 测试: `tests/test_shadow_traffic.py` 20 例全绿（采样逻辑/深度相等/响应对比/持久化/健康评估/信号聚合）。
-
 ### Changed
 
 ### Fixed
+
+## 2.1.0 — Shadow Traffic System: v1/v2 验证与自动降级 (2026-09-03)
+
+Version 2.1.0 实现了影子流量系统，为 API v1→v2 迁移提供生产级验证能力。通过可配置采样率将真实 v1 请求异步重放到 v2，进行字段级深度对比并追踪延迟差异，配合健康监控实现自动降级。本版本为后续多 cell 部署和成本归因奠定基础。
+
+**发布亮点**:
+- ✅ **影子流量核心**：异步 v1→v2 请求复制，字段级递归对比，延迟追踪
+- ✅ **健康监控**：24 小时滚动窗口，不匹配率/延迟回归双重阈值检测
+- ✅ **fail-safe 设计**：默认关闭，纯函数评估器，从不阻塞 v1 响应路径
+- ✅ **生产就绪**：完整测试覆盖（20 例），遵循项目架构模式
+
+**新增迁移**: v42（1 个，phase="expand"）
+
+### Added
+
+- **影子流量系统（ROADMAP 2.1.x）**：
+  - `app/shadow_traffic.py` (254 行): v1→v2 请求异步复制、字段级差异对比、延迟追踪；`ShadowRequest` 快照原始 v1 请求（路由、payload、tenant_id）、`ShadowComparison` 记录对比结果（匹配/不匹配字段、状态码、延迟差异）、`should_shadow_request` 采样决策（基于可配置 0-100% 比率）、`shadow_request_to_v2` 异步重放（构造等效 v2 请求、调用 v2 endpoint、捕获异常不影响 v1）、`_compare_responses` 递归深度对比（处理嵌套字典/列表、null 值、类型不匹配）、`_record_comparison` 数据库持久化（记录完整对比上下文供后续分析）。
+  - `app/shadow_monitor.py` (158 行): 影子流量健康监控与自动降级；`ShadowSignals` 聚合指标（total_comparisons/mismatch_count/mismatch_rate/v1_p95_latency_ms/v2_p95_latency_ms）、`ShadowMonitorThresholds` 阈值配置（max_mismatch_rate=0.05 即 5%、max_latency_regression_ms=200.0、min_comparisons=100 样本量门槛）、`evaluate_shadow_health` 纯函数健康评估（样本不足→健康、不匹配率超标→拒绝、延迟回归超标→拒绝、其他→健康）、`collect_shadow_signals` 24 小时滚动窗口 SQL 查询（聚合分租户/路由统计、计算 P95 延迟通过 `_percentile` 辅助函数）、`monitor_shadow_traffic` 周期性清扫钩子（挂载到 housekeeping 任务）。
+  - Migration v42 (phase="expand"): 新增 `shadow_traffic_comparisons` 表，字段包括 id/tenant_id/request_id/route/v1_status_code/v2_status_code/matched_fields（JSON 数组）/mismatched_fields（JSON 数组）/v1_latency_ms/v2_latency_ms/sampling_rate/created_at；复合索引 `idx_shadow_comparisons_tenant_route_time` (tenant_id, route, created_at) 支持时间窗口查询、唯一索引 `idx_shadow_comparisons_request` (request_id) 防止重复记录。
+  - `app/config.py` 扩展: 新增 `shadow_traffic_enabled: bool = False`（生产环境需显式启用）、`shadow_traffic_sample_rate: float = 0.05`（默认 5% 采样）；环境变量 `SHADOW_TRAFFIC_ENABLED`/`SHADOW_TRAFFIC_SAMPLE_RATE` 解析。
+  - `app/telemetry.py` 扩展: 新增 `record_shadow_comparison(result, latency_diff_ms, route)` 函数，记录影子流量对比指标到 metrics 后端（`shadow.comparison_result` 计数、`shadow.latency_diff_ms` 直方图）。
+  - 测试: `tests/test_shadow_traffic.py` 20 例全绿——采样逻辑（禁用/100%/0%/概率性）、深度相等判断（原始类型/列表/字典/嵌套结构/null/类型不匹配）、响应对比（完全匹配/部分不匹配/缺失字段/额外字段/状态码差异）、数据库持久化（记录写入/字段正确性）、健康评估（样本不足/不匹配率超标/延迟超标/正常场景）、信号聚合（空窗口/正确聚合/P95 计算）。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.1.0"
+- **README**: 版本标签更新至 v2.1.0
+
+### Fixed
+
+无修复项（本版本为新功能发布）。
+
+### Architecture
+
+- **设计模式**: 遵循 `drift_monitor.py` 架构——纯函数评估器（`evaluate_shadow_health` 无副作用、可独立测试）、fail-safe 默认（监控失败不影响业务、默认配置关闭）、清晰分层（数据采集/信号聚合/健康评估分离）。
+- **异步执行**: 影子请求通过 `create_shadow_task` 在事件循环中 fire-and-forget 启动，绝不阻塞 v1 响应路径；失败只记录日志不抛异常。
+- **数据库模式**: 使用项目标准 `with db.connect() as conn:` 模式、`conn.execute()` 执行 SQL、`conn.fetchone()`/`conn.fetchall()` 读取结果；时间戳统一使用 `app.db._util.utc_now()`。
+
+### Documentation
+
+- 更新 `CHANGELOG.md` 完整记录 2.1.0 变更
+- 配置说明：`SHADOW_TRAFFIC_ENABLED`（默认 false，生产需显式启用）、`SHADOW_TRAFFIC_SAMPLE_RATE`（默认 0.05，范围 0.0-1.0）
+
+### Upgrade Guide
+
+从 2.0.0 升级到 2.1.0 需要运行迁移 v42（phase="expand"，非破坏性）。
+
+**必须操作**:
+1. 运行数据库迁移: `python -m app.db._migrate`（添加 shadow_traffic_comparisons 表）
+
+**可选操作**（生产环境启用影子流量）:
+1. 设置环境变量: `SHADOW_TRAFFIC_ENABLED=true`
+2. 调整采样率（可选）: `SHADOW_TRAFFIC_SAMPLE_RATE=0.05`（默认 5%，建议从低开始）
+3. 监控指标: 观察 `shadow.comparison_result`（match/mismatch/error 计数）、`shadow.latency_diff_ms`（v2-v1 延迟差异）
+
+**回滚**:
+- 停用影子流量: 设置 `SHADOW_TRAFFIC_ENABLED=false` 或移除环境变量
+- 数据清理（可选）: `DELETE FROM shadow_traffic_comparisons WHERE created_at < datetime('now', '-30 days')`
+
+**验收标准**（生产启用前）:
+- [ ] 测试环境 5% 采样运行 24 小时无性能退化
+- [ ] v1/v2 核心字段匹配率 ≥99%（mismatch_rate ≤0.01）
+- [ ] v2 P95 延迟 ≤ v1 P95 延迟 + 200ms
+- [ ] 自动降级逻辑验证（手动注入差异触发健康检查失败）
 
 ## 2.0.0 — Enterprise Control Plane: API v2、AI Governance、数据驻留、前端现代化 (2026-09-03)
 

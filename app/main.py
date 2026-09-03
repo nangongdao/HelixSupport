@@ -74,7 +74,7 @@ configure_tracing()
 logger = logging.getLogger("helix")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 
 def _http_exception_code(status_code: int) -> str:
