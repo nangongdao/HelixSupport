@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Phase 20 连接器健壮性与真实接入**（2026-09-03）：
+  - **20.1 连接器运行时防护**：`app/connectors_runtime.py` 实现统一防护层，包含熔断器状态机（closed → open → half_open → closed，按 (tenant_id, connector) 隔离）、指数退避重试（仅针对 TransientConnectorError）、降级语义（熔断打开时返回 unavailable 结果而非抛异常）。包装器：`ResilientOrderConnector`、`ResilientKnowledgeConnector`、`ResilientCRMConnector`。测试覆盖：`tests/test_connectors_runtime.py`（19 例，验证状态转换、重试逻辑、降级语义、租户隔离）。
+  - **20.2 编排层集成**：`app/tools.py` 的 `ToolGateway` 接受连接器依赖注入（order_connector/knowledge_connector/crm_connector），默认使用 Sandbox 实现向后兼容。降级路径：Order 连接器 unavailable 升级人工，Knowledge 连接器降级回退内置 FTS 检索。测试覆盖：`tests/test_connector_degradation.py`（7 例，验证降级行为、Golden Set 在降级路径下仍 100% 通过）。
+  - **20.3 HTTP 连接器参考实现**：`app/connectors_http.py` 提供通用 REST 连接器模板，支持 HMAC-SHA256 签名（METHOD\nPATH\nCANONICAL_QUERY\nTIMESTAMP\nBODY）、超时控制（默认 10s）、错误映射（超时/5xx → TransientConnectorError，404 → not_found）。实现：`HttpOrderConnector`、`HttpKnowledgeConnector`、`HttpCRMConnector`。可注入传输层便于测试。测试覆盖：`tests/test_connectors_http.py`（16 例，验证签名、超时、状态码映射）。
+  - **20.4 契约测试套件对外化**：`tests/test_connectors.py` 重构为参数化 Conformance Mixin（OrderConnectorConformanceMixin / KnowledgeConnectorConformanceMixin / CRMConnectorConformanceMixin），任何实现继承 Mixin 并实现 `make_*_connector()` 即可验证合规性（身份绑定、跨客户非泄露、未知资源语义）。已验证实现：Sandbox 连接器、HTTP 连接器、Resilient 包装器。测试覆盖：19 例。
+  - **20.5 出站 Webhook**：`app/webhooks.py` 实现完整投递系统，支持 6 种事件类型（conversation.created/escalated/resolved/sla_breached/sla_impending、report.generated）。投递语义：at-least-once + 幂等 ID 去重（event_id）、HMAC-SHA256 签名（timestamp.body）、指数退避重试（最多 5 次）、死信队列（超出重试次数）。Admin API：`POST/GET/DELETE /api/webhooks`、`GET /api/webhooks/deliveries`（投递历史查询）。安全防护：SSRF 防护（拒绝内网地址）、Secret 加密存储。测试覆盖：`tests/test_webhooks.py`（32 例）。
+  - **完成报告**：`docs/PHASE_20_COMPLETION.md` 记录全部实现细节、测试结果（94 例全部通过）、验收门槛检查、成熟度评分变化（集成能力 2.2 → 3.5，可靠性 3.5 → 3.8）。
+
 - **Phase 19 智能质量与集成成熟**（2026-09-03）：
   - **19.1 提示词/模型注册表**：新增 `prompt_versions` 表（迁移 v06），支持多版本管理（draft/active/canary/retired 状态）。`app/prompts.py` 的 `PromptRegistry` 类提供完整生命周期 API：`create_version()`、`activate()`、`set_canary()`、`clear_canary()`、`rollback()`。Admin API 端点：`GET/POST /api/prompts`、`POST /api/prompts/{version_id}/action`（权限：`admin:manage`）。全部操作记录审计事件（`prompt_version.created/activated/canary/canary_cleared/rollback/resolved`）。
   - **19.2 Canary 对照部署**：配置 `PROMPT_CANARY_RATIO` (0.0-1.0) 控制流量分配。`PromptRegistry.canary_bucket()` 基于 SHA-256 哈希稳定分桶，同一会话 ID 始终路由到相同版本（canary 或 active）。`turn_policy.py` 每次 turn 解析版本并记录 `prompt_version.resolved` 审计事件。助手消息元数据包含 `prompt_channel`/`prompt_version_id`/`prompt_version`。遥测计数器 `turn.processed` 按 `prompt_channel` 维度标记。测试覆盖：`tests/test_prompt_canary.py`（15 例，包含分桶确定性、ratio 边界、租户优先级、端到端验证）。
