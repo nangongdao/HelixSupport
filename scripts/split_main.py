@@ -11,6 +11,10 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+import sys  # noqa: E402 — sys.path bootstrap before scripts._console import
+sys.path.insert(0, str(ROOT))
+from scripts._console import use_utf8_console  # noqa: E402
 MAIN_BAK = ROOT / "app" / "main.py.bak"
 ROUTER = ROOT / "app" / "routers" / "conversations.py"
 
@@ -141,4 +145,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     use_utf8_console()
+    # Safety: this script destructively rewrites app/main.py and
+    # app/routers/conversations.py. Never run it with bare --help or by
+    # accident; require an explicit flag. `--apply` performs the rewrite.
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="actually rewrite the files")
+    args = parser.parse_args()
+    if not args.apply:
+        parser.error("refusing to rewrite files without --apply")
     main()

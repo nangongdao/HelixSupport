@@ -193,3 +193,44 @@ root cause:**chunk 逐条写入的 WAL 提交开销**(Windows 本地 SQLite,单�
   `style-src 'self'`,Phase 28.4)禁止内联 `<style>`,内联骨架会在控制台报
   CSP 违规并破坏冒烟门禁;因此该子项以"文档化不实施"收口,样式首屏依赖
   单张 `styles.css`(23KB,本地无跨域成本)。
+
+## 43.6 — 浏览器性能预算门禁(Core Web Vitals,2026-09-02)
+
+`scripts/performance_gate.py --base-url URL` 的浏览器层在 Playwright Chromium
+(1440×900,空队列基线)中实测网页与桌面壳(§D5 前置条件)两条轨道的指标,
+预算值在 `BROWSER_BUDGETS`。本机 clean-DB 实测(2026-09-02,PERF_PRECISE_MEMORY=1):
+
+| 指标 | web 实测 | web 预算 | 桌面壳实测 | 桌面壳预算 |
+|------|---------|---------|-----------|-----------|
+| FCP (first-contentful-paint) | 416–464 ms | 1800 ms | 408–432 ms | 800 ms |
+| LCP (largest-contentful-paint) | 684–836 ms | 2500 ms | 860–984 ms | 1000 ms |
+| CLS (layout-shift) | 0.0019 | 0.10 | 0.083–0.089 | 0.10 |
+| FID (first-input delay) | 0 ms | 100 ms | 0 ms | 50 ms |
+| TTI (无长任务窗近似) | 416–464 ms | 3800 ms | 408–432 ms | 2000 ms |
+| INP (worst row-click) | 3–5 ms | 300 ms | 5–14 ms | 300 ms |
+| 10k 队列渲染 | 5–10 ms | 2000 ms | 24–30 ms | 500 ms |
+| heap 增长 (20 刷新周期) | 0.21–0.48 MB | 15 MB | — | — |
+| 详情开关泄漏 (5 轮,GC 后) | 0.03 MB | 5 MB | — | — |
+
+要点:
+
+- **测量环境敏感**:桌面 LCP 在 860–984 ms 区间浮动,贴近 1000 ms 预算。
+  本机曾测到 1020–1220 ms 的连续越限——根因是系统级负载(后台 webview/
+  内存压力),**不是应用回归**;clean DB + 整机空闲后回落。CI nightly 的
+  runner 负载不同,wall-clock 预算对 runner 敏感,不进 per-PR 门。
+- **`PERF_PRECISE_MEMORY=1` 才启用精确 heap 与泄漏探针**(否则 Chromium
+  把 `performance.memory` 量子化为固定 10MB,测量无意义);CI 不设该变量,
+  探测按量子化跳过。`detail_leak_mb` 探针在**独立浏览器会话**跑
+  (`--js-flags=--expose-gc`),与主会话隔离——实测 `--expose-gc` 会把同
+  会话桌面 LCP 拉高 ~50ms,时延预算与内存探针互不污染。
+- **INP 探针必须走受信输入**:`locator.click()` 才会产生 interactionId,
+  程序化 `element.click()` 静默记不到任何事件;探针测到 0 时按「budget
+  went unenforced」显式报红,不静默跳过。
+- **`lcp_desktop_ms` 连续越限先查机器负载再查代码**:web 与桌面两轨同步
+  升高是系统级信号,单轨升高才是应用回归(Splash 交班/岛渲染)。
+- **sourcemap 从桌面包排除**:`desktop/helix-server.spec` 在 COLLECT 前
+  过滤 `.map`(22 chunk 共 2.12MB,web 端保留供调试),桌面包减重 ~2.1MB。
+
+相关测试:`tests/test_performance_gate.py`(静态预算键完备、桌面预算必须有
+web 孪生、INP/泄漏键覆盖);浏览器层 `python scripts/performance_gate.py
+--base-url http://127.0.0.1:8765`。

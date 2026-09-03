@@ -253,11 +253,18 @@ class Settings:
         origins = tuple(
             origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()
         )
-        widget_frame_ancestors = tuple(
-            "'self'" if source.strip() in {"self", "'self'"} else source.strip()
-            for source in os.getenv("WIDGET_FRAME_ANCESTORS", "'self'").split(",")
-            if source.strip()
-        )
+        # An unset variable keeps the "'self'" default; an explicitly empty
+        # value parses to an empty tuple and fails validation in __post_init__
+        # instead of silently reverting to the default.
+        widget_frame_ancestors_env = os.getenv("WIDGET_FRAME_ANCESTORS")
+        if widget_frame_ancestors_env is None:
+            widget_frame_ancestors: tuple[str, ...] = ("'self'",)
+        else:
+            widget_frame_ancestors = tuple(
+                "'self'" if source.strip() in {"self", "'self'"} else source.strip()
+                for source in widget_frame_ancestors_env.split(",")
+                if source.strip()
+            )
         api_keys_file_raw = os.getenv("API_KEYS_FILE")
         channel_webhooks_file_raw = os.getenv("CHANNEL_WEBHOOKS_FILE")
         deployment_profile = os.getenv("DEPLOYMENT_PROFILE", "single").strip().lower()
@@ -317,7 +324,7 @@ class Settings:
             enable_session_auth=_env_bool("ENABLE_SESSION_AUTH", False),
             prompt_canary_ratio=float(os.getenv("PROMPT_CANARY_RATIO", "0.0")),
             widget_secret=os.getenv("WIDGET_SECRET", "helix-widget-dev-secret"),
-            widget_frame_ancestors=widget_frame_ancestors or ("'self'",),
+            widget_frame_ancestors=widget_frame_ancestors,
             channel_webhooks_json=os.getenv("CHANNEL_WEBHOOKS_JSON", "{}"),
             channel_webhooks_file=(
                 Path(channel_webhooks_file_raw) if channel_webhooks_file_raw else None

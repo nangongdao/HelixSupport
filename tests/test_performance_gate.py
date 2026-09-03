@@ -31,12 +31,43 @@ class StaticBudgetTests(unittest.TestCase):
     def test_browser_budgets_cover_43_6_dimensions(self) -> None:
         for key in (
             "lcp_ms",
+            "fcp_ms",
             "cls",
+            "fid_ms",
+            "tti_ms",
             "long_task_count_30s",
             "queue_10k_render_ms",
             "heap_growth_mb",
+            # §43.6 residual closed: INP is asserted directly, not proxied
+            # through long tasks.
+            "inp_ms",
+            "inp_desktop_ms",
+            # Detail open/close leak probe — retention after close must stay
+            # under budget (5 open/close cycles, sampled post-GC).
+            "detail_leak_mb",
         ):
             self.assertIn(key, BROWSER_BUDGETS)
+
+    def test_desktop_budgets_have_web_twins(self) -> None:
+        """Every desktop paint budget must have a corresponding web twin.
+
+        The browser layer reuses one metrics_script for both contexts and
+        maps web keys to desktop keys via ``desktop_key_map``; a desktop
+        budget without a web twin would silently stay unassigned (the
+        fail-open shape that bit this gate repeatedly). This test pins the
+        pairing so adding a new metric requires consciously adding both
+        sides of the map.
+        """
+        desktop_twins = (
+            ("fcp_ms", "fcp_desktop_ms"),
+            ("lcp_ms", "lcp_desktop_ms"),
+            ("cls", "cls_desktop"),
+            ("fid_ms", "fid_desktop_ms"),
+            ("tti_ms", "tti_desktop_ms"),
+        )
+        for web_key, desktop_key in desktop_twins:
+            self.assertIn(web_key, BROWSER_BUDGETS)
+            self.assertIn(desktop_key, BROWSER_BUDGETS)
 
 
 if __name__ == "__main__":

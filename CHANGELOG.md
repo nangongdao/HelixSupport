@@ -204,6 +204,34 @@
 - **门禁**(`scripts/frontend_gate.py` `check_css_custom_properties`):汇集 `app/static` 下所有手写样式表(跳过 Vite 产物 `dist/`)的自定义属性定义,再报出每一个既无定义又无回退的 `var()` 引用。对 f8bc271 的父提交运行,精确报出上述两条无回退缺陷。检测核心拆为纯函数 `find_dangling_css_vars(sheets)` 以便用合成 CSS 测试——**这一拆立刻抓出门禁自身的 bug**:定义正则锚在行首,导致单行 `:root { --x: red }` 不被登记、`--x` 的每一处使用都被误报;去掉锚点是安全的,因为 `var()` 引用后面永不跟冒号。
 - **验证**:视觉门禁四面 **0.00% drift**(clean DB;首轮四面全飘是 UI 套件把 `support.db` 种了数据所致——把本次改动 revert 后百分比完全一致,证明这个 diff 在基线上像素中性);计算样式确认三处均已解析且随主题翻转;两处可见修复的对比度实测 `.csat-label` 6.24:1 暗 / 5.26:1 亮(12px,4.5:1 底线)、`.report-preview` 16.02:1 / 14.88:1;`ui_accessibility` 含桌面壳 pass 全绿;CSS 字节 99,791/125,000;`tests/test_frontend_gate.py` 新增 `DanglingCssVarTests` 6 例锁边界(定义/未定义、有无回退、跨表定义汇集、内联定义、行号、嵌套回退——`var(--a, var(--b))` 内层未定义时照样报,因为 `--a` 会回退到一个 guaranteed-invalid 值、声明仍然丢弃;这也正是仓库自己的 `var(--text-muted, var(--muted))` 干净的原因:`--muted` 有定义),共 19 例绿。
 
+### INP 直接归因探针:交互延迟从「长任务代理」升级为逐事件实测(2026-09-02)
+
+- **§43.6 残留关闭**:性能门禁的交互延迟此前一直用 `long_task_count_30s` ≤50 **代理** INP——长任务只统计 ≥50ms 的块,任何「慢但每块 <50ms」的交互或一根不快不慢的点击都无感;且长任务数无法区分是哪次交互慢、慢在哪。`scripts/performance_gate.py` 现在直接测 INP:`PerformanceObserver('event', durationThreshold: 0)` 在**任何交互发生前**注入页面,用 Playwright 受信输入(`locator.click()`)点真实队列行触发完整交互(pointerdown/pointerup/click 共享 interactionId,按 ID 分组取最长事件处理时长——这正是 INP 的定义),`expect_response` 等详情 fetch 落定确保 handler 全部跑完。程序化 `element.click()` 不带 interactionId、静默记不到任何东西,因此必须走受信输入管道。
+- **实测校准**(本机 Chromium,空队列基线):web `inp_ms` = 3.0ms、桌面壳 `inp_desktop_ms` = 6.0ms,预算定为 300ms(实测值 50–100 倍余量——行渲染毫秒级,余量留给 CI runner 抖动与未来功能成本;预算如此宽松正说明 INP 不是当前瓶颈,而探针的职责是**在它变成瓶颈的第一天就把主线程回归抓出来**,这与桌面 LCP 1000ms 的严格预算形成对照)。`inp_ms == 0.0` 视为探针失效(队列无可点行)→ 门禁显式报「budget went unenforced」,不再静默跳过。
+- **种子确定性**:点击目标由 `_ensure_queue_row` 通过应用自身 API 播种(`POST /api/conversations`,demo auth 对无 key 请求放行),再等一次轮询周期落定——不再赌队列里恰有数据,桌面壳与 web 两条测量轨共用同一行选择器(`.conversation-row button.conversation-item`)。
+- **验证**:浏览器层全绿(perf 门禁带 `--base-url` exit=0,`PERF_PRECISE_MEMORY=1` 下 heap 0.23MB/15MB);`tests/test_performance_gate.py` 新增 INP 两键覆盖断言共 3 例绿;同时把测量顺序修正为「种子在 paint/10k 渲染**之后**」——先种子会让 CLS/LCP 暴露在非空队列渲染下,而 INP 探针需要真实可点行,两个需求各得其所。
+
+### Core Web Vitals 补齐:浏览器层新增 FCP/FID/TTI 四组预算(2026-09-02)
+
+- **§43.6 性能预算从三指标扩到七指标**:浏览器层此前只测 LCP/CLS/长任务,现在补齐 FCP(First Contentful Paint)、FID(First Input Delay)、TTI(Time to Interactive)三组——web 与桌面壳各一份,共 10 项浏览器预算。`metrics_script` 单一脚本同时产出两上下文,桌面壳经 `desktop_key_map` 把每个 paint 键映射到 §D5 预算键。
+- **修复一个刚引入的 fail-open**:桌面壳路径此前只把 `lcp_ms`/`cls` 映射到 `lcp_desktop_ms`/`cls_desktop`,新增的三个桌面键若沿用旧写法会**从未被赋值**,而断言循环对缺键 `continue`——这正是本仓库反复踩过的「预算看似存在实则未接线」。改用整表映射后实测桌面五键全部落值;`tests/test_performance_gate.py` 新增 `test_desktop_budgets_have_web_twins` 钉住配对,以后加新指标必须同时加映射两侧,否则测试红。
+- **实测校准**(本机 Chromium,空队列基线,PERF_PRECISE_MEMORY=1):web FCP 416ms/预算 1800、TTI 416ms/3800、FID 0ms(页面在首次交互前已空闲)/100;桌面 FCP 424ms/800、TTI 424ms/2000、FID 0ms/50。LCP 684ms/2500、INP 3ms、CLS 0.0019,全部宽裕。
+- **bundle 分析顺手发现**:`app/static/dist/assets/` 22 个 chunk 共 728KB raw / 211KB gzip,其中 terminal 409KB(xterm.js 三 addon)按需懒加载且被首屏预算正确排除;但 **sourcemap 共 2.12MB,是 JS 的 298%**,被 PyInstaller 原样打进桌面包(`desktop/helix-server.spec` 把整个 `app/static` 收为 datas)——开发调试产物成了发货体积。spec 现在在 COLLECT 前过滤 `.map` 后缀,桌面包减重 ~2.1MB;web 端 sourcemap 保留不变。
+
+### 详情开关内存泄漏探针:5 轮开关循环测残留堆(2026-09-02)
+
+- **新增 `detail_leak_mb` 预算**(5.0MB):浏览器层现在对详情视图做「开→关」泄漏扫描——`selectConversation(id)` 打开所选会话的转录详情、`clearSelection()` 关闭,重复 5 轮;每轮关闭后强制 GC(`--js-flags=--expose-gc`)再采样堆,**采样稳态残留而非打开峰值**,预算断言闭合后的堆不逐轮爬升。详情渲染是 DOM 装配最重的路径(转录/标签/语言下拉/线程滚动),跨 clearSelection 残留的节点或监听器会在这里现形。
+- **独立探针会话**:GC 标志与强制 GC 只作用于独立 browser session,与主测量会话隔离——实测 `--expose-gc` 会把同会话的桌面 LCP 拉高 ~50ms(992→1036),时延预算与内存探针互不污染。探针 wait 放宽到 60s 吸收低负载下的渲染抖动。
+- **实测校准**(本机 Chromium,clean DB,PERF_PRECISE_MEMORY=1):`detail_leak_mb` = 0.03MB(关闭后残留 ~30KB,预算 5MB)——详情路径无泄漏;同轮 heap_growth 0.31MB/15MB。无行可点时探针显式报「budget went unenforced」,不静默跳过。CI nightly 不设 PERF_PRECISE_MEMORY 时探针与 heap 测量一样按量子化堆跳过,`:expose-gc` 不进入默认测量链路。
+
+### 脚本 lint 修复 + 覆盖率补测 + runbook/文档完善(2026-09-02)
+
+- **ruff 0.9.9(CI 口径)全绿**:消灭 scripts/ 下 16 个 lint 错误——15 个是 `_console.py` 统一改造引入的重复 `import sys`/`from pathlib import Path`(F811/E402,ruff --fix 安全清理),1 个是真实 bug:`split_main.py` 的 `__main__` 块调用**从未导入**的 `use_utf8_console()`(F821,该脚本 Phase 27.2 后从未被真正运行过)。`rebuild_main.py` 的 bootstrap `import sys` 加 noqa 对齐其余脚本。本地 0.16.x 的 473 项报告属版本差异噪音(仓库记录过「CI 口径 ruff 用 artifacts/ruff-099-pkg」),不在本次范围。
+- **`split_main.py` 破坏性保护**:验证时发现该脚本无 argparse,`--help` 直接执行 `main()` 把 `app/main.py` 和 `app/routers/conversations.py` 重写了一遍(已 `git checkout` 完整恢复)。补 `--apply` 显式开关,无参数或 `--help` 一律 `parser.error` 拒绝执行——一次性的迁移工具也要防误触。
+- **覆盖率 85% → 补测**(新增 11 个测试文件共 140 例,切审计/安全/配置/遥测/渠道关键面):`tests/test_webhook_safety.py`(SSRF 防护 78%→98%:字面/解析/注入 resolver/默认 resolver 错误翻译/IPv4-mapped);`tests/test_audit_gap.py`(audit_gap 45%→97%:gap 持久化/高风险吞 gap/同事务锚定回滚/合并/清空);`tests/test_anchor_service.py`(anchor_service 0%→96%:锚定写/窗口门控/同 tip 幂等/篡改检出/健康报告);`tests/test_audit_chain.py`(audit_chain 6%→93%:verify_chain 哈希/prev_hash 篡改检出、archive 各校验错误分支、流式验证器 O(1) 内存契约——篡改中段事件在产出后继前即抛错);`tests/test_audit_anchor_verify.py`(audit_anchor 74%→96%:verify_signed_anchor 缺字段/非整数 seq/schema/base64/密钥长度/kid 不匹配/未信任/签名不匹配、verify_anchor_vs_head 环境/哈希/seq/非单调);`tests/test_telemetry_edge.py` + `tests/test_telemetry_otel_branches.py`(telemetry 69%→99%:直方图单样本/多样本百分位、duration_ms None、DEBUG 日志、OTel mock 分支 configure/span 转发/缺包降级);`tests/test_cache.py`(TTLCache 全分支,保留原有 3 例);`tests/test_channel_providers_branches.py`(channel_providers →100%:签名头缺失/畸形/超窗/错 HMAC、payload 归一化错误、附件引用、适配器查找);`tests/test_channel_key_id.py`(channel_webhooks →95%:key_id 凭证选择全失败模式统一 None、注册表配置校验);`tests/test_attachment_router_errors.py`(routers/attachments 75%→96%:404/403/409/413 错误响应);`tests/test_config_validation.py`(config.py 88%→93%:21 个 env 校验分支 fail-fast)。
+- **runbook 非作者执行预检**(Gate B 项):两个 runbook 的 `APP_VERSION` 检查从 `import app.main`(触发整个应用初始化:建库/起 worker/刷日志)改为 AST 静态读取——零副作用,输出可预测。`docs/OPERATIONS.md` 补「Performance Gate Failing (Browser Layer)」故障排查段(桌面/网页两轨同升是系统负载信号、`PERF_PRECISE_MEMORY` 语义、泄漏探针失效形态、`--update` 使用纪律);`docs/PERF_NOTES.md` 补 §43.6 浏览器性能预算实测表与测量环境要点(桌面 LCP 860–984ms 贴线、`--expose-gc` 隔离、INP 受信输入要求、sourcemap 桌面包排除)。
+- **覆盖率补测自抓一个已发货 fail-open(2026-09-03 修复)**:新测试 `test_rejects_widget_frame_ancestors_empty` 暴露 `WIDGET_FRAME_ANCESTORS=""` 被 `from_env` 的生成器过滤成空元组后,又经 `widget_frame_ancestors or ("'self'",)` **静默回退到默认值**——显式配置错误被吞,与该测试文件钉住的「env 校验 fail-fast,绝不静默回退」契约相反。修复:`from_env` 区分未设置(取 `'self'` 默认)与显式置空(保留空元组,由 `__post_init__` 的 `must contain at least one source` 校验抛错);删除构造处的 `or` 回退。这也是本仓库反复出现的同一类缺陷的第 N 例:回退写法让「看似存在的校验」对特定输入路径失效。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

@@ -76,6 +76,12 @@ a = Analysis(
     noarchive=False,
 )
 
+# Vite emits a .map per chunk (2.1 MB in the current build) for debugging
+# the web build in a real browser. The desktop sidecar serves the same
+# assets but its bundle is local and shipped to end users, so the maps are
+# pure dead weight there — drop them from the collected datas.
+a.datas = [d for d in a.datas if not str(d[0]).endswith(".map")]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
