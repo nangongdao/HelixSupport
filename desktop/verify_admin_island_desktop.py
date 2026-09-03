@@ -115,7 +115,7 @@ def main() -> int:
             page.wait_for_selector(
                 f"#memberListReact .admin-member:has-text('{actor_id}')", timeout=15000
             )
-            row = page.locator(f"#memberListReact .admin-member", has_text=actor_id)
+            row = page.locator("#memberListReact .admin-member", has_text=actor_id)
             checks["member_invited_via_bridge"] = True
             checks["member_role_label"] = "主管" in (row.text_content() or "")
 

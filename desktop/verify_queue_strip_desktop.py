@@ -84,7 +84,7 @@ def main() -> int:
             checks["initial_count_format"] = initial_count.endswith("个会话")
 
             # Seed enough conversations to overflow the first page (50 rows).
-            run_id = uuid4().hex[:6]
+            uuid4().hex[:6]
             seeded = page.evaluate(
                 """async (count) => {
                     let ok = 0;

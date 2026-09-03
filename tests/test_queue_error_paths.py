@@ -7,12 +7,11 @@ coverage on app/queue.py.
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 from app.database import Database
 from app.queue import QueueUnavailableError, RedisTaskQueue, SQLiteTaskQueue, create_task_queue

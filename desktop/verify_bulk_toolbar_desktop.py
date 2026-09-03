@@ -81,7 +81,7 @@ def main() -> int:
             )
 
             # Seed conversations so at least two island rows exist.
-            run_id = uuid4().hex[:6]
+            uuid4().hex[:6]
             seeded = page.evaluate(
                 """async (count) => {
                     let ok = 0;
