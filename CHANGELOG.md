@@ -6,6 +6,15 @@
 
 ### Added
 
+- **React 岛渲染性能优化**（2026-09-03）：
+  - 队列岛核心组件 memo 化：`QueueRow`、`BulkToolbar`、`QueueStrip` 使用 `React.memo` 包装，仅在 props 实际变化时重渲染。`QueueRow` 使用自定义比较函数，精确检查所有影响渲染的会话字段（id/customer_name/status/preview/sla_due_at/sla_breached/assigned_agent/intent/claim_active/claimed_by/labels）以及视觉状态（active/selected/canOperate/compact），避免 SSE 事件更新单行时触发整个队列重渲染。
+  - SLA 格式化优化：在 `QueueRow` 内使用 `useMemo` 缓存 `formatSla()` 计算结果，仅在相关字段（status/sla_due_at/sla_breached）变化时重新计算，减少重复日期计算开销。
+  - 虚拟滚动窗口计算优化：在 `queue-island.jsx` 中使用 `useMemo` 缓存 `computeWindow()` 结果，避免 scrollTop 微小变化时的重复计算，减少滚动时的抖动。
+  - 预期收益：200+ 会话队列下，SSE 单行更新场景渲染时间减少 70-80%；虚拟滚动流畅度提升；内存占用保持稳定。详细分析见 `docs/REACT_ISLAND_PERF_ANALYSIS.md`。
+  - 测试验证：vitest 队列岛测试 17 例全部通过，frontend_gate 351 例通过，无回退。
+
+### Added
+
 - **运维与故障排查手册**（2026-09-03）：
   - 新增 `docs/RUNBOOK_M0.md` 和 `docs/RUNBOOK_1_4.md` 运维手册，覆盖 M0（SEC-001/002、REL-001 停止线修复）和 1.4（SEC-003/004/005/008、AI-001、ARC-001 安全运营基线）的部署前检查清单、升级步骤、凭据轮换操作、故障排查流程、回滚指南、监控告警规则和非作者执行验证标准。两份手册包含完整的 OIDC 配置、DSR 权限分离、Redis fail-closed 验证、API key/渠道 secret 双活轮换、审计锚点导出与恢复、AI 安全评测与模型回滚的操作步骤。
   - 新增 `docs/TROUBLESHOOTING.md` 故障排查手册，覆盖生产环境常见故障场景：服务不可用（502/503 降级、健康检查失败）、性能降级（延迟升高、队列积压）、数据异常（审计链验证失败、空间增长）、认证与权限（API key 401、OIDC 重定向失败）、队列与后台任务（webhook 积压、定时任务未执行）、外部依赖故障（模型 API 超时、Redis 连接失败）。每个场景包含症状、可能原因、诊断步骤（含具体命令）、缓解措施和 5 Why 根因分析示例。附带诊断工具清单和日志分析方法。

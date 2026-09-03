@@ -5,9 +5,13 @@
  * mirrors the legacy DOM contract it replaces — queueRowHtml's class names,
  * #queueCount/#loadMore in the footer, #bulkToolbar's controls — because
  * ui_smoke and the axe passes locate by exactly those.
+ *
+ * Performance: QueueRow/BulkToolbar/QueueStrip are memoized to prevent
+ * unnecessary re-renders when the queue snapshot updates but individual
+ * conversation data hasn't changed (e.g., SSE events updating a single row).
  */
 
-import React, { useState } from "react";
+import React, { useState, memo, useMemo } from "react";
 
 export const QUEUE_EVENTS = Object.freeze({
   UPDATED: "helix-conversations-updated",
@@ -62,10 +66,21 @@ export function computeWindow({ total, scrollTop, viewport, rowHeight, overscan 
 
 /* ── row component (mirrors legacy queueRowHtml class names) ─────────── */
 
-export function QueueRow({ conversation, active, selected, canOperate, compact, onSelect, onToggleBulk }) {
+/**
+ * Memoized queue row component. Only re-renders when conversation data or
+ * visual state (active/selected/compact) actually changes. Custom comparison
+ * function checks all fields that affect rendering to avoid false negatives.
+ */
+export const QueueRow = memo(function QueueRow({ conversation, active, selected, canOperate, compact, onSelect, onToggleBulk }) {
   const route = conversation.assigned_agent || conversation.intent || "待路由";
   const labels = conversation.labels || [];
-  const sla = formatSla(conversation);
+
+  // Memoize SLA calculation — only recompute when relevant fields change
+  const sla = useMemo(
+    () => formatSla(conversation),
+    [conversation.status, conversation.sla_due_at, conversation.sla_breached]
+  );
+
   return (
     <div className={`conversation-row${canOperate ? " has-selection" : ""}${selected ? " is-selected" : ""}`}>
       {canOperate && (
@@ -122,11 +137,37 @@ export function QueueRow({ conversation, active, selected, canOperate, compact, 
       </button>
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if displayed data actually changed.
+  // Check all conversation fields that affect the rendered output.
+  const prevConv = prevProps.conversation;
+  const nextConv = nextProps.conversation;
+
+  return (
+    prevConv.id === nextConv.id &&
+    prevConv.customer_name === nextConv.customer_name &&
+    prevConv.status === nextConv.status &&
+    prevConv.preview === nextConv.preview &&
+    prevConv.sla_due_at === nextConv.sla_due_at &&
+    prevConv.sla_breached === nextConv.sla_breached &&
+    prevConv.assigned_agent === nextConv.assigned_agent &&
+    prevConv.intent === nextConv.intent &&
+    prevConv.claim_active === nextConv.claim_active &&
+    prevConv.claimed_by === nextConv.claimed_by &&
+    JSON.stringify(prevConv.labels) === JSON.stringify(nextConv.labels) &&
+    prevProps.active === nextProps.active &&
+    prevProps.selected === nextProps.selected &&
+    prevProps.canOperate === nextProps.canOperate &&
+    prevProps.compact === nextProps.compact
+  );
+});
 
 /* ── footer strip (mirrors legacy #queueCount/#loadMore) ───────────────── */
 
-export function QueueStrip({ count, hasMore, loadingMore }) {
+/**
+ * Memoized footer strip. Only re-renders when count/hasMore/loadingMore change.
+ */
+export const QueueStrip = memo(function QueueStrip({ count, hasMore, loadingMore }) {
   return (
     <div className="queue-footer">
       <span>{count}{hasMore ? "+" : ""} 个会话</span>
@@ -143,7 +184,7 @@ export function QueueStrip({ count, hasMore, loadingMore }) {
       </button>
     </div>
   );
-}
+});
 
 /* ── bulk toolbar (mirrors legacy #bulkToolbar) ────────────────────────── */
 
@@ -164,7 +205,11 @@ export function parseBulkLabels(text) {
     .filter(Boolean);
 }
 
-export function BulkToolbar({ count, busy, onApply, onClear }) {
+/**
+ * Memoized bulk toolbar. Only re-renders when count/busy change.
+ * Internal state (action/labelsText/error) is preserved across parent re-renders.
+ */
+export const BulkToolbar = memo(function BulkToolbar({ count, busy, onApply, onClear }) {
   const [action, setAction] = useState("priority-high");
   const [labelsText, setLabelsText] = useState("");
   const [error, setError] = useState(null);
@@ -236,4 +281,4 @@ export function BulkToolbar({ count, busy, onApply, onClear }) {
       </button>
     </div>
   );
-}
+});

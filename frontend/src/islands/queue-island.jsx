@@ -27,7 +27,7 @@
  * See DESKTOP_TAURI_PLAN.md §3.1 + §D3 + §6.2.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -86,9 +86,20 @@ export function QueueIsland() {
   const rowHeight = ESTIMATED_ROW_HEIGHT;
   const useVirtual = conversations.length > VIRTUAL_THRESHOLD;
   const viewport = listRef.current?.clientHeight || 600;
-  const win = useVirtual
-    ? computeWindow({ total: conversations.length, scrollTop, viewport, rowHeight, overscan: 4 })
-    : null;
+
+  // Memoize virtual scrolling window computation to avoid recalculating when
+  // the result would be identical (e.g., scrollTop changes by a few pixels
+  // but the visible row range stays the same).
+  const win = useMemo(() => {
+    if (!useVirtual) return null;
+    return computeWindow({
+      total: conversations.length,
+      scrollTop,
+      viewport,
+      rowHeight,
+      overscan: 4
+    });
+  }, [useVirtual, conversations.length, scrollTop, viewport, rowHeight]);
 
   const handleScroll = useCallback((e) => {
     setScrollTop(e.currentTarget.scrollTop);
