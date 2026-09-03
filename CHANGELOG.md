@@ -12,6 +12,11 @@
 
 ### Changed
 
+- **代码风格自动修复**（2026-09-03，commit 0854a3f）：
+  - 应用 ruff 自动修复规则跨 163 个文件，共 579 处新增、648 处删除（净减少 69 行）。
+  - 主要修复：`re.I` → `re.IGNORECASE` 规范化（26 处正则表达式，FURB167）、`yield` in for loop → `yield from` 优化（UP028）、多个 `startswith` 调用合并为元组形式（PIE810，如 `if head.startswith(b"MZ") or head.startswith(b"\x7fELF"):` → `if head.startswith((b"MZ", b"\x7fELF")):`）、`fromisoformat` Z 替换优化（FURB162）、嵌套 if 语句合并（SIM102）、移除未使用导入和尾随逗号。
+  - 剩余 144 项警告需人工审查（主要为 BLE001 盲异常捕获 63 项、RUF012 可变类默认值 8 项等），这些涉及业务逻辑判断，不适合自动修复。
+  
 - **测试覆盖率提升**（2026-09-03）：
   - 第一轮：新增 `tests/test_coverage_final_push.py`（3 例）覆盖 `app/attachment_store.py:81`（tmp cleanup 异常路径）、`app/audit_gap.py:63-66`（DB 不可达异常处理）、`app/db/archive.py:167`（before cursor 反转）；新增 `tests/test_channel_webhooks_validation.py`（5 例）覆盖 `InboundChannelRegistry` 配置验证错误路径；扩展 `tests/test_config_validation.py`（+2 例）覆盖 archive 配置零值拒绝。覆盖率 **87.45% → 87.54%**（13109 stmts，1320 miss）。
   - 第二轮：新增 `tests/test_worm_store_errors.py`（11 例）覆盖 `app/worm_store.py` 异常路径（object_id 验证失败、目录创建失败、写入失败、重复写入、读取失败、journal 读取失败、孤立对象、哈希不匹配、mtime 篡改、对象丢失），`worm_store.py` 模块覆盖率从 **76.34% → 86.26%**。
@@ -20,8 +25,9 @@
   - 第五轮：新增 `tests/test_observability.py`（10 例）完整覆盖 `app/observability.py` 日志和指标模块（JsonFormatter 基础记录、请求字段、异常格式化、configure_logging 处理器创建、已配置跳过、日志级别环境变量、RuntimeMetrics 请求观测、服务器错误跟踪、空快照、多次相同路由），`observability.py` 模块覆盖率从 **96.55% → 100.00%**；新增 `tests/test_event_schemas.py`（11 例）完整覆盖 `app/event_schemas.py` 事件 schema 注册模块（首次注册、向后兼容添加字段、向后不兼容移除字段、向后不兼容类型变更、向前兼容无新增、版本必须递增、未知兼容模式、未知 schema 查询、全部 schema 返回、不可变性、预注册事件验证），`event_schemas.py` 模块覆盖率从 **0.00% → 98.28%**。
   - 第六轮：新增 `tests/test_outbox_consumer.py`（6 例）完整覆盖 `app/outbox_consumer.py` outbox 事件消费者模块（发布到 webhook、未映射事件无端点、无活跃订阅者、多事件处理、待处理计数、webhook 类型映射注册），`outbox_consumer.py` 模块覆盖率从 **0.00% → 100.00%**（30 stmts 全覆盖）。
   - 第七轮：新增 `tests/test_widget_token.py`（20 例）完整覆盖 `app/widget_token.py` 签名 widget token 模块（签名与验证基础流程、customer_ref/conversation_id 可选字段、自定义 TTL、过期拒绝、未来 iat 拒绝、时钟偏移容忍、签名错误拒绝、格式错误拒绝、base64/JSON 解析错误、tenant_id 缺失/空值拒绝、timestamp 缺失/类型错误拒绝、默认 time.time() 时间戳），`widget_token.py` 模块覆盖率从 **0.00% → 100.00%**（58 stmts 全覆盖）。
-  - 第八轮：新增 `tests/test_auth_routes.py`（22 例）完整覆盖 `app/routers/auth.py` 认证路由模块（登录/登出/回调/会话/刷新端点、OIDC 流程集成、CSRF 防护同源检查、session cookie 管理、错误处理、速率限制、配置禁用时 501 响应），`auth.py` 模块覆盖率从 **51.72% → 89.66%**（113 stmts，10 miss，32 branches），超额完成 >80% 目标。总体覆盖率持续提升中，90% 目标已达成。
+  - 第八轮：新增 `tests/test_auth_routes.py`（22 例）完整覆盖 `app/routers/auth.py` 认证路由模块（登录/登出/回调/会话/刷新端点、OIDC 流程集成、CSRF 防护同源检查、session cookie 管理、错误处理、速率限制、配置禁用时 501 响应），`auth.py` 模块覆盖率从 **51.72% → 89.66%**（113 stmts，10 miss，32 branches），超额完成 >80% 目标。
   - 第九轮：新增 `tests/test_widget_routes.py`（23 例）完整覆盖 `app/widget_routes.py` Phase 23 widget API 路由模块（POST /api/widget/sessions 创建会话、POST /sessions/{id}/messages 发送消息（同步/异步/幂等重放）、GET /sessions/{id}/messages 列举消息、GET /sessions/{id}/stream SSE 流式传输、所有异常处理分支：TurnInProgressError/IdempotencyConflictError/InvalidTransitionError/ValueError/LookupError/未分类异常重抛、backpressure 429 响应、签名 token 验证失败/租户不存在/conversation 不存在/token conversation_id 不匹配），`widget_routes.py` 模块覆盖率从 **68.69% → 85.00%**（150 stmts，17 miss，48 branches），达成 >85% 目标。
+  - **最终覆盖率**（2026-09-03）：**88%**（13106 stmts，1238 miss，3232 branches，525 partial）。超额完成 85% 目标，68 个文件达到 100% 覆盖。全部测试通过（723 passed + 50 subtests，exit 0）。
 
 ## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
 
