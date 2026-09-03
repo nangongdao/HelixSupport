@@ -6,6 +6,46 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## 1.1.0 — 智能质量与集成成熟 (2026-09-03)
+
+Phase 19-21-25 完成，标志着 Helix Support 从功能完整的单体产品升级为**可被第三方集成的商用级智能客服平台**。本版本实现了提示词/模型版本管理与 Canary 对照部署、连接器健壮性防护、Supervisor 质量看板、知识生命周期管理、RFC 9457 统一错误契约、OpenAPI 治理、Python SDK 以及完整 API 文档站。
+
+**成熟度提升**: 总评 3.0 → 3.6；智能质量 2.5 → 3.8；集成能力 2.0 → 4.0；可靠性 3.5 → 3.8。
+
+**发布亮点**:
+- ✅ **提示词/模型版本注册表**：任何模型、提示词变更都可登记、可对照、可回滚
+- ✅ **Canary 对照部署**：流量分桶、稳定复现、按版本聚合指标
+- ✅ **Golden Set 27 例**：覆盖多轮上下文、CJK 检索、提示注入防护、越权探测
+- ✅ **租户模型策略与预算**：允许模型列表、每日 turn 预算、超限自动降级
+- ✅ **连接器运行时防护**：熔断/重试/降级、租户隔离、故障注入测试
+- ✅ **出站 Webhook**：HMAC 签名、指数退避重试、死信队列、事件去重
+- ✅ **Supervisor 质量看板**：按天×租户×意图×版本聚合、趋势图表、知识缺口列表
+- ✅ **知识生命周期**：draft/pending_review/published/retired 状态、强制审批、负反馈回流
+- ✅ **RFC 9457 统一错误契约**：type/title/status/detail/instance + request_id/code
+- ✅ **OpenAPI 治理**：快照门禁、破坏性变更检测、全端点文档标注
+- ✅ **Python SDK**：28 个测试、类型化错误、重试与幂等键、SSE 流式、webhook 验签
+- ✅ **API 参考文档**：集成指南（166 行）+ 完整端点参考（6270 行）
+
+**完成报告**:
+- `docs/PHASE_19_COMPLETION.md`（智能质量与集成成熟）
+- `docs/PHASE_20_COMPLETION.md`（连接器健壮性与真实接入）
+- `docs/PHASE_21_COMPLETION.md`（Supervisor 质量看板与知识运营）
+- `docs/PHASE_25_COMPLETION.md`（API 治理与开发者体验）
+
+### Added
+
+- **Phase 25 API 治理与开发者体验**（2026-09-03）：
+  - **25.1 RFC 9457 统一错误契约**：`app/errors.py` 的 `problem_response()` 生成标准化错误响应（type/title/status/detail/instance + request_id/code），Content-Type 为 `application/problem+json`。错误类型体系：`urn:helix:error:validation`（422）、`urn:helix:error:authentication`（401）、`urn:helix:error:permission`（403）、`urn:helix:error:not-found`（404）、`urn:helix:error:conflict`（409）、`urn:helix:error:rate-limit`（429）、`urn:helix:error:service-unavailable`（503）。`docs/ERRORS.md` 错误目录记录每类错误的语义、可重试性、处置建议。向后兼容：保留旧 `detail` 字段。
+  - **25.2 OpenAPI 治理**：`scripts/openapi_snapshot.py` 实现快照对比门禁，检测破坏性变更（删除端点、删除字段、类型变更、删除/必填参数）并返回非零退出码。快照文件 `api/openapi.json` 作为 API 契约基线。全部 43+ 端点补充 `summary`/`description`，按 tag 分组（Conversations、Admin、Knowledge、Quality、Webhooks、Auth、Widget、Channels、Audit），Schema 定义完整。测试覆盖：`tests/test_openapi_snapshot.py`。
+  - **25.3 API 版本与弃用策略**：`docs/API_POLICY.md` 成文化策略：响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、CHANGELOG 记录每次变更。语义化版本遵循 [semver.org](https://semver.org)：MAJOR（破坏性变更）、MINOR（向后兼容新增）、PATCH（向后兼容修复）。
+  - **25.4 Python 客户端 SDK**：`clients/python/src/helix_client/`（612 行）完整实现。`HelixClient` 类封装全部 API：会话 CRUD、消息发送（支持幂等键）、turn job 流式（SSE 事件迭代器）、v2 游标分页（`list_conversations_v2`/`iter_conversations_v2` 自动翻页）、反馈、知识草稿、Admin API（租户/成员/配额/使用导出）、Widget chat。错误层次：`HelixError`（基类）、`HelixAuthenticationError`（401）、`HelixPermissionError`（403）、`HelixNotFoundError`（404）、`HelixConflictError`（409）、`HelixRateLimitError`（429）、`HelixValidationError`（422）。重试机制：指数退避（最多 3 次）。辅助函数：`verify_webhook_signature()`（HMAC-SHA256）。测试覆盖：`clients/python/tests/`（28 例，test_client.py + test_client_v2.py + test_e2e.py）。
+  - **25.5 API 参考文档站**：`docs/api/guide.md`（166 行集成指南：认证、幂等、分页、流式 SSE、Web Chat、Webhook 验签、RFC 9457 错误、示例流程、Python SDK 参考）+ `docs/api/reference.md`（6270 行完整端点参考，从 OpenAPI 自动生成，按 tag 分组，包含全部请求/响应 schema、示例、错误码）。生成工具：`scripts/generate_api_docs.py`。
+  - **完成报告**：`docs/PHASE_25_COMPLETION.md` 记录全部实现细节、测试结果（SDK 28 例全部通过、OpenAPI 快照门禁通过、Golden Set 27 例通过）、验收门槛检查、成熟度评分变化（集成能力 3.5 → 4.0，交付工程 3.5 → 4.0）。
+
 - **Phase 20 连接器健壮性与真实接入**（2026-09-03）：
   - **20.1 连接器运行时防护**：`app/connectors_runtime.py` 实现统一防护层，包含熔断器状态机（closed → open → half_open → closed，按 (tenant_id, connector) 隔离）、指数退避重试（仅针对 TransientConnectorError）、降级语义（熔断打开时返回 unavailable 结果而非抛异常）。包装器：`ResilientOrderConnector`、`ResilientKnowledgeConnector`、`ResilientCRMConnector`。测试覆盖：`tests/test_connectors_runtime.py`（19 例，验证状态转换、重试逻辑、降级语义、租户隔离）。
   - **20.2 编排层集成**：`app/tools.py` 的 `ToolGateway` 接受连接器依赖注入（order_connector/knowledge_connector/crm_connector），默认使用 Sandbox 实现向后兼容。降级路径：Order 连接器 unavailable 升级人工，Knowledge 连接器降级回退内置 FTS 检索。测试覆盖：`tests/test_connector_degradation.py`（7 例，验证降级行为、Golden Set 在降级路径下仍 100% 通过）。
