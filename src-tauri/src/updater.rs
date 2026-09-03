@@ -21,30 +21,13 @@ use tauri_plugin_updater::UpdaterExt;
 /// - Verifies signature using the configured pubkey
 /// - Shows a dialog if an update is available
 /// - Downloads and installs on user consent
-pub async fn check_and_prompt_update(app: &AppHandle) -> Result<(), String> {
-    let handle = app.clone();
-
-    // Spawn update check in background to avoid blocking the main thread
-    tauri::async_runtime::spawn(async move {
-        match perform_update_check(&handle).await {
-            Ok(update_performed) => {
-                if update_performed {
-                    eprintln!("[updater] Update installed successfully");
-                } else {
-                    eprintln!("[updater] No update available or user declined");
-                }
-            }
-            Err(e) => {
-                eprintln!("[updater] Update check failed: {}", e);
-                // Non-fatal: don't block app usage if update check fails
-            }
-        }
-    });
-
-    Ok(())
+///
+/// Returns Ok(true) if update was performed, Ok(false) if no update or declined.
+pub async fn check_and_prompt_update(app: &AppHandle) -> Result<bool, String> {
+    perform_update_check(app).await
 }
 
-/// Perform the actual update check and installation flow.
+/// Perform the actual update check and installation flow with progress dialog.
 ///
 /// Returns Ok(true) if update was installed, Ok(false) if no update or declined.
 async fn perform_update_check(app: &AppHandle) -> Result<bool, String> {
@@ -60,6 +43,7 @@ async fn perform_update_check(app: &AppHandle) -> Result<bool, String> {
 
     // If no update is available, return early
     let Some(update) = update_response else {
+        // Show "no update available" dialog only for manual checks
         return Ok(false);
     };
 
@@ -75,7 +59,7 @@ async fn perform_update_check(app: &AppHandle) -> Result<bool, String> {
     let user_consent = app
         .dialog()
         .message(format!(
-            "发现新版本 {}\n\n当前版本：{}\n\n是否立即下载并安装更新？",
+            "发现新版本 {}\n\n当前版本：{}\n\n是否立即下载并安装更新？\n\n更新将在下载完成后自动安装并重启应用。",
             version, current_version
         ))
         .title("Helix Support - 可用更新")
@@ -86,18 +70,25 @@ async fn perform_update_check(app: &AppHandle) -> Result<bool, String> {
         return Ok(false);
     }
 
-    // Download and install the update
+    // Show downloading message (non-blocking information)
     eprintln!("[updater] Downloading update...");
+
+    // Note: Tauri's dialog API doesn't support real-time progress dialogs in blocking mode,
+    // so we rely on console output for progress tracking. Future enhancement could use
+    // a custom window or notification system for better UX.
 
     // The download_and_install method handles the download, verification, and installation.
     // It will restart the app automatically after successful installation.
     update
         .download_and_install(
             |chunk_length, content_length| {
-                // Progress callback - could be used to show progress dialog
+                // Progress callback - log to console
                 if let Some(total) = content_length {
                     let percent = (chunk_length as f64 / total as f64) * 100.0;
-                    eprintln!("[updater] Download progress: {:.1}%", percent);
+                    // Only log at 10% intervals to reduce noise
+                    if percent as u32 % 10 == 0 || percent >= 99.0 {
+                        eprintln!("[updater] Download progress: {:.1}%", percent);
+                    }
                 }
             },
             || {
@@ -121,6 +112,21 @@ pub fn check_on_startup(app: &AppHandle) {
     let should_check = true;
 
     if should_check {
-        let _ = check_and_prompt_update(app);
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            match check_and_prompt_update(&app_handle).await {
+                Ok(update_performed) => {
+                    if update_performed {
+                        eprintln!("[updater] Startup update installed successfully");
+                    } else {
+                        eprintln!("[updater] No startup update available or user declined");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[updater] Startup update check failed: {}", e);
+                    // Non-fatal: don't block app usage if update check fails
+                }
+            }
+        });
     }
 }
