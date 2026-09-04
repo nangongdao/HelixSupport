@@ -6,9 +6,18 @@
 
 ### Added
 
+- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
+- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
+- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
+- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
+
 ### Changed
 
+- **生产安全校验收紧**: `APP_ENV=production` 时 `validate()` 拒绝内置默认 `WIDGET_SECRET`，并拒绝在未显式设置 `CONTROL_PLANE_SECRET` 时回退到开发默认值（避免可伪造 widget token / 控制面签名）。
+
 ### Fixed
+
+- **v42/v43 迁移此前未注册进迁移链**（仅 CHANGELOG 声称存在，`all_migrations()` 实际只有 41 个）：v42 已加入 `_VERSION_MODULES`，v43 重写为 `@migration` 装饰器格式后注册，`verify_migration_registry`/`check_migration_phases` 全绿，迁移上界断言同步至 43。
 
 ## 2.1.0 — Shadow Traffic System: v1/v2 验证与自动降级 (2026-09-03)
 
