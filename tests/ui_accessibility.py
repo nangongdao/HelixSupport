@@ -54,6 +54,11 @@ def wait_for_desktop_shell(page: Page) -> None:
     accessibility pass rather than relying on the web scan below.
     """
     response = page.goto(BASE_URL, wait_until="domcontentloaded")
+    # The island loader only mounts React surfaces when __HELIX_ISLAND_MODE__
+    # is set (main.js sets it inside the real shell); the init script must be
+    # registered *before* goto so it runs ahead of every page script.
+    page.add_init_script("() => { window.__HELIX_ISLAND_MODE__ = true; }")
+    response = page.goto(BASE_URL, wait_until="domcontentloaded")
     assert response is not None and response.ok
     page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
     # Islands render asynchronously; any React content proves the mount.
