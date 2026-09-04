@@ -264,6 +264,9 @@ class SecretsConfigTests(unittest.TestCase):
                 app_env="production",
                 auth_mode="api_key",
                 api_keys_file=secrets,
+                # Production must not fall back to the development secrets.
+                widget_secret="production-widget-secret-32bytes-long",
+                control_plane_secret="production-control-secret-32bytes-long",
             )
             settings.validate()  # must not raise: keys come from the file
 

@@ -93,6 +93,22 @@ class Ed25519KmsSigner:
             )
         )
 
+    @classmethod
+    def from_encoded(cls, encoded: str) -> Ed25519KmsSigner:
+        """Restore a signer from a base64-encoded raw Ed25519 private key.
+
+        ``AUDIT_ANCHOR_KEY`` is expected to be the base64 encoding of the
+        32-byte raw private key (``private_bytes(Raw, Raw, NoEncryption)``).
+        Reusing a persisted key across restarts keeps the ``kid`` stable so
+        previously written anchors stay verifiable after a restart.
+        """
+        try:
+            raw = base64.b64decode(encoded.encode("ascii"), validate=True)
+            ed25519.Ed25519PrivateKey.from_private_bytes(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("AUDIT_ANCHOR_KEY must be base64 of a 32-byte Ed25519 private key") from exc
+        return cls(private_key=raw)
+
     @property
     def public_key(self) -> bytes:
         key = ed25519.Ed25519PrivateKey.from_private_bytes(self.private_key)

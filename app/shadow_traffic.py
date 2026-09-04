@@ -97,7 +97,7 @@ async def shadow_request_to_v2(
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.request(
                 method=snapshot.method,
-                url=f"http://127.0.0.1:8000{v2_path}",
+                url=f"{settings.shadow_traffic_base_url}{v2_path}",
                 headers=headers,
                 content=snapshot.body,
             )
@@ -252,3 +252,53 @@ def create_shadow_task(
             db=db,
         )
     )
+
+
+def maybe_shadow_request(
+    *,
+    settings: Settings,
+    db: Database,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    v1_status_code: int,
+    v1_response_body: dict[str, Any] | None,
+    v1_latency_ms: int,
+    tenant_id: str,
+    request_id: str,
+) -> None:
+    """Sampled, fire-and-forget shadow of a v1 request to v2 (ROADMAP 2.1.x).
+
+    Only GET/read requests are eligible: shadow replay must never duplicate
+    a write. The v2 replay shares the *same* API key/tenant headers as the
+    original request, so v2 authorization is exercised identically. The
+    snapshot and comparison are best-effort — any failure is logged, never
+    raised (fail-safe by construction).
+    """
+    if not should_shadow_request(settings):
+        return
+    if method not in {"GET", "HEAD", "OPTIONS"}:
+        return
+    try:
+        snapshot = ShadowRequest(
+            method=method,
+            path=path,
+            headers=dict(headers),
+            body=body,
+            tenant_id=tenant_id,
+            request_id=request_id,
+        )
+        create_shadow_task(
+            snapshot=snapshot,
+            v1_response_body=v1_response_body,
+            v1_latency_ms=v1_latency_ms,
+            settings=settings,
+            db=db,
+        )
+        logger.info(
+            "shadow.scheduled",
+            extra={"request_id": request_id, "method": method, "route": path},
+        )
+    except Exception:  # pragma: no cover - defensive; shadowing never breaks v1
+        logger.exception("shadow.schedule_failed")

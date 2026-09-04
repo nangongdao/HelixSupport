@@ -406,6 +406,8 @@ _VERSION_MODULES = [
     "v39_webhook_secret_format",
     "v40_tenant_residency_column",
     "v41_ai_governance_registry",
+    "v42_shadow_traffic_comparisons",
+    "v43_replication_log",
 ]
 
 for _module_name in _VERSION_MODULES:

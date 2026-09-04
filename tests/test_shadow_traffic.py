@@ -73,6 +73,12 @@ class ShadowTrafficTests(unittest.TestCase):
                 "CREATE INDEX IF NOT EXISTS idx_shadow_comparisons_tenant_route "
                 "ON shadow_traffic_comparisons(tenant_id, route, created_at)"
             )
+            # The comparison rows are tenant-scoped; seed the referenced tenant
+            # so the foreign key holds.
+            conn.execute(
+                "INSERT OR IGNORE INTO tenants (id, name, created_at) "
+                "VALUES ('tenant-test', 'Test Tenant', '2026-01-01T00:00:00Z')"
+            )
 
     def tearDown(self) -> None:
         self.db.close()
