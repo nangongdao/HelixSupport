@@ -61,6 +61,12 @@ app = ["static/*", "static/css/*", "static/js/*"]
 line-length = 100
 target-version = "py311"
 
+# scripts/ win at being runnable from a source checkout without installing:
+# they sys.path-insert the repo root before importing app.* and local
+# helpers. That deliberate pattern trips E402; exempt the directory.
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E402"]
+
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
