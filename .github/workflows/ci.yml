@@ -147,6 +147,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --no-deps -r requirements.lock
           python -m pip install --no-deps -e ".[postgres]"
+          # --no-deps skips extras, but run_rls_drill.py imports psycopg2
+          # directly; install the postgres extra closure explicitly.
+          python -m pip install "psycopg2-binary>=2.9,<3"
           python -m pip install "pip-audit>=2.7,<3" "pytest>=8.3,<9"
 
       - name: Secret scan gate (Phase 41.2)
