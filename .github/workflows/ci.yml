@@ -36,7 +36,7 @@ jobs:
           # style change with every minor, so a floating install silently
           # re-scopes the lint/format gates. Same pin as pyproject dev deps
           # and artifacts/ruff-099-pkg.
-          python -m pip install "ruff==0.9.9" "pyright>=1.1.390,<2" "coverage[toml]>=7.6,<8" "pip-audit>=2.7,<3" "pytest>=8.3,<9" "playwright>=1.50,<2"
+          python -m pip install "ruff==0.9.9" "pyright>=1.1.390,<2" "coverage[toml]>=7.6,<8" "pip-audit>=2.7,<3" "pytest>=8.3,<9" "playwright>=1.50,<2" "Pillow>=10,<12"
 
       - name: Install frontend toolchain (vitest for frontend_gate)
         # D2 (DESKTOP_TAURI_PLAN.md §3.5): frontend_gate runs the vitest suite
