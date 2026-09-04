@@ -303,11 +303,16 @@ jobs:
           python -m pip install --no-deps -e .
           python -m pip install "playwright>=1.50,<2" "pytest>=8.3,<9"
           python -m playwright install --with-deps chromium
+
+      - name: Build React islands for the desktop shell
+        # app/static/dist is gitignored; the React islands (queue, quality,
+        # knowledge...) only mount when the vite build output exists, so the
+        # desktop-shell accessibility pass needs it built here. Must run in
+        # frontend/ — the root package.json only carries axe-core.
+        working-directory: frontend
+        run: |
           npm ci --ignore-scripts
-          # app/static/dist is gitignored; the React islands (queue, quality,
-          # knowledge...) only mount when the vite build output exists, so the
-          # desktop-shell accessibility pass needs it built here.
-          npx vite build
+          npm run build
 
       - name: Start server on clean database
         run: |
