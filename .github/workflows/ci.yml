@@ -36,7 +36,7 @@ jobs:
           # style change with every minor, so a floating install silently
           # re-scopes the lint/format gates. Same pin as pyproject dev deps
           # and artifacts/ruff-099-pkg.
-          python -m pip install "ruff==0.9.9" "pyright>=1.1.390,<2" "coverage[toml]>=7.6,<8" "pip-audit>=2.7,<3"
+          python -m pip install "ruff==0.9.9" "pyright>=1.1.390,<2" "coverage[toml]>=7.6,<8" "pip-audit>=2.7,<3" "pytest>=8.3,<9"
 
       - name: Install frontend toolchain (vitest for frontend_gate)
         # D2 (DESKTOP_TAURI_PLAN.md §3.5): frontend_gate runs the vitest suite
@@ -147,7 +147,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --no-deps -r requirements.lock
           python -m pip install --no-deps -e ".[postgres]"
-          python -m pip install "pip-audit>=2.7,<3"
+          python -m pip install "pip-audit>=2.7,<3" "pytest>=8.3,<9"
 
       - name: Secret scan gate (Phase 41.2)
         run: python scripts/scan_secrets.py
@@ -225,6 +225,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --no-deps -r requirements.lock
           python -m pip install --no-deps -e .
+          python -m pip install "pytest>=8.3,<9"
 
       - name: Adversarial set schema gate (Phase 41.5 / AI-001)
         run: python -c "from pathlib import Path; from scripts.adversarial_schema import load_adversarial_set; load_adversarial_set(Path('golden/adversarial.json'))"
@@ -293,7 +294,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --no-deps -r requirements.lock
           python -m pip install --no-deps -e .
-          python -m pip install "playwright>=1.50,<2"
+          python -m pip install "playwright>=1.50,<2" "pytest>=8.3,<9"
           python -m playwright install --with-deps chromium
           npm ci --ignore-scripts
 
