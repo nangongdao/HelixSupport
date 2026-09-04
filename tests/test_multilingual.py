@@ -59,7 +59,9 @@ class FakeModelProvider:
         self.bad_json = bad_json
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
         self.calls.append((system_prompt, user_prompt))
         if self.fail:
             raise RuntimeError("model provider down")

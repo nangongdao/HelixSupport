@@ -94,9 +94,7 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
 }
 
 
-def pricing_for_model_ref(
-    provider_name: str | None, model_ref: str | None
-) -> PricingTier | None:
+def pricing_for_model_ref(provider_name: str | None, model_ref: str | None) -> PricingTier | None:
     """Resolve the pricing tier for a model ref under a provider.
 
     Returns ``None`` when the provider (or its pricing surface) is unknown —
@@ -218,7 +216,9 @@ class OpenAICompatibleProvider:
             return declared
         return ProviderMetadata(name="openai")
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
         # ``model_ref`` from a prompt version (Phase 19.1) selects the model
         # for this turn; without one the settings default applies.
         started = monotonic()
@@ -254,10 +254,9 @@ class OpenAICompatibleProvider:
         tier = pricing_for_model_ref(provider_name, model)
         cost_usd: float | None = None
         if tier is not None and usage is not None:
-            cost_usd = (
-                (usage.get("prompt_tokens", 0) / 1000) * tier.input_cost_per_1k_tokens
-                + (usage.get("completion_tokens", 0) / 1000) * tier.output_cost_per_1k_tokens
-            )
+            cost_usd = (usage.get("prompt_tokens", 0) / 1000) * tier.input_cost_per_1k_tokens + (
+                usage.get("completion_tokens", 0) / 1000
+            ) * tier.output_cost_per_1k_tokens
         return ModelResponse(
             content=content,
             usage=usage,
@@ -300,7 +299,9 @@ class ChainedModelProvider:
     def providers(self) -> list[ModelProvider]:
         return list(self._providers)
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
         last_error: ModelProviderError | None = None
         for provider in self._providers:
             try:

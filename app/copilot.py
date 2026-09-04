@@ -186,9 +186,7 @@ class CopilotService:
 
     # ------------------------------------------------------------------ rewrite
 
-    def rewrite_tone(
-        self, text: str, tone: str, tenant_id: str | None = None
-    ) -> dict[str, Any]:
+    def rewrite_tone(self, text: str, tone: str, tenant_id: str | None = None) -> dict[str, Any]:
         """Rewrite ``text`` in ``tone``; any failure returns the original."""
         text = text.strip()
         if not text:

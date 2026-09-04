@@ -776,7 +776,9 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         webhooks=webhook_service,
         quality=quality_service,
         prompts=PromptRegistry(database),
-        copilot=CopilotService(database, provider, orchestrator.languages, cost_attribution_service),
+        copilot=CopilotService(
+            database, provider, orchestrator.languages, cost_attribution_service
+        ),
         reports=report_service,
         attachments=attachment_service,
         queue=queue,

@@ -190,7 +190,9 @@ class _UsageProvider:
         self.payload = payload
         self.usage = usage
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
         return ModelResponse(
             content=json.dumps(self.payload, ensure_ascii=False),
             usage=self.usage,

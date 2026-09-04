@@ -31,6 +31,7 @@ def _record_cost(
         context = InferenceContext(**context)
     record_model_response(cost_attribution, tenant_id, response, context)
 
+
 if TYPE_CHECKING:
     from app.connectors import KnowledgeConnector
     from app.prompts import PromptVersion

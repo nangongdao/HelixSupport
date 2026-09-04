@@ -159,7 +159,9 @@ class _StaticProvider:
     def __init__(self, payload: str) -> None:
         self.payload = payload
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
         return ModelResponse(content=self.payload)
 
 

@@ -244,7 +244,9 @@ class TurnPolicyStage:
             )
         else:
             decision = self.services.triage.decide(
-                context.content, prompt=prompt_version, allow_model=allow_model,
+                context.content,
+                prompt=prompt_version,
+                allow_model=allow_model,
                 tenant_id=tenant_id,
             )
         self.services.database.audit(
