@@ -10,7 +10,7 @@ import httpx
 from app.agents import PolicyAgent, QualityAgent, TriageAgent
 from app.config import Settings
 from app.domain import AgentName, AgentResult
-from app.model_provider import ModelProviderError, OpenAICompatibleProvider
+from app.model_provider import ModelProviderError, ModelResponse, OpenAICompatibleProvider
 from app.pagination import (
     InvalidCursorError,
     decode_conversation_cursor,
@@ -130,7 +130,10 @@ class ModelProviderTests(unittest.TestCase):
     def test_successful_completion(self) -> None:
         response = _FakeResponse({"choices": [{"message": {"content": '{"route":"order"}'}}]})
         with patch("app.model_provider.httpx.Client", lambda **kw: _FakeClient(response)):
-            self.assertEqual(_provider().complete("system", "user"), '{"route":"order"}')
+            result = _provider().complete("system", "user")
+            self.assertEqual(result.content, '{"route":"order"}')
+            self.assertEqual(result.model, "gpt-4.1-mini")
+            self.assertIsNone(result.usage)
 
     def test_http_error_wraps_as_provider_error(self) -> None:
         response = _FakeResponse({}, error=True)
@@ -156,8 +159,10 @@ class _StaticProvider:
     def __init__(self, payload: str) -> None:
         self.payload = payload
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
-        return self.payload
+    def complete(
+        self, system_prompt: str, user_prompt: str, model_ref: str | None = None
+    ) -> ModelResponse:
+        return ModelResponse(content=self.payload)
 
 
 class _FailingProvider:

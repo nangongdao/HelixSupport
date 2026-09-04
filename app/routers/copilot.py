@@ -70,6 +70,8 @@ def build_router(deps: RouteDeps) -> APIRouter:
         payload: CopilotRewriteRequest,
         principal: Annotated[Principal, Depends(require_permission("operator:act"))],
     ) -> CopilotRewriteOut:
-        return CopilotRewriteOut(**copilot.rewrite_tone(payload.text, payload.tone))
+        return CopilotRewriteOut(
+            **copilot.rewrite_tone(payload.text, payload.tone, tenant_id=principal.tenant_id)
+        )
 
     return router

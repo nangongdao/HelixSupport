@@ -58,6 +58,9 @@ Migration inventory (matching the 1.0/1.1 roadmap):
   40 - tenant residency column (ROADMAP 43.4)
   41 - AI governance registry: eval datasets/runs, approvals, online
        feedback review (ROADMAP 43.5)
+  42 - shadow traffic comparisons (ROADMAP 2.1.x)
+  43 - cross-region async replication log (ROADMAP 2.2.x)
+  44 - inference cost attribution (ROADMAP 2.3.x)
 """
 
 from __future__ import annotations
@@ -408,6 +411,7 @@ _VERSION_MODULES = [
     "v41_ai_governance_registry",
     "v42_shadow_traffic_comparisons",
     "v43_replication_log",
+    "v44_inference_costs",
 ]
 
 for _module_name in _VERSION_MODULES:

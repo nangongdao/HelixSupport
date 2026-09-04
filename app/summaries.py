@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any
 
+from app.cost_attribution import InferenceContext, record_model_response
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -65,9 +66,11 @@ class SummaryService:
         self,
         database: Any,
         model_provider: ModelProvider | None = None,
+        cost_attribution: Any = None,
     ) -> None:
         self.database = database
         self.model_provider = model_provider
+        self.cost_attribution = cost_attribution
 
     # ------------------------------------------------------------- generation
 
@@ -100,7 +103,16 @@ class SummaryService:
         messages = self.database.list_messages(tenant_id, conversation_id, limit=100)
         if self.model_provider is not None:
             try:
-                content = self._model_summary(kind, conversation, messages)
+                content, response = self._model_summary(kind, conversation, messages)
+                record_model_response(
+                    self.cost_attribution,
+                    tenant_id,
+                    response,
+                    InferenceContext(
+                        conversation_id=conversation_id,
+                        agent="summary",
+                    ),
+                )
                 if content.strip():
                     return content, "model"
             except Exception:
@@ -118,7 +130,7 @@ class SummaryService:
 
     def _model_summary(
         self, kind: str, conversation: dict[str, Any], messages: list[dict[str, Any]]
-    ) -> str:
+    ) -> tuple[str, Any]:
         assert self.model_provider is not None
         system_prompt = CONTEXT_SYSTEM_PROMPT if kind == "context" else DISPOSITION_SYSTEM_PROMPT
         transcript = _truncate(self._render_transcript(messages), _MAX_TRANSCRIPT_CHARS)
@@ -127,11 +139,11 @@ class SummaryService:
             transcript=transcript,
         )
         response = self.model_provider.complete(system_prompt, user_prompt)
-        payload = json.loads(response)
+        payload = json.loads(response.content)
         content = payload["summary"]
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Model summary must be a non-empty string")
-        return content.strip()
+        return content.strip(), response
 
     # ----------------------------------------------------------- deterministic
 

@@ -11,13 +11,42 @@
 - **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
 - **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
 
+## 2.3.0 — AI Cost Attribution: 完整推理成本追踪与异常检测 (2026-09-04)
+
+Version 2.3.0 实现了 AI 成本归因系统，为每次模型推理调用记录真实 token 用量和 USD 成本，并提供按租户/agent/prompt 维度的聚合报表与成本异常检测。本版本配合 Provider 定价元数据实现了精确的成本计算（误差 <1%）和基于基线的自动告警。
+
+**发布亮点**:
+- ✅ **真实成本追踪**：每次推理记录 prompt/completion tokens 与 USD 成本（基于 provider 定价）
+- ✅ **多维度聚合**：按租户/日期/provider/model 四维聚合，支持任意时间窗口查询
+- ✅ **异常检测**：今日成本 vs N 日基线，超过阈值（默认 2×）自动告警
+- ✅ **管理员 API**：4 个分析端点（daily/by_agent/by_prompt/anomaly），需 `admin:manage` 权限
+
+**新增迁移**: v44（1 个，phase="expand"）
+
+### Added
+
+- **AI 成本归因系统（ROADMAP 2.3.x）**：
+  - `app/model_provider.py` 扩展：新增 `ModelResponse` dataclass（content/usage/model/provider/cost_usd/latency_ms/model_ref）替代原始字符串返回；`OpenAICompatibleProvider.complete()` 解析响应 usage 字段（prompt_tokens/completion_tokens），查找 `ProviderMetadata.pricing`，计算 `cost_usd = prompt_tokens/1000 × input_cost + completion_tokens/1000 × output_cost`，精度保留 6 位小数；所有 provider 调用点更新为 `.content` 访问（app/agents.py、app/copilot.py、app/language.py、app/summaries.py）。
+  - `app/cost_attribution.py` (206 行)：成本归因服务核心；`record_inference_cost()` 写入 `inference_costs` 表并更新 `tenant_cost_daily` 聚合（原子 upsert，累加 turn_count/tokens/cost_usd）；`get_tenant_cost_summary()` 按时间范围查询汇总（支持 since/until 参数）；`get_cost_by_dimension()` 按 provider/model/agent/prompt_version 维度分组查询（date_str 参数过滤单日）；`check_anomaly()` 今日成本异常检测（对比过去 N 日均值，默认 baseline_days=7、threshold_factor=2.0，返回 anomaly 布尔值 + today_cost/baseline_avg/factor）。
+  - Migration v44 (phase="expand")：新增 `inference_costs` 表（id/tenant_id/conversation_id/turn_id/message_id/agent/prompt_version/provider/model/prompt_tokens/completion_tokens/cost_usd/latency_ms/created_at，外键 tenant_id → tenants ON DELETE CASCADE，索引 tenant_id+created_at）；新增 `tenant_cost_daily` 聚合表（tenant_id/date/provider/model 复合主键，字段 turn_count/prompt_tokens/completion_tokens/cost_usd 默认 0，外键 tenant_id → tenants ON DELETE CASCADE）。
+  - `app/routers/analytics.py` (54 行)：成本仪表板 API；4 个端点全部需 `admin:manage` 权限——`GET /api/analytics/costs/daily?start_date=&end_date=` 返回租户时间范围汇总、`GET /api/analytics/costs/by_agent?date=` 按 agent 分组、`GET /api/analytics/costs/by_prompt?date=` 按 prompt_version 分组、`GET /api/analytics/costs/anomaly` 返回今日异常检测结果。
+  - `app/main.py` 集成：`AppServices` dataclass 新增 `cost_attribution: CostAttributionService` 字段，`configure()` 实例化服务（`cost_attribution=cost_attribution_module`），`create_app()` 注册路由（`app.include_router(analytics_router, tags=["Analytics"])`）。
+  - **真实接线（ROADMAP 2.3.3 补完）**: 模型推理调用点全部接入成本记录——`TriageAgent._model_decision`（语义路由，agent="triage"）、`LanguageService.detect/translate`（agent="language_detect"/"language_translate"）、`CopilotService._model_suggestions/rewrite_tone`（agent="copilot_suggest"/"copilot_rewrite"）、`SummaryService._model_summary`（agent="summary"）。统一经 `record_model_response()` fail-safe helper 写入（never raises，无 usage 的响应跳过）；`InferenceContext` 携带 conversation_id/agent/prompt_version 归因维度。所有服务经 `ConversationOrchestrator`/`create_app` 注入 `CostAttributionService`。
+  - 测试：`tests/test_cost_attribution.py` 9 例（记录成本/汇总查询/维度分组/异常检测基线/超标/正常/**turn 路径接线**/无模型跳过）、`tests/test_cost_analytics_api.py` 6 例（daily 汇总/by_agent/by_prompt/anomaly 端点/viewer 权限拒绝），所有测试修复 Windows 清理顺序（database.close() 先于 client.close() 和 _tmp.cleanup()）。
+  - OpenAPI 快照：`api/openapi.json` 重生成（+326 行 = 4 个新端点 schema）。
+  - 迁移上界同步：`tests/test_phase38.py`、`tests/test_streaming.py`、`tests/test_migration_registry.py` 三处断言更新为 44（从 43）。
+
 ### Changed
 
 - **生产安全校验收紧**: `APP_ENV=production` 时 `validate()` 拒绝内置默认 `WIDGET_SECRET`，并拒绝在未显式设置 `CONTROL_PLANE_SECRET` 时回退到开发默认值（避免可伪造 widget token / 控制面签名）。
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.3.0"
 
 ### Fixed
 
-- **v42/v43 迁移此前未注册进迁移链**（仅 CHANGELOG 声称存在，`all_migrations()` 实际只有 41 个）：v42 已加入 `_VERSION_MODULES`，v43 重写为 `@migration` 装饰器格式后注册，`verify_migration_registry`/`check_migration_phases` 全绿，迁移上界断言同步至 43。
+- **v42/v43 迁移此前未注册进迁移链**（仅 CHANGELOG 声称存在，`all_migrations()` 实际只有 41 个）：v42 已加入 `_VERSION_MODULES`，v43 重写为 `@migration` 装饰器格式后注册，`verify_migration_registry`/`check_migration_phases` 全绿，迁移上界断言同步至 44。
+- **成本记录此前未接线（声明未实现）**: `record_inference_cost` 在真实代码路径零调用，`inference_costs` 表永远为空、仪表板恒 0。已补完所有 4 类模型调用点（triage/language/copilot/summaries）并注入 `CostAttributionService`；`by_agent`/`by_prompt` 端点修正为真正的按 agent/prompt_version 分组（此前错误地按 model/provider）——`inference_costs` 表新增 `agent`/`prompt_version` 归因列。
+- **无定价推理成本口径不一致（code review 发现）**: `cost_usd=None` 时聚合表 `tenant_cost_daily` 错误落成 `0.0`（`cost_usd or 0.0`），与明细表 NULL 口径矛盾——明细聚合排除 NULL 而聚合表 0.0 会稀释异常检测均值。修复：聚合表 `cost_usd` 改为可 NULL，upsert 用 `COALESCE(cost_usd,0) + COALESCE(excluded.cost_usd,0)`，两表统一为 NULL 语义（无定价不计 USD、照计 token），并补回归断言。
+- **analytics 端点 OpenAPI 元数据缺失**: 4 个成本端点缺 summary/description/tags，`test_openapi_gate` 门禁失败。已为每个端点补 `summary=`/`description=`（装饰器参数）和 `tags=["analytics"]`，快照重生成。
 
 ## 2.1.0 — Shadow Traffic System: v1/v2 验证与自动降级 (2026-09-03)
 

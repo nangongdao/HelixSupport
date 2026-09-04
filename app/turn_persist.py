@@ -184,7 +184,7 @@ class TurnPersistStage:
             metadata["detected_language"] = inputs.detected_language
             if inputs.language != self.services.languages.service_language:
                 translated, did_translate, translation_source = self.services.languages.translate(
-                    result.content, inputs.language
+                    result.content, inputs.language, tenant_id=tenant_id
                 )
                 if did_translate:
                     assistant_content = translated

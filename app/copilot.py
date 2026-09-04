@@ -21,6 +21,7 @@ import json
 import logging
 from typing import Any
 
+from app.cost_attribution import InferenceContext, record_model_response
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -62,12 +63,14 @@ class CopilotService:
         database: Any,
         model_provider: ModelProvider | None = None,
         language_service: Any | None = None,
+        cost_attribution: Any = None,
     ) -> None:
         self.database = database
         self.model_provider = model_provider
         # The orchestrator's LanguageService (detection + translation); when
         # absent, suggestions are drafted in the default language.
         self.language_service = language_service
+        self.cost_attribution = cost_attribution
 
     # ------------------------------------------------------------- suggestions
 
@@ -87,7 +90,9 @@ class CopilotService:
         language = conversation.get("language")
         if self.model_provider is not None:
             try:
-                suggestions = self._model_suggestions(conversation, messages, draft, language)
+                suggestions = self._model_suggestions(
+                    conversation, messages, draft, language, tenant_id
+                )
                 if suggestions:
                     return [{"content": s, "source": "model"} for s in suggestions[:limit]]
             except Exception:
@@ -108,6 +113,7 @@ class CopilotService:
         messages: list[dict[str, Any]],
         draft: str | None,
         language: str | None,
+        tenant_id: str,
     ) -> list[str]:
         assert self.model_provider is not None
         transcript = _truncate(self._render_transcript(messages), _MAX_TRANSCRIPT_CHARS)
@@ -120,7 +126,13 @@ class CopilotService:
         if language and language != "zh":
             user_prompt += f"\n\nReply in the customer's language: {language}."
         response = self.model_provider.complete(SUGGEST_SYSTEM_PROMPT, user_prompt)
-        payload = json.loads(response)
+        record_model_response(
+            self.cost_attribution,
+            tenant_id,
+            response,
+            InferenceContext(agent="copilot_suggest"),
+        )
+        payload = json.loads(response.content)
         raw = payload["suggestions"]
         suggestions = [s for s in raw if isinstance(s, str) and s.strip()]
         if not suggestions:
@@ -174,7 +186,7 @@ class CopilotService:
 
     # ------------------------------------------------------------------ rewrite
 
-    def rewrite_tone(self, text: str, tone: str) -> dict[str, Any]:
+    def rewrite_tone(self, text: str, tone: str, tenant_id: str | None = None) -> dict[str, Any]:
         """Rewrite ``text`` in ``tone``; any failure returns the original."""
         text = text.strip()
         if not text:
@@ -185,7 +197,13 @@ class CopilotService:
                     REWRITE_SYSTEM_PROMPT,
                     _REWRITE_USER_PROMPT.format(tone=tone, text=text[:6000]),
                 )
-                payload = json.loads(response)
+                record_model_response(
+                    self.cost_attribution,
+                    tenant_id,
+                    response,
+                    InferenceContext(agent="copilot_rewrite"),
+                )
+                payload = json.loads(response.content)
                 rewritten = payload["rewritten"]
                 if isinstance(rewritten, str) and rewritten.strip():
                     if rewritten.strip() != text:

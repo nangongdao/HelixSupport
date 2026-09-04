@@ -71,10 +71,12 @@ class ConversationOrchestrator:
         model_provider: ModelProvider | None = None,
         queue: TaskQueue | None = None,
         webhook_service: WebhookService | None = None,
+        cost_attribution: Any | None = None,
     ) -> None:
         self.database = database
         self.settings = settings
         self.webhook_service = webhook_service
+        self.cost_attribution = cost_attribution
         # Phase 20.1/20.2: wrap the sandbox connectors in the resilient guard
         # (circuit breaker + retry, per-tenant isolation). The sandbox never
         # raises transient errors, so this is behaviour-preserving; a real
@@ -94,7 +96,7 @@ class ConversationOrchestrator:
             crm_connector=crm_connector,
         )
         self.policy = PolicyAgent()
-        self.triage = TriageAgent(model_provider)
+        self.triage = TriageAgent(model_provider, cost_attribution=cost_attribution)
         self.knowledge = KnowledgeAgent(database, knowledge_connector=knowledge_connector)
         self.order = OrderAgent(self.tools)
         self.escalation = EscalationAgent()
@@ -104,10 +106,12 @@ class ConversationOrchestrator:
         self.quality_service = QualityService(database)
         # Backlog: session intelligent summaries — model-first, deterministic
         # projection fallback so the lifecycle path never depends on the model.
-        self.summaries = SummaryService(database, model_provider)
+        self.summaries = SummaryService(database, model_provider, cost_attribution=cost_attribution)
         # Backlog: multi-language customer service — script-based detection
         # with a model-first detector, and best-effort reply translation.
-        self.languages = LanguageService(model_provider, settings.service_language)
+        self.languages = LanguageService(
+            model_provider, settings.service_language, cost_attribution=cost_attribution
+        )
         # Phase 41.6 (ARC-001): the turn pipeline is composed of three deep
         # stages (policy/triage, specialist execution, persistence), each with
         # a typed context/result surface so the orchestrator stays a thin
