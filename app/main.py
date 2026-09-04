@@ -74,7 +74,7 @@ configure_tracing()
 logger = logging.getLogger("helix")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.3.0"
 
 
 def _http_exception_code(status_code: int) -> str:
@@ -175,6 +175,7 @@ class AppServices:
     outbox_consumer: Any | None = None
     drift_monitor: Any | None = None
     cell_registry: Any | None = None
+    cost_attribution: Any | None = None
 
 
 def get_services(request: Request) -> AppServices:
@@ -495,8 +496,20 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     provider = OpenAICompatibleProvider(settings) if settings.enable_llm else None
     queue = create_task_queue(database, settings)
     webhook_service = WebhookService(database)
+
+    # ROADMAP 2.3.x: inference cost attribution — per-inference cost rows and
+    # daily tenant/provider/model aggregates for the cost dashboard API.
+    from app.cost_attribution import CostAttributionService
+
+    cost_attribution_service = CostAttributionService(database)
+
     orchestrator = ConversationOrchestrator(
-        database, settings, provider, queue=queue, webhook_service=webhook_service
+        database,
+        settings,
+        provider,
+        queue=queue,
+        webhook_service=webhook_service,
+        cost_attribution=cost_attribution_service,
     )
     turn_worker = TurnJobWorker(
         database,
@@ -763,7 +776,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         webhooks=webhook_service,
         quality=quality_service,
         prompts=PromptRegistry(database),
-        copilot=CopilotService(database, provider, orchestrator.languages),
+        copilot=CopilotService(database, provider, orchestrator.languages, cost_attribution_service),
         reports=report_service,
         attachments=attachment_service,
         queue=queue,
@@ -777,6 +790,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         outbox_consumer=outbox_consumer,
         drift_monitor=drift_monitor,
         cell_registry=cell_registry,
+        cost_attribution=cost_attribution_service,
     )
 
     app = FastAPI(
@@ -1144,6 +1158,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
 
     # Phase 27.2: domain routers (extracted from create_app).
     from app.routers.admin import build_router as build_admin_router
+    from app.routers.analytics import build_router as build_analytics_router
     from app.routers.attachments import build_router as build_attachments_router
     from app.routers.auth import build_router as build_auth_router
     from app.routers.common import RouteDeps
@@ -1177,6 +1192,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     app.include_router(build_tickets_router(route_deps))
     app.include_router(build_reports_router(route_deps))
     app.include_router(build_attachments_router(route_deps))
+    app.include_router(build_analytics_router(route_deps))
 
     # 43.3: /api/v2 — cursor envelopes, honoured Idempotency-Key, and the
     # transactional domain-event outbox. v1 keeps serving unchanged.

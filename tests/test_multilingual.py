@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.language import LanguageService, detect_language
 from app.main import create_app
+from app.model_provider import ModelResponse
 
 ADMIN_KEY = "multi-admin-key-001"
 
@@ -58,15 +59,15 @@ class FakeModelProvider:
         self.bad_json = bad_json
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
         self.calls.append((system_prompt, user_prompt))
         if self.fail:
             raise RuntimeError("model provider down")
         if self.bad_json:
-            return "not json"
+            return ModelResponse(content="not json")
         key = "language" if "language identification" in system_prompt else "translation"
         value = self.detect if key == "language" else self.translation
-        return json.dumps({key: value}, ensure_ascii=False)
+        return ModelResponse(content=json.dumps({key: value}, ensure_ascii=False))
 
 
 class DetectionTests(unittest.TestCase):

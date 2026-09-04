@@ -182,6 +182,7 @@ class Migration005Tests(unittest.TestCase):
                     41,
                     42,
                     43,
+                    44,
                 ],
             )
 

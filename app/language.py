@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
+from typing import Any
 
+from app.cost_attribution import InferenceContext, record_model_response
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -134,13 +136,25 @@ class LanguageService:
         self,
         model_provider: ModelProvider | None = None,
         service_language: str = "zh",
+        cost_attribution: Any = None,
     ) -> None:
         self.model_provider = model_provider
         self.service_language = service_language
+        self.cost_attribution = cost_attribution
+
+    def _record_cost(self, tenant_id: str | None, response: Any, agent: str) -> None:
+        if tenant_id is None:
+            return
+        record_model_response(
+            self.cost_attribution,
+            tenant_id,
+            response,
+            InferenceContext(agent=agent),
+        )
 
     # ------------------------------------------------------------- detection
 
-    def detect(self, text: str) -> tuple[str | None, str]:
+    def detect(self, text: str, tenant_id: str | None = None) -> tuple[str | None, str]:
         """Return (language, source) for a customer message.
 
         ``source`` is ``"model"`` when the provider answered with a known
@@ -152,7 +166,8 @@ class LanguageService:
                 response = self.model_provider.complete(
                     DETECT_SYSTEM_PROMPT, f"Customer message:\n{text[:2000]}"
                 )
-                payload = json.loads(response)
+                self._record_cost(tenant_id, response, "language_detect")
+                payload = json.loads(response.content)
                 language = payload["language"]
                 if isinstance(language, str) and language in KNOWN_LANGUAGES:
                     return language, "model"
@@ -164,7 +179,12 @@ class LanguageService:
 
     # ------------------------------------------------------------ translation
 
-    def translate(self, text: str, target_language: str) -> tuple[str, bool, str]:
+    def translate(
+        self,
+        text: str,
+        target_language: str,
+        tenant_id: str | None = None,
+    ) -> tuple[str, bool, str]:
         """Translate ``text`` to ``target_language``.
 
         Returns ``(translated_text, translated, source)``. When the target
@@ -181,7 +201,8 @@ class LanguageService:
                 TRANSLATE_SYSTEM_PROMPT,
                 _TRANSLATE_USER_PROMPT.format(language=target_language, text=text[:6000]),
             )
-            payload = json.loads(response)
+            self._record_cost(tenant_id, response, "language_translate")
+            payload = json.loads(response.content)
             translation = payload["translation"]
             if not isinstance(translation, str) or not translation.strip():
                 raise ValueError("Translation must be a non-empty string")

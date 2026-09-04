@@ -11,6 +11,7 @@ provider (or route around it) without reading vendor documentation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Protocol
 
 import httpx
@@ -24,19 +25,38 @@ class ModelProviderError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class PricingTier:
+    """Per-model pricing for one provider (ROADMAP 2.3.1).
+
+    Costs are USD per 1,000 tokens, the de-facto vendor billing unit.
+    ``context_window`` is the model's maximum prompt+completion token
+    capacity. Only entries that are actually used in production need to be
+    accurate; unlisted refs fall back to the provider's ``default`` tier.
+    """
+
+    input_cost_per_1k_tokens: float
+    output_cost_per_1k_tokens: float
+    context_window: int = 128_000
+
+
+@dataclass(frozen=True)
 class ProviderMetadata:
     """Governance declarations for one model provider (ROADMAP 43.5).
 
     ``data_retention`` states how long prompts/completions are retained by
     the vendor; ``training_opt_out`` is True when no customer content may be
     used for vendor training; ``region`` names where inference happens so a
-    tenant pinned to another region can refuse egress to it.
+    tenant pinned to another region can refuse egress to it. ``pricing`` —
+    added for ROADMAP 2.3.1 — maps a model ref to its :class:`PricingTier`;
+    ``default_pricing`` applies to any ref without an explicit tier.
     """
 
     name: str
     data_retention: str = "vendor-managed"
     training_opt_out: bool = True
     region: str = "local"
+    pricing: dict[str, PricingTier] | None = None
+    default_pricing: PricingTier | None = None
 
 
 @dataclass(frozen=True)
@@ -49,14 +69,49 @@ class ModelPolicyDecision:
 
 # Registry of declared providers; deployments replace entries for real
 # vendors, keeping the module free of environment reads.
+# 2.3.1: pricing is USD per 1K tokens from vendor published rate cards.
+# Unlisted refs (e.g. "gpt-4.1-mini") fall back to ``default_pricing`` so
+# cost attribution never fails on a missing entry — only on a missing
+# provider registry record.
 PROVIDER_METADATA: dict[str, ProviderMetadata] = {
     "openai": ProviderMetadata(
         name="openai",
         data_retention="30-days-zero-retention-available",
         training_opt_out=True,
         region="us",
+        pricing={
+            "gpt-4o": PricingTier(2.50, 10.00, 128_000),
+            "gpt-4o-mini": PricingTier(0.15, 0.60, 128_000),
+            "gpt-4.1": PricingTier(2.00, 8.00, 1_047_576),
+            "gpt-4.1-mini": PricingTier(0.40, 1.60, 1_047_576),
+            "gpt-4.1-nano": PricingTier(0.10, 0.40, 1_047_576),
+            "o3": PricingTier(2.00, 8.00, 200_000),
+            "o3-mini": PricingTier(0.40, 1.60, 200_000),
+            "o4-mini": PricingTier(0.40, 1.60, 200_000),
+        },
+        default_pricing=PricingTier(2.50, 10.00, 128_000),
     ),
 }
+
+
+def pricing_for_model_ref(
+    provider_name: str | None, model_ref: str | None
+) -> PricingTier | None:
+    """Resolve the pricing tier for a model ref under a provider.
+
+    Returns ``None`` when the provider (or its pricing surface) is unknown —
+    callers then treat the inference cost as uncomputed rather than guessing.
+    """
+    if not provider_name:
+        return None
+    metadata = PROVIDER_METADATA.get(provider_name)
+    if metadata is None or metadata.pricing is None:
+        return None
+    if model_ref:
+        tier = metadata.pricing.get(model_ref)
+        if tier is not None:
+            return tier
+    return metadata.default_pricing
 
 
 def provider_for_model_ref(model_ref: str | None) -> str | None:
@@ -117,10 +172,30 @@ def check_model_policy(
     return ModelPolicyDecision(True, "")
 
 
+@dataclass(frozen=True)
+class ModelResponse:
+    """Structured completion result (ROADMAP 2.3.2).
+
+    ``content`` is the raw completion text; ``usage`` carries vendor-reported
+    token counts when available; ``cost_usd`` is computed from the provider's
+    declared :class:`PricingTier` and is ``None`` when no pricing is known
+    (never guessed). ``model``/``provider`` are the resolved refs so the
+    attribution surface does not depend on caller-side bookkeeping.
+    """
+
+    content: str
+    usage: dict[str, int] | None = None
+    model: str | None = None
+    provider: str | None = None
+    cost_usd: float | None = None
+    latency_ms: int | None = None
+    model_ref: str | None = None
+
+
 class ModelProvider(Protocol):
     def complete(
         self, system_prompt: str, user_prompt: str, model_ref: str | None = None
-    ) -> str: ...
+    ) -> ModelResponse: ...
 
 
 class OpenAICompatibleProvider:
@@ -143,9 +218,10 @@ class OpenAICompatibleProvider:
             return declared
         return ProviderMetadata(name="openai")
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
         # ``model_ref`` from a prompt version (Phase 19.1) selects the model
         # for this turn; without one the settings default applies.
+        started = monotonic()
         model = model_ref or self.settings.openai_model
         try:
             with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
@@ -165,13 +241,44 @@ class OpenAICompatibleProvider:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             raise ModelProviderError("Model provider request failed") from exc
+        latency_ms = max(0, int((monotonic() - started) * 1000))
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ModelProviderError("Model provider returned an invalid response") from exc
         if not isinstance(content, str) or not content.strip():
             raise ModelProviderError("Model provider returned empty content")
-        return content
+        usage = self._extract_usage(payload)
+        provider_name = "openai"
+        tier = pricing_for_model_ref(provider_name, model)
+        cost_usd: float | None = None
+        if tier is not None and usage is not None:
+            cost_usd = (
+                (usage.get("prompt_tokens", 0) / 1000) * tier.input_cost_per_1k_tokens
+                + (usage.get("completion_tokens", 0) / 1000) * tier.output_cost_per_1k_tokens
+            )
+        return ModelResponse(
+            content=content,
+            usage=usage,
+            model=model,
+            provider=provider_name,
+            cost_usd=cost_usd,
+            latency_ms=latency_ms,
+            model_ref=model_ref,
+        )
+
+    @staticmethod
+    def _extract_usage(payload: Any) -> dict[str, int] | None:
+        """Parse the OpenAI ``usage`` block, tolerating absent/odd shapes."""
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        if not isinstance(prompt, int) or not isinstance(completion, int):
+            return None
+        return {"prompt_tokens": prompt, "completion_tokens": completion}
 
 
 class ChainedModelProvider:
@@ -193,7 +300,7 @@ class ChainedModelProvider:
     def providers(self) -> list[ModelProvider]:
         return list(self._providers)
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
         last_error: ModelProviderError | None = None
         for provider in self._providers:
             try:
@@ -220,8 +327,11 @@ __all__ = [
     "ModelPolicyDecision",
     "ModelProvider",
     "ModelProviderError",
+    "ModelResponse",
     "OpenAICompatibleProvider",
+    "PricingTier",
     "ProviderMetadata",
     "check_model_policy",
+    "pricing_for_model_ref",
     "provider_for_model_ref",
 ]

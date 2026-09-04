@@ -37,7 +37,7 @@ class _FakeQuality:
 
 
 class _FakeLanguages:
-    def detect(self, content: str) -> tuple[str | None, str]:
+    def detect(self, content: str, tenant_id: str | None = None) -> tuple[str | None, str]:
         return None, "none"
 
 

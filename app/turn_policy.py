@@ -81,7 +81,9 @@ class TurnPolicyStage:
         conversation = context.conversation
         # Backlog (多语言客服): detect the customer message language up front --
         # best-effort and deterministic, so it never blocks or breaks intake.
-        detected_language, language_source = self.services.languages.detect(context.content)
+        detected_language, language_source = self.services.languages.detect(
+            context.content, tenant_id=tenant_id
+        )
         # The operator's manual override (PATCH /language) wins over
         # auto-detection: it pins both the conversation badge AND the reply
         # translation target.
@@ -242,7 +244,8 @@ class TurnPolicyStage:
             )
         else:
             decision = self.services.triage.decide(
-                context.content, prompt=prompt_version, allow_model=allow_model
+                context.content, prompt=prompt_version, allow_model=allow_model,
+                tenant_id=tenant_id,
             )
         self.services.database.audit(
             tenant_id,

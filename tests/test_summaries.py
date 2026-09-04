@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.model_provider import ModelResponse
 from app.summaries import SummaryService
 
 ADMIN_KEY = "summaries-admin-key-001"
@@ -44,11 +45,11 @@ class FakeModelProvider:
         self.fail = fail
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
         self.calls.append((system_prompt, user_prompt))
         if self.fail:
             raise RuntimeError("model provider down")
-        return json.dumps({"summary": self.text}, ensure_ascii=False)
+        return ModelResponse(content=json.dumps({"summary": self.text}, ensure_ascii=False))
 
 
 class SummaryTests(unittest.TestCase):

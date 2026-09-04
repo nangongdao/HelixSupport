@@ -920,7 +920,9 @@ def build_router(deps: RouteDeps) -> APIRouter:
                 detail="only customer messages can be translated",
             )
         translated, was_translated, source = orchestrator.languages.translate(
-            message.get("content") or "", payload.target_language
+            message.get("content") or "",
+            payload.target_language,
+            tenant_id=principal.tenant_id,
         )
         database.audit(
             principal.tenant_id,

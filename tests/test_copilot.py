@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.copilot import CopilotService
 from app.main import create_app
+from app.model_provider import ModelResponse
 
 ADMIN_KEY = "copilot-admin-key-001"
 VIEWER_KEY = "copilot-viewer-key-001"
@@ -62,15 +63,19 @@ class FakeModelProvider:
         self.bad_json = bad_json
         self.prompts: list[str] = []
 
-    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, model_ref: str | None = None) -> ModelResponse:
         self.prompts.append(user_prompt)
         if self.fail:
             raise RuntimeError("model provider down")
         if self.bad_json:
-            return "not json"
+            return ModelResponse(content="not json")
         if "coach" in system_prompt:
-            return json.dumps({"suggestions": self.suggestions}, ensure_ascii=False)
-        return json.dumps({"rewritten": self.rewritten}, ensure_ascii=False)
+            return ModelResponse(
+                content=json.dumps({"suggestions": self.suggestions}, ensure_ascii=False)
+            )
+        return ModelResponse(
+            content=json.dumps({"rewritten": self.rewritten}, ensure_ascii=False)
+        )
 
 
 class CopilotAppTests(unittest.TestCase):

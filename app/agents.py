@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from app.cost_attribution import InferenceContext, record_model_response
 from app.database import Database
 from app.domain import (
     AgentName,
@@ -14,6 +16,20 @@ from app.domain import (
 )
 from app.model_provider import ModelProvider, ModelProviderError
 from app.tools import ToolGateway
+
+logger = logging.getLogger("helix")
+
+
+def _record_cost(
+    cost_attribution: Any,
+    tenant_id: str,
+    response: Any,
+    context: InferenceContext | dict[str, Any] | None = None,
+) -> None:
+    """Best-effort cost row for one model inference inside an agent."""
+    if isinstance(context, dict):
+        context = InferenceContext(**context)
+    record_model_response(cost_attribution, tenant_id, response, context)
 
 if TYPE_CHECKING:
     from app.connectors import KnowledgeConnector
@@ -87,14 +103,20 @@ class PolicyAgent:
 class TriageAgent:
     name = AgentName.TRIAGE
 
-    def __init__(self, model_provider: ModelProvider | None = None) -> None:
+    def __init__(
+        self,
+        model_provider: ModelProvider | None = None,
+        cost_attribution: Any = None,
+    ) -> None:
         self.model_provider = model_provider
+        self.cost_attribution = cost_attribution
 
     def decide(
         self,
         message: str,
         prompt: PromptVersion | None = None,
         allow_model: bool = True,
+        tenant_id: str | None = None,
     ) -> TriageDecision:
         rule_decision = self._rule_decision(message)
         # The model path is skipped when no provider is configured, when the
@@ -104,7 +126,7 @@ class TriageAgent:
         if self.model_provider is None or rule_decision.confidence >= 0.75 or not allow_model:
             return rule_decision
         try:
-            return self._model_decision(message, prompt)
+            return self._model_decision(message, prompt, tenant_id=tenant_id)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, ModelProviderError):
             return TriageDecision(
                 route=rule_decision.route,
@@ -117,6 +139,19 @@ class TriageAgent:
                 ],
                 mode="rules_fallback",
             )
+
+    def _record_decision_cost(
+        self,
+        tenant_id: str | None,
+        response: Any,
+        prompt: PromptVersion | None,
+    ) -> None:
+        if tenant_id is None:
+            return
+        context: dict[str, str | None] = {"agent": "triage"}
+        if prompt is not None:
+            context["prompt_version"] = str(prompt.version)
+        _record_cost(self.cost_attribution, tenant_id, response, context)
 
     @staticmethod
     def _rule_decision(message: str) -> TriageDecision:
@@ -177,7 +212,13 @@ class TriageAgent:
             reasons=["No strong intent signal"],
         )
 
-    def _model_decision(self, message: str, prompt: PromptVersion | None = None) -> TriageDecision:
+    def _model_decision(
+        self,
+        message: str,
+        prompt: PromptVersion | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> TriageDecision:
         assert self.model_provider is not None
         if prompt is not None:
             system_prompt = prompt.body
@@ -194,7 +235,8 @@ class TriageAgent:
         except TypeError:
             # Provider/stub predating model_ref selection (Phase 19.4).
             response = self.model_provider.complete(system_prompt, message)
-        payload = json.loads(response)
+        self._record_decision_cost(tenant_id, response, prompt)
+        payload = json.loads(response.content)
         route = AgentName(str(payload["route"]))
         if route not in {AgentName.KNOWLEDGE, AgentName.ORDER, AgentName.ESCALATION}:
             raise ValueError("Unsupported model route")
