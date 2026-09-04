@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "click>=8.3.3,<9",
+  # SEC-005 audit anchoring: Ed25519 signing of the audit-chain tip
+  # (app/audit_anchor.py). Imported at module scope, so it must be a
+  # declared runtime dependency, not an optional extra.
+  "cryptography>=45,<46",
   "fastapi>=0.139.2,<0.140",
   "httpx>=0.28.1,<1",
   "idna>=3.15,<4",
