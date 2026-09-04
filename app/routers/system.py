@@ -86,7 +86,9 @@ def build_router(deps: RouteDeps) -> APIRouter:
         operation = str(payload.get("operation") or "").strip()
         tenant_id = str(payload.get("tenant_id") or "").strip()
         if table_name not in _REPLICATED_TABLES:
-            raise HTTPException(status_code=400, detail=f"unsupported replicated table: {table_name}")
+            raise HTTPException(
+                status_code=400, detail=f"unsupported replicated table: {table_name}"
+            )
         if not row_id or operation not in {"insert", "update", "delete"}:
             raise HTTPException(status_code=400, detail="invalid replication payload")
 

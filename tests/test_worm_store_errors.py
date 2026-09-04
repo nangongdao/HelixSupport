@@ -139,6 +139,7 @@ class WormStoreErrorPathTests(unittest.TestCase):
             obj_path = Path(root) / "obj1.json"
             original_content = obj_path.read_bytes()
             import time
+
             time.sleep(0.01)
             obj_path.write_bytes(original_content)
 

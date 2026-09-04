@@ -137,10 +137,12 @@ def generate() -> str:
         "",
         f"Version: `{info.get('version', 'unknown')}`",
         "",
-        ("This reference is generated from the OpenAPI contract snapshot "
-        "(`api/openapi.json`) by `scripts/api_docs.py`. The error contract is "
-        "documented in [ERRORS.md](../ERRORS.md); versioning and deprecation "
-        "policy in [API_POLICY.md](../API_POLICY.md)."),
+        (
+            "This reference is generated from the OpenAPI contract snapshot "
+            "(`api/openapi.json`) by `scripts/api_docs.py`. The error contract is "
+            "documented in [ERRORS.md](../ERRORS.md); versioning and deprecation "
+            "policy in [API_POLICY.md](../API_POLICY.md)."
+        ),
         "",
     ]
     # Group by first tag.

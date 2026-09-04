@@ -119,6 +119,7 @@ def test_verify_rejects_invalid_base64_payload():
     """Token with invalid base64 payload is rejected."""
     import hashlib
     import hmac
+
     encoded = "!!!invalid!!!"
     signature = hmac.new(b"secret", encoded.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="payload"):
@@ -130,6 +131,7 @@ def test_verify_rejects_invalid_json_payload():
     import base64
     import hashlib
     import hmac
+
     invalid = base64.urlsafe_b64encode(b"not-json").decode("ascii").rstrip("=")
     signature = hmac.new(b"secret", invalid.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="payload"):
@@ -142,10 +144,11 @@ def test_verify_rejects_missing_tenant_id():
     import hashlib
     import hmac
     import json
+
     payload = {"iat": 1000, "exp": 2000}
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(payload).encode("utf-8")
-    ).decode("ascii").rstrip("=")
+    encoded = (
+        base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    )
     signature = hmac.new(b"secret", encoded.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="missing tenant_id"):
         verify_token(secret="secret", token=f"{encoded}.{signature}", now=1000)
@@ -157,10 +160,11 @@ def test_verify_rejects_empty_tenant_id():
     import hashlib
     import hmac
     import json
+
     payload = {"tenant_id": "", "iat": 1000, "exp": 2000}
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(payload).encode("utf-8")
-    ).decode("ascii").rstrip("=")
+    encoded = (
+        base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    )
     signature = hmac.new(b"secret", encoded.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="missing tenant_id"):
         verify_token(secret="secret", token=f"{encoded}.{signature}", now=1000)
@@ -172,10 +176,11 @@ def test_verify_rejects_missing_timestamps():
     import hashlib
     import hmac
     import json
+
     payload = {"tenant_id": "tenant-123"}
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(payload).encode("utf-8")
-    ).decode("ascii").rstrip("=")
+    encoded = (
+        base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    )
     signature = hmac.new(b"secret", encoded.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="missing timestamps"):
         verify_token(secret="secret", token=f"{encoded}.{signature}", now=1000)
@@ -187,10 +192,11 @@ def test_verify_rejects_non_integer_timestamps():
     import hashlib
     import hmac
     import json
+
     payload = {"tenant_id": "tenant-123", "iat": "not-int", "exp": 2000}
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(payload).encode("utf-8")
-    ).decode("ascii").rstrip("=")
+    encoded = (
+        base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    )
     signature = hmac.new(b"secret", encoded.encode("ascii"), hashlib.sha256).hexdigest()
     with pytest.raises(WidgetTokenError, match="missing timestamps"):
         verify_token(secret="secret", token=f"{encoded}.{signature}", now=1000)

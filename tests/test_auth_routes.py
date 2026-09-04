@@ -52,6 +52,7 @@ class MockOIDCFlow:
     async def complete_login(self, state: str, code: str, redirect_uri: str):
         if state == "invalid":
             from app.oidc_flow import OIDCFlowError
+
             raise OIDCFlowError("Login failed", status_code=400)
         return MockIdentity()
 
@@ -128,7 +129,9 @@ def test_login_with_tenant_hint():
     )
     client = TestClient(app, follow_redirects=False)
 
-    with patch.object(flow, "build_authorization_url", return_value=("https://idp.example.com/auth", {})) as mock_build:
+    with patch.object(
+        flow, "build_authorization_url", return_value=("https://idp.example.com/auth", {})
+    ) as mock_build:
         response = client.get("/auth/login?tenant=tenant-123")
 
         assert response.status_code == 302
@@ -305,7 +308,10 @@ def test_refresh_renews_cookie_and_returns_principal():
         expires_at=int(time.time()) + 3600,
     )
 
-    with patch("app.routers.auth.renew_session_cookie", return_value=(renewed_principal, "new-cookie-value")):
+    with patch(
+        "app.routers.auth.renew_session_cookie",
+        return_value=(renewed_principal, "new-cookie-value"),
+    ):
         response = client.post("/auth/refresh", cookies={SESSION_COOKIE_NAME: "old-cookie"})
 
         assert response.status_code == 200

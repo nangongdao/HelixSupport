@@ -60,7 +60,9 @@ class CellRegistry:
             cells = [c for c in cells if self._is_cell_healthy(c.cell_id)]
         return cells
 
-    def update_health(self, cell_id: str, is_healthy: bool, failure_reason: str | None = None) -> None:
+    def update_health(
+        self, cell_id: str, is_healthy: bool, failure_reason: str | None = None
+    ) -> None:
         """Update health status for a cell."""
         from app.db._util import utc_now
 
@@ -124,7 +126,9 @@ def route_request_to_cell(
     return cell
 
 
-async def check_cell_health(cell: CellSpec, timeout_seconds: float = 5.0) -> tuple[bool, str | None]:
+async def check_cell_health(
+    cell: CellSpec, timeout_seconds: float = 5.0
+) -> tuple[bool, str | None]:
     """Ping a cell's health endpoint.
 
     Args:
@@ -175,7 +179,9 @@ async def forward_request_to_cell(
     # Construct full URL from cell's base URL and path
     # In production, db_url would be internal, use a separate api_url
     # For now, assume health_url base can be reused
-    base_url = cell.health_url.rsplit("/health", 1)[0] if "/health" in cell.health_url else cell.health_url
+    base_url = (
+        cell.health_url.rsplit("/health", 1)[0] if "/health" in cell.health_url else cell.health_url
+    )
     url = f"{base_url}{path}"
 
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:

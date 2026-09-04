@@ -60,9 +60,7 @@ class ConversationListValidationTests(unittest.TestCase):
 
     def test_cursor_and_offset_cannot_be_combined(self) -> None:
         # line 112-113
-        response = self.client.get(
-            "/api/conversations?cursor=fake&offset=10", headers=self.headers
-        )
+        response = self.client.get("/api/conversations?cursor=fake&offset=10", headers=self.headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("cursor and offset cannot be combined", response.text)
 
@@ -111,9 +109,7 @@ class ConversationListValidationTests(unittest.TestCase):
     def test_invalid_label_returns_400(self) -> None:
         # line 131-133: normalize_conversation_labels 可能抛出 ValueError
         # 使用超长标签（>32字符）触发验证错误
-        response = self.client.get(
-            "/api/conversations?label=" + "x" * 33, headers=self.headers
-        )
+        response = self.client.get("/api/conversations?label=" + "x" * 33, headers=self.headers)
         # Pydantic 验证失败返回 422，业务逻辑 ValueError 返回 400
         self.assertIn(response.status_code, [400, 422])
 
@@ -302,9 +298,7 @@ class ConversationLifecycleTests(unittest.TestCase):
         conv = self.services.database.create_conversation(
             "demo", "Customer", "CUST-1", "web", "admin", 120
         )
-        response = self.client.post(
-            f"/api/conversations/{conv['id']}/claim", headers=self.headers
-        )
+        response = self.client.post(f"/api/conversations/{conv['id']}/claim", headers=self.headers)
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["claimed_by"], "operator")
@@ -356,9 +350,7 @@ class ConversationLifecycleTests(unittest.TestCase):
             headers=self.headers,
         )
 
-        response = self.client.post(
-            f"/api/conversations/{conv['id']}/accept", headers=self.headers
-        )
+        response = self.client.post(f"/api/conversations/{conv['id']}/accept", headers=self.headers)
         # accept 可能需要特定的前置状态
         if response.status_code == 200:
             body = response.json()
@@ -387,9 +379,7 @@ class ConversationLifecycleTests(unittest.TestCase):
         # 先 resolve 会话
         self.client.post(f"/api/conversations/{conv['id']}/resolve", headers=self.headers)
 
-        response = self.client.post(
-            f"/api/conversations/{conv['id']}/reopen", headers=self.headers
-        )
+        response = self.client.post(f"/api/conversations/{conv['id']}/reopen", headers=self.headers)
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["status"], "open")

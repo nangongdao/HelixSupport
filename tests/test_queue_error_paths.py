@@ -264,7 +264,9 @@ class RedisQueueErrorHandlingTests(unittest.TestCase):
 
         with patch.object(queue.redis, "zadd", side_effect=Exception("zadd error")):
             with self.assertRaises(QueueUnavailableError):
-                queue.fail(claimed["id"], "delayed-worker", "retryable_error", 2, 300, retryable=True)
+                queue.fail(
+                    claimed["id"], "delayed-worker", "retryable_error", 2, 300, retryable=True
+                )
 
     def test_recover_handles_redis_error_in_delayed_promotion(self) -> None:
         """recover() calls _promote_delayed which will raise in non-fail-closed mode."""
@@ -308,14 +310,18 @@ class CreateTaskQueueFactoryTests(unittest.TestCase):
             self.assertIsInstance(queue, SQLiteTaskQueue)
 
     def test_redis_import_error_fail_closed_raises(self) -> None:
-        settings = Mock(queue_backend="redis", redis_url=REDIS_URL, queue_failure_mode="fail_closed")
+        settings = Mock(
+            queue_backend="redis", redis_url=REDIS_URL, queue_failure_mode="fail_closed"
+        )
         with patch("builtins.__import__", side_effect=ImportError("redis not installed")):
             with self.assertRaises(QueueUnavailableError) as ctx:
                 create_task_queue(self.db, settings)
             self.assertIn("not installed", str(ctx.exception))
 
     def test_redis_client_build_error_fallback_to_sqlite(self) -> None:
-        settings = Mock(queue_backend="redis", redis_url="redis://invalid:9999", queue_failure_mode="fallback")
+        settings = Mock(
+            queue_backend="redis", redis_url="redis://invalid:9999", queue_failure_mode="fallback"
+        )
         queue = create_task_queue(self.db, settings)
         # If Redis fails to connect, should fall back to SQLite
         self.assertIsInstance(queue, SQLiteTaskQueue)

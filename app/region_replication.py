@@ -279,9 +279,7 @@ class ReplicationWorker:
             response.raise_for_status()
 
 
-async def periodic_replication(
-    worker: ReplicationWorker, interval_seconds: int = 60
-) -> None:
+async def periodic_replication(worker: ReplicationWorker, interval_seconds: int = 60) -> None:
     """Background task to periodically replicate pending changes.
 
     Args:

@@ -35,6 +35,7 @@ class WidgetRoutesTests(unittest.TestCase):
         self.tenant_id = "tenant-widget-test"
         # Provision tenant directly via database
         from app.database import Database
+
         self.db = Database(self.db_path)
         self.db.initialize()
         self.db.ensure_tenant(self.tenant_id, "Widget Test Tenant")
@@ -44,6 +45,7 @@ class WidgetRoutesTests(unittest.TestCase):
         self.db.close()
         # Windows: wait for connections to release before cleanup
         import gc
+
         gc.collect()
         try:
             self.tmp.cleanup()
@@ -382,7 +384,10 @@ class WidgetRoutesTests(unittest.TestCase):
 
         # Mock orchestrator to raise TurnInProgressError
         from app.orchestrator import TurnInProgressError
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = TurnInProgressError("Turn already in progress")
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",
@@ -405,7 +410,9 @@ class WidgetRoutesTests(unittest.TestCase):
         session_token = session_data["widget_token"]
 
         # Mock orchestrator to raise ValueError
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = ValueError("Invalid message content")
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",
@@ -428,7 +435,9 @@ class WidgetRoutesTests(unittest.TestCase):
         session_token = session_data["widget_token"]
 
         # Mock orchestrator to raise LookupError
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = LookupError("Resource not found")
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",
@@ -452,7 +461,10 @@ class WidgetRoutesTests(unittest.TestCase):
 
         # Mock orchestrator to raise IdempotencyConflictError
         from app.orchestrator import IdempotencyConflictError
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = IdempotencyConflictError("Idempotency key mismatch")
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",
@@ -476,7 +488,10 @@ class WidgetRoutesTests(unittest.TestCase):
 
         # Mock orchestrator to raise InvalidTransitionError
         from app.orchestrator import InvalidTransitionError
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = InvalidTransitionError("Cannot transition from resolved")
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",
@@ -499,7 +514,9 @@ class WidgetRoutesTests(unittest.TestCase):
         session_token = session_data["widget_token"]
 
         # Mock backpressure check to return overload reason
-        with patch("app.widget_routes.backpressure_reason", return_value="Queue full, try again later"):
+        with patch(
+            "app.widget_routes.backpressure_reason", return_value="Queue full, try again later"
+        ):
             response = self.client.post(
                 f"/api/widget/sessions/{conversation_id}/messages?async_mode=true",
                 json={"content": "Test backpressure"},
@@ -524,7 +541,9 @@ class WidgetRoutesTests(unittest.TestCase):
         # Mock orchestrator to raise an unexpected exception type
         # Use a new client with raise_server_exceptions=False to capture 500 errors
         test_client = TestClient(self.app, raise_server_exceptions=False)
-        with patch.object(self.app.state.services.orchestrator, "handle_customer_message") as mock_handle:
+        with patch.object(
+            self.app.state.services.orchestrator, "handle_customer_message"
+        ) as mock_handle:
             mock_handle.side_effect = RuntimeError("Unexpected internal error")
             response = test_client.post(
                 f"/api/widget/sessions/{conversation_id}/messages",

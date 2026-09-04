@@ -106,7 +106,9 @@ class Ed25519KmsSigner:
             raw = base64.b64decode(encoded.encode("ascii"), validate=True)
             ed25519.Ed25519PrivateKey.from_private_bytes(raw)
         except (ValueError, TypeError) as exc:
-            raise ValueError("AUDIT_ANCHOR_KEY must be base64 of a 32-byte Ed25519 private key") from exc
+            raise ValueError(
+                "AUDIT_ANCHOR_KEY must be base64 of a 32-byte Ed25519 private key"
+            ) from exc
         return cls(private_key=raw)
 
     @property

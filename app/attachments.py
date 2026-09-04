@@ -111,9 +111,7 @@ class AttachmentScanner:
             return False, f"content does not match .{extension} signature"
         # Disguised MIME: a text/* claim with binary container magic is a
         # mismatch regardless of extension.
-        if content_type.startswith("text/") and (
-            head.startswith((b"PK\x03\x04", b"\x1f\x8b"))
-        ):
+        if content_type.startswith("text/") and (head.startswith((b"PK\x03\x04", b"\x1f\x8b"))):
             return False, f"binary container bytes declared as {content_type}"
         bomb_verdict = self._check_compression_bomb(data)
         if bomb_verdict:

@@ -176,9 +176,7 @@ async def initiate_failover(
     if require_target_healthy:
         is_healthy, reason = await check_region_health(target)
         if not is_healthy:
-            raise FailoverError(
-                f"target cell {target_cell_id} is unhealthy: {reason or 'unknown'}"
-            )
+            raise FailoverError(f"target cell {target_cell_id} is unhealthy: {reason or 'unknown'}")
 
     to_region = resolve_region(target.region)
     if not is_known_region(to_region, region_inventory):

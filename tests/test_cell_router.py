@@ -66,7 +66,9 @@ class TestCellRegistry(unittest.TestCase):
         self.assertEqual(cells[0].cell_id, "cell-default")
 
     def test_update_health(self) -> None:
-        self.registry.update_health("cell-default", is_healthy=False, failure_reason="connect_error")
+        self.registry.update_health(
+            "cell-default", is_healthy=False, failure_reason="connect_error"
+        )
         health = self.registry.get_health("cell-default")
         self.assertIsNotNone(health)
         self.assertFalse(health.is_healthy)

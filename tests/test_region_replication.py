@@ -26,6 +26,7 @@ class TestReplicationLog(unittest.TestCase):
 
         # Run migration v43 to create replication_log table
         from app.migrations.v43_replication_log import migrate as migrate_v43
+
         with self.database.connect() as conn:
             migrate_v43(conn)
             # replication_log.tenant_id references tenants(id)
@@ -181,6 +182,7 @@ class TestReplicationWorker(unittest.IsolatedAsyncioTestCase):
 
         # Run migration v43 to create replication_log table
         from app.migrations.v43_replication_log import migrate as migrate_v43
+
         with self.database.connect() as conn:
             migrate_v43(conn)
             # replication_log.tenant_id references tenants(id)

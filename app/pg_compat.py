@@ -395,8 +395,10 @@ def install_triggers(connection: Any) -> None:
 
 _TRGM_EXTENSION = "CREATE EXTENSION IF NOT EXISTS pg_trgm"
 _TRGM_INDEX_DDL = (
-    ("CREATE INDEX IF NOT EXISTS idx_messages_content_trgm "
-    "ON messages USING gin (content gin_trgm_ops)"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_messages_content_trgm "
+        "ON messages USING gin (content gin_trgm_ops)"
+    ),
 )
 
 
@@ -449,8 +451,10 @@ def install_trgm_search(connection: Any) -> None:
 # in :meth:`app.db.conversations_query.DatabaseConversationsQueryMixin
 # ._query_conversations_windowed` (full-match term: ~0.5ms, was 627-809ms).
 _UPDATED_SORT_INDEX_DDL = (
-    ("CREATE INDEX IF NOT EXISTS idx_conversations_tenant_updated_id "
-    "ON conversations (tenant_id, updated_at DESC, id DESC)"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_conversations_tenant_updated_id "
+        "ON conversations (tenant_id, updated_at DESC, id DESC)"
+    ),
 )
 
 
@@ -479,12 +483,16 @@ def install_updated_sort_index(connection: Any) -> None:
 # hot ``idx_conversations_tenant_updated`` before it, lacked the ``id DESC``
 # tiebreak the shared ``ORDER BY updated_at DESC, id DESC`` requires.
 _ARCHIVE_TRGM_INDEX_DDL = (
-    ("CREATE INDEX IF NOT EXISTS idx_messages_archive_content_trgm "
-    "ON messages_archive USING gin (content gin_trgm_ops)"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_messages_archive_content_trgm "
+        "ON messages_archive USING gin (content gin_trgm_ops)"
+    ),
 )
 _ARCHIVE_UPDATED_SORT_INDEX_DDL = (
-    ("CREATE INDEX IF NOT EXISTS idx_conversations_archive_tenant_updated_id "
-    "ON conversations_archive (tenant_id, updated_at DESC, id DESC)"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_conversations_archive_tenant_updated_id "
+        "ON conversations_archive (tenant_id, updated_at DESC, id DESC)"
+    ),
 )
 
 
@@ -535,9 +543,11 @@ def install_archive_updated_sort_index(connection: Any) -> None:
 # ---------------------------------------------------------------------------
 
 _CSAT_SUMMARY_INDEX_DDL = (
-    ("CREATE INDEX IF NOT EXISTS idx_csat_summary_tenant_responded "
-    "ON csat_surveys (tenant_id, substr(responded_at, 1, 10)) "
-    "WHERE rating IS NOT NULL"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_csat_summary_tenant_responded "
+        "ON csat_surveys (tenant_id, substr(responded_at, 1, 10)) "
+        "WHERE rating IS NOT NULL"
+    ),
 )
 
 

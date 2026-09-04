@@ -825,9 +825,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         from app.region_replication import ReplicationLog, ReplicationWorker, periodic_replication
 
         peer_cells = [
-            cell
-            for cell in cell_registry.list_cells()
-            if cell.cell_id != settings.current_cell_id
+            cell for cell in cell_registry.list_cells() if cell.cell_id != settings.current_cell_id
         ]
 
         if peer_cells:

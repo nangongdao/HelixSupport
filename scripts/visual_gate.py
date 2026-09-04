@@ -122,8 +122,10 @@ def compare(name: str, current: Image.Image, update: bool = False) -> tuple[bool
         return (
             False,
             1.0,
-            (f"{name}: geometry changed {baseline.size}->{current.size}; "
-            f"capture at {_drift_path(name)}. Re-run with --update if intended"),
+            (
+                f"{name}: geometry changed {baseline.size}->{current.size}; "
+                f"capture at {_drift_path(name)}. Re-run with --update if intended"
+            ),
         )
     diff_pixels = 0
     total_pixels = baseline.size[0] * baseline.size[1]
