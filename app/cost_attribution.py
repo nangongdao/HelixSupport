@@ -27,7 +27,7 @@ ANOMALY_FACTOR = 2.0
 
 def record_model_response(
     service: CostAttributionService | None,
-    tenant_id: str,
+    tenant_id: str | None,
     response: ModelResponse | None,
     context: InferenceContext | None = None,
 ) -> None:
@@ -37,7 +37,7 @@ def record_model_response(
     summaries) so the attribution tables reflect real inference. Rows without
     vendor-reported usage are skipped -- there is nothing to attribute.
     """
-    if service is None or response is None:
+    if service is None or tenant_id is None or response is None:
         return
     usage = response.usage or {}
     if not usage.get("prompt_tokens") and not usage.get("completion_tokens"):
