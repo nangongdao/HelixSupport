@@ -303,6 +303,9 @@ jobs:
           python -m pip install --no-deps -e .
           python -m pip install "playwright>=1.50,<2" "pytest>=8.3,<9"
           python -m playwright install --with-deps chromium
+          # Root npm ci provides axe-core (tests/ui_accessibility.py loads it
+          # from ROOT/node_modules); the frontend npm ci provides vite.
+          npm ci --ignore-scripts
 
       - name: Build React islands for the desktop shell
         # app/static/dist is gitignored; the React islands (queue, quality,
