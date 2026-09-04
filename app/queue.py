@@ -491,7 +491,7 @@ def create_task_queue(database: Any, settings: Any) -> TaskQueue:
     backend = getattr(settings, "queue_backend", "sqlite")
     if backend == "redis":
         try:
-            import redis
+            import redis  # type: ignore[reportMissingImports]
 
             client = redis.from_url(settings.redis_url, decode_responses=True)
         except ImportError:
