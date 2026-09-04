@@ -101,6 +101,14 @@ def main() -> None:
         expect(page.locator("#operatorIdentity")).to_contain_text("demo.admin")
         expect(page.get_by_role("heading", name="会话队列")).to_be_visible()
 
+        # Low-perf probes depending on the runner's core count: 4-core CI
+        # hosts auto-enable it (detectConstrainedDevice), dev machines do
+        # not. Normalise to the "off" state first so the toggle exercises
+        # both directions deterministically.
+        if page.get_by_role("button", name="关闭低配模式").count():
+            page.get_by_role("button", name="关闭低配模式").click()
+            expect(page.locator("#perfHint")).to_be_hidden()
+
         with page.expect_response(
             lambda response: "/api/conversations?" in response.url and "limit=20" in response.url
         ):
