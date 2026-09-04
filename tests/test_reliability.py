@@ -27,14 +27,14 @@ ADMIN_KEY = "rel-admin-key-0001"
 
 def _settings(db_path: Path, **overrides: Any) -> Settings:
     principals = {ADMIN_KEY: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"}}
-    defaults: dict[str, Any] = dict(
-        database_path=db_path,
-        auth_mode="api_key",
-        api_keys_json=json.dumps(principals),
-        rate_limit_per_minute=10000,
-        docs_enabled=False,
-        turn_worker_enabled=True,
-    )
+    defaults: dict[str, Any] = {
+        "database_path": db_path,
+        "auth_mode": "api_key",
+        "api_keys_json": json.dumps(principals),
+        "rate_limit_per_minute": 10000,
+        "docs_enabled": False,
+        "turn_worker_enabled": True,
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 

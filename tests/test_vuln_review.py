@@ -90,7 +90,7 @@ class VulnerabilityReviewTests(unittest.TestCase):
                     "dependencies": [
                         {
                             "name": "example-pkg",
-                            "vulnerabilities": [{"id": "CVE-2026-9999"}],
+                            "vulns": [{"id": "CVE-2026-9999"}],
                         }
                     ]
                 }
@@ -101,6 +101,27 @@ class VulnerabilityReviewTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertIn("CVE-2026-9999", violations[0])
 
+    def test_legacy_vulnerabilities_key_still_read(self) -> None:
+        """古い成果物の "vulnerabilities" キーも読めること。"""
+        exceptions = _exceptions_path(self.root, [])
+        audit = self.root / "pip-audit.json"
+        audit.write_text(
+            json.dumps(
+                {
+                    "dependencies": [
+                        {
+                            "name": "example-pkg",
+                            "vulnerabilities": [{"id": "CVE-2026-9997"}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        violations = audit_coverage(audit, exceptions)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("CVE-2026-9997", violations[0])
+
     def test_registered_cve_in_audit_passes_coverage(self) -> None:
         exceptions = _exceptions_path(self.root, [_open_entry(id="CVE-2026-9999")])
         audit = self.root / "pip-audit.json"
@@ -110,7 +131,7 @@ class VulnerabilityReviewTests(unittest.TestCase):
                     "dependencies": [
                         {
                             "name": "example-pkg",
-                            "vulnerabilities": [{"id": "CVE-2026-9999"}],
+                            "vulns": [{"id": "CVE-2026-9999"}],
                         }
                     ]
                 }

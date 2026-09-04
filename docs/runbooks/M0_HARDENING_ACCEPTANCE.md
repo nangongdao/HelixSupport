@@ -8,8 +8,18 @@
 
 - [ ] staging 主机的 `requirements.lock`、`docs/`、`scripts/`、`supplychain/` 与发布 tag 一致。
 - [ ] 可获得 staging 管理员 API key(由环境变量 `HELIX_ADMIN_KEY` 传入,不得写入文档或仓库)。
-- [ ] `APP_VERSION` 与 release tag 一致:
-  `python -c "from app.main import APP_VERSION; print(APP_VERSION)"`
+- [ ] `APP_VERSION` 与 release tag 一致(静态读取,不导入应用、无启动副作用):
+  ```bash
+  python - <<'PY'
+  import ast
+  from pathlib import Path
+  tree = ast.parse(Path("app/main.py").read_text(encoding="utf-8"))
+  for node in tree.body:
+      if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "APP_VERSION" for t in node.targets):
+          print(node.value.value)
+          break
+  PY
+  ```
 
 ## 1. 部署配置核查
 

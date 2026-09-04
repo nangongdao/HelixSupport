@@ -28,7 +28,6 @@ from app.domain import AgentName
 from app.orchestrator import ConversationOrchestrator
 from app.tools import ToolGateway
 
-
 _CONFIG = CircuitBreakerConfig(
     failure_threshold=1,
     recovery_timeout_seconds=60.0,

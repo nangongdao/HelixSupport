@@ -29,4 +29,3 @@ def migration_31(connection: sqlite3.Connection) -> None:
                 last_seen_at TEXT NOT NULL
             );
             """)
-    return

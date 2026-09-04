@@ -7,7 +7,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
 
 from app.channel_webhooks import (
-
     ChannelWebhookAuthError,
     InboundChannelAccount,
     channel_message_key,
@@ -19,7 +18,6 @@ from app.intake import backpressure_reason
 from app.main import AppServices, _conversation_quota_exceeded
 from app.orchestrator import IdempotencyConflictError, InvalidTransitionError
 from app.schemas import ChannelWebhookAccepted, ChannelWebhookMessageRequest
-
 
 router = APIRouter(prefix="/api/channels", tags=["channels"])
 MAX_WEBHOOK_BODY_BYTES = 16 * 1024

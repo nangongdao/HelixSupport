@@ -1,14 +1,15 @@
 /**
- * Helix Support — composer surface (ROADMAP §41.6 / ARC-001).
- *
- * Local drafts, claim renewal, canned-response macros, and the AI copilot
- * bar. Extracted from the legacy app.js; app.js keeps thin delegating
- * wrappers with identical names/signatures, so the running UI behaviour is
- * unchanged. app.js calls configure() once at load time with its singletons
- * (state/els/api/…) because this module binds no DOM at import time.
+ * Helix Support — composer surface (ROADMAP §41.6 / ARC-001): drafts, claim
+ * renewal, canned macros and the AI copilot bar. app.js keeps thin
+ * delegating wrappers and calls configure() once with its singletons.
  */
 
-import { clearPendingAttachments, pendingIds } from "./attachment.js?v=1.3.9";
+import { clearPendingAttachments, pendingIds } from "./attachment.js?v=1.4.0";
+import {
+  clearDraft,
+  loadDraft,
+  saveDraft,
+} from "./drafts.js?v=1.4.0";
 
 let ctx = null;
 
@@ -17,89 +18,18 @@ export function configure(deps) {
   ctx = deps;
 }
 
-const DRAFT_PREFIX = "helix-draft:";
+// Draft persistence lives in js/drafts.js (re-exported for the namespace).
+export { clearDraft, draftKey, draftTtlMs, draftsEnabled, loadDraft, pruneExpiredDrafts, saveDraft } from "./drafts.js?v=1.4.0";
 
-export function draftKey(conversationId) {
-  return `${DRAFT_PREFIX}${conversationId}`;
+/** Publish a copilot section {status?, suggestions?, knowledge?, rewritten?}
+ * to the composer island (no-op outside island mode). */
+function publishCopilot(detail) {
+  if (typeof window === "undefined" || !window.__HELIX_ISLAND_MODE__) return;
+  window.dispatchEvent(new CustomEvent(COMPOSER_COPILOT_EVENT, { detail }));
 }
 
-export function draftsEnabled() {
-  return ctx.state.me?.local_drafts_enabled !== false;
-}
-
-export function draftTtlMs() {
-  const minutes = Number(ctx.state.me?.local_draft_ttl_minutes) || 720;
-  return minutes * 60000;
-}
-
-export function loadDraft(conversationId) {
-  if (!conversationId || !draftsEnabled()) return "";
-  try {
-    const raw = window.localStorage.getItem(draftKey(conversationId));
-    if (!raw) return "";
-    const parsed = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || typeof parsed.text !== "string") {
-      window.localStorage.removeItem(draftKey(conversationId));
-      return "";
-    }
-    if (Date.now() - Number(parsed.savedAt || 0) > draftTtlMs()) {
-      window.localStorage.removeItem(draftKey(conversationId));
-      return "";
-    }
-    return parsed.text;
-  } catch {
-    return "";
-  }
-}
-
-export function saveDraft(conversationId, value) {
-  if (!conversationId || !draftsEnabled()) return;
-  try {
-    if (!value.trim()) window.localStorage.removeItem(draftKey(conversationId));
-    else
-      window.localStorage.setItem(
-        draftKey(conversationId),
-        JSON.stringify({ text: value, savedAt: Date.now() }),
-      );
-  } catch {
-    // localStorage may be unavailable
-  }
-}
-
-export function clearDraft(conversationId) {
-  if (!conversationId) return;
-  try {
-    window.localStorage.removeItem(draftKey(conversationId));
-  } catch {
-    // localStorage may be unavailable
-  }
-}
-
-export function pruneExpiredDrafts() {
-  try {
-    const ttl = draftTtlMs();
-    const stale = [];
-    for (let i = 0; i < window.localStorage.length; i += 1) {
-      const key = window.localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_PREFIX)) continue;
-      if (!draftsEnabled()) {
-        stale.push(key);
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(window.localStorage.getItem(key) || "");
-        if (typeof parsed?.text !== "string" || Date.now() - Number(parsed.savedAt || 0) > ttl) {
-          stale.push(key);
-        }
-      } catch {
-        stale.push(key);
-      }
-    }
-    for (const key of stale) window.localStorage.removeItem(key);
-  } catch {
-    // localStorage may be unavailable
-  }
-}
+/** Event the composer island listens on for copilot tool state. */
+export const COMPOSER_COPILOT_EVENT = "helix-composer-copilot";
 
 export function scheduleClaimRenewal(detail) {
   if (ctx.state.claimRenewTimer) {
@@ -178,9 +108,30 @@ export function applyMacroFromSuggest(responseId) {
   );
 }
 
+/** Paint the canned chips (browser); island mode republishes state. */
+export function renderCannedResponses() {
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+    return;
+  }
+  if (!ctx.els.cannedList) return;
+  if (!ctx.state.cannedResponses.length) {
+    ctx.els.cannedList.innerHTML = '<span class="canned-empty">暂无快捷回复</span>';
+    return;
+  }
+  ctx.els.cannedList.innerHTML = ctx.state.cannedResponses
+    .slice(0, 8)
+    .map(
+      (item) =>
+        `<button class="canned-chip" type="button" data-macro-id="${ctx.escapeHtml(item.id)}" title="${ctx.escapeHtml(item.body)}">${ctx.escapeHtml(item.title)}${item.shortcut ? ` /${ctx.escapeHtml(item.shortcut)}` : ""}</button>`,
+    )
+    .join("");
+}
+
 export async function loadCannedResponses({ force = false } = {}) {
   if (!ctx.canOperate()) {
     ctx.state.cannedResponses = [];
+    publishState();
     return;
   }
   if (!force && ctx.state.cannedLoadedAt && Date.now() - ctx.state.cannedLoadedAt < 120000) return;
@@ -189,6 +140,16 @@ export async function loadCannedResponses({ force = false } = {}) {
     ctx.state.cannedLoadedAt = Date.now();
   } catch {
     ctx.state.cannedResponses = [];
+  }
+  publishState();
+}
+
+/** Usage tracking for island-applied macros (best-effort, like legacy). */
+export async function recordMacroUse(responseId) {
+  try {
+    await ctx.api(`/api/canned-responses/${encodeURIComponent(responseId)}/use`, { method: "POST" });
+  } catch {
+    // usage tracking is best-effort
   }
 }
 
@@ -209,19 +170,27 @@ export function setCopilotStatus(text, autoHide = true) {
   }
 }
 
-export async function fetchCopilotSuggestions() {
+export async function fetchCopilotSuggestions({ draft } = {}) {
   const conversationId = ctx.state.selectedId;
   if (!conversationId || !ctx.canOperate()) return;
   setCopilotStatus("生成中…", false);
+  publishCopilot({ status: "生成中…" });
   try {
     const payload = await ctx.api("/api/copilot/suggest", {
       method: "POST",
       body: JSON.stringify({
         conversation_id: conversationId,
-        draft: ctx.els.operatorInput?.value || null,
+        // Island mode passes the island textarea content; legacy reads its own input.
+        draft: draft !== undefined ? draft : ctx.els.operatorInput?.value || null,
       }),
     });
     const items = payload.suggestions || [];
+    const mapped = items.map((item) => ({ content: item.content, source: item.source }));
+    copilotSuggestionTexts = mapped.map((item) => item.content);
+    if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+      publishCopilot({ suggestions: mapped, status: mapped.length ? "" : "暂无建议" });
+      return;
+    }
     if (!ctx.els.copilotSuggestions) return;
     if (!items.length) {
       ctx.els.copilotSuggestions.hidden = true;
@@ -229,7 +198,6 @@ export async function fetchCopilotSuggestions() {
       setCopilotStatus("暂无建议");
       return;
     }
-    copilotSuggestionTexts = items.map((item) => item.content);
     ctx.els.copilotSuggestions.innerHTML = items
       .map((item, index) => {
         const badge = item.source === "model" ? "AI" : "模板";
@@ -242,6 +210,7 @@ export async function fetchCopilotSuggestions() {
     setCopilotStatus("");
   } catch {
     setCopilotStatus("建议生成失败");
+    publishCopilot({ status: "建议生成失败" });
   }
 }
 
@@ -250,40 +219,59 @@ export async function loadCopilotKnowledge() {
   if (!conversationId || !ctx.canOperate()) return;
   if (ctx.state.lastCopilotConv === conversationId) return;
   ctx.state.lastCopilotConv = conversationId;
-  if (!ctx.els.copilotKnowledge) return;
   try {
     const payload = await ctx.api("/api/copilot/knowledge", {
       method: "POST",
       body: JSON.stringify({ conversation_id: conversationId }),
     });
-    const articles = payload.articles || [];
+    const articles = (payload.articles || []).map((article) => ({
+      title: article.title,
+      category: article.category || "",
+    }));
+    if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+      publishCopilot({ knowledge: articles });
+      return;
+    }
+    if (!ctx.els.copilotKnowledge) return;
     ctx.els.copilotKnowledge.hidden = !articles.length;
     ctx.els.copilotKnowledge.innerHTML = articles
       .map((article) => `<button type="button" class="copilot-kb-item" data-title="${ctx.escapeHtml(article.title)}">`
         + `<span class="copilot-kb-title">${ctx.escapeHtml(article.title)}</span>`
-        + `<span class="copilot-kb-cat">${ctx.escapeHtml(article.category || "")}</span></button>`)
+        + `<span class="copilot-kb-cat">${ctx.escapeHtml(article.category)}</span></button>`)
       .join("");
   } catch {
-    ctx.els.copilotKnowledge.hidden = true;
+    if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+      publishCopilot({ knowledge: [] });
+      return;
+    }
+    if (ctx.els.copilotKnowledge) ctx.els.copilotKnowledge.hidden = true;
   }
 }
 
-export async function applyCopilotTone(tone) {
-  const text = ctx.els.operatorInput?.value || "";
-  if (!text.trim()) {
+export async function applyCopilotTone(tone, { text } = {}) {
+  const value = text !== undefined ? text : ctx.els.operatorInput?.value || "";
+  if (!value.trim()) {
     setCopilotStatus("先输入草稿再改写");
+    publishCopilot({ status: "先输入草稿再改写" });
     return;
   }
   setCopilotStatus("改写中…", false);
+  publishCopilot({ status: "改写中…" });
   try {
     const payload = await ctx.api("/api/copilot/rewrite", {
       method: "POST",
-      body: JSON.stringify({ text, tone }),
+      body: JSON.stringify({ text: value, tone }),
     });
+    const statusText = payload.source === "model" ? "已改写" : "原样保留（模型不可用）";
+    if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+      publishCopilot({ status: statusText, rewritten: payload.rewritten });
+      return;
+    }
     ctx.els.operatorInput.value = payload.rewritten;
-    setCopilotStatus(payload.source === "model" ? "已改写" : "原样保留（模型不可用）");
+    setCopilotStatus(statusText);
   } catch {
     setCopilotStatus("改写失败");
+    publishCopilot({ status: "改写失败" });
   }
 }
 
@@ -302,15 +290,66 @@ export function resetCopilot() {
 }
 
 export function renderCopilot(detail) {
-  if (!ctx.els.copilotBar) return;
   const conversation = detail.conversation;
   const human = ["waiting_human", "human_active"].includes(conversation.status);
-  ctx.els.copilotBar.hidden = !human || !ctx.canOperate();
+  const visible = human && ctx.canOperate();
+  // Island mode: the composer island derives the copilot/canned/attachment
+  // tool visibility from the composer state snapshot; the knowledge load and
+  // reset lifecycle stay here.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    if (!visible) {
+      resetCopilot();
+      publishCopilot({ suggestions: [], knowledge: [], status: "" });
+    } else if (ctx.state.lastCopilotConv !== conversation.id) {
+      void loadCopilotKnowledge();
+    }
+    publishState();
+    return;
+  }
+  if (!ctx.els.copilotBar) return;
+  ctx.els.copilotBar.hidden = !visible;
   if (ctx.els.copilotBar.hidden) {
     resetCopilot();
     return;
   }
   if (ctx.state.lastCopilotConv !== conversation.id) void loadCopilotKnowledge();
+}
+
+/** Republish the composer state snapshot to the island (no-op outside
+ * island mode; the bridge module owns the payload). */
+function publishState() {
+  if (typeof window === "undefined" || !window.__HELIX_ISLAND_MODE__) return;
+  window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+}
+
+/** Send an operator message (shared by the legacy form and the React island
+ *  bridge). Reads nothing from the DOM — the caller passes the content. */
+export async function sendOperatorMessage(content) {
+  const conversationId = ctx.state.selectedId;
+  if (!conversationId) return;
+  const text = String(content || "").trim();
+  if (!text) return;
+  hideMacroSuggest();
+  ctx.setFormBusy(ctx.els.operatorForm, true);
+  try {
+    const body = { content: text };
+    // Backlog (语音/富媒体消息): include this conversation's pending uploads.
+    const pendingIds_ = pendingIds(conversationId);
+    if (pendingIds_.length) body.attachment_ids = [...pendingIds_];
+    await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}/operator-messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    clearPendingAttachments(conversationId);
+    ctx.els.operatorInput.value = "";
+    clearDraft(conversationId);
+    await ctx.loadDetail(conversationId);
+    void ctx.refreshAll({ silent: true, refreshDetail: false });
+  } catch (error) {
+    ctx.showToast(error.message, true);
+  } finally {
+    ctx.setFormBusy(ctx.els.operatorForm, false);
+  }
 }
 
 /**
@@ -323,30 +362,9 @@ export function bindComposer() {
     ctx.els.operatorForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!ctx.state.selectedId) return;
-      const conversationId = ctx.state.selectedId;
       const content = ctx.els.operatorInput.value.trim();
       if (!content) return;
-      hideMacroSuggest();
-      ctx.setFormBusy(ctx.els.operatorForm, true);
-      try {
-        const body = { content };
-        // Backlog (语音/富媒体消息): include this conversation's pending uploads.
-        const pendingIds_ = pendingIds(conversationId);
-        if (pendingIds_.length) body.attachment_ids = [...pendingIds_];
-        await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}/operator-messages`, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        clearPendingAttachments(conversationId);
-        ctx.els.operatorInput.value = "";
-        clearDraft(conversationId);
-        await ctx.loadDetail(conversationId);
-        void ctx.refreshAll({ silent: true, refreshDetail: false });
-      } catch (error) {
-        ctx.showToast(error.message, true);
-      } finally {
-        ctx.setFormBusy(ctx.els.operatorForm, false);
-      }
+      await sendOperatorMessage(content);
     });
   }
   if (ctx.els.copilotSuggestBtn) {

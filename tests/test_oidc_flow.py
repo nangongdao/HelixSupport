@@ -22,20 +22,20 @@ import httpx
 
 from app.database import Database
 from app.oidc_flow import (
+    _SHA256_DIGEST_INFO_PREFIX,
     AUTH_TX_TTL_SECONDS,
+    DatabaseOIDCTransactionStore,
     JwkResolver,
     OIDCFlow,
     OIDCFlowError,
-    RazorThinJwtError,
-    DatabaseOIDCTransactionStore,
     OIDCTransaction,
+    RazorThinJwtError,
+    _assert_rs256_algorithm,
     derive_code_challenge,
     enforce_token_claims,
     generate_code_verifier,
     resolve_oidc_identity,
     verify_rs256_signature,
-    _SHA256_DIGEST_INFO_PREFIX,
-    _assert_rs256_algorithm,
 )
 from app.session_auth import OIDCConfig
 
@@ -78,7 +78,7 @@ def _sign_jwt(header: dict[str, Any], claims: dict[str, Any]) -> str:
     k = (_RSA_N.bit_length() + 7) // 8
     em = b"\x00\x01" + b"\xff" * (k - len(block) - 3) + b"\x00" + block
     signature = pow(int.from_bytes(em, "big"), _RSA_D, _RSA_N).to_bytes(k, "big")
-    return "{}.{}".format(signing_input, _b64u(signature))
+    return f"{signing_input}.{_b64u(signature)}"
 
 
 def _id_token(

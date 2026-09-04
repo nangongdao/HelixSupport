@@ -28,6 +28,10 @@ from pathlib import Path
 _DESCRIPTION = (__doc__ or "supply-chain gate").strip().splitlines()[0]
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console
+
 DEFAULT_EXCEPTIONS = ROOT / "supplychain" / "vulnerability-exceptions.json"
 
 VALID_STATUSES = {"open", "closed"}
@@ -116,10 +120,14 @@ def audit_coverage(
         return [f"无法读取 pip-audit 报告 {audit_report}: {exc}"]
     reported: set[str] = set()
     for dependency in payload.get("dependencies", []):
-        for vulnerability in dependency.get("vulnerabilities", []):
-            vuln_id = vulnerability.get("id")
-            if isinstance(vuln_id, str):
-                reported.add(vuln_id)
+        # pip-audit の JSON formatter が出すのは "vulns"。"vulnerabilities" は
+        # 誤読のままカバレッジ門が一度も落ちなかった原因なので、正しい方を先に
+        # 見つつ、既存の成果物を壊さないため旧キーも読む。
+        for key in ("vulns", "vulnerabilities"):
+            for vulnerability in dependency.get(key, []):
+                vuln_id = vulnerability.get("id")
+                if isinstance(vuln_id, str):
+                    reported.add(vuln_id)
     registered = _registered_ids(exceptions_path)
     return [
         f"未登记漏洞 {vuln_id}：必须登记到 {exceptions_path.name} 并附不可达证据/补偿控制/owner/到期日"
@@ -158,4 +166,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

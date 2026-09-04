@@ -38,7 +38,10 @@ class ArchiveObjectStoreTests(unittest.TestCase):
     def test_roundtrip_preserves_order_and_compresses(self) -> None:
         records = _records(100)
         entry = self.store.put_partition(
-            "t1", partition_key="2026-08-21", records=records, created_at="2026-08-21T00:00:00+00:00"
+            "t1",
+            partition_key="2026-08-21",
+            records=records,
+            created_at="2026-08-21T00:00:00+00:00",
         )
         self.assertEqual(entry.record_count, 100)
         self.assertTrue(entry.content_sha256)
@@ -89,10 +92,16 @@ class ArchiveObjectStoreTests(unittest.TestCase):
 
     def test_verify_reports_clean_state(self) -> None:
         self.store.put_partition(
-            "t1", partition_key="2026-08-20", records=_records(4, day="2026-08-20"), created_at="now"
+            "t1",
+            partition_key="2026-08-20",
+            records=_records(4, day="2026-08-20"),
+            created_at="now",
         )
         self.store.put_partition(
-            "t1", partition_key="2026-08-21", records=_records(6, day="2026-08-21"), created_at="now"
+            "t1",
+            partition_key="2026-08-21",
+            records=_records(6, day="2026-08-21"),
+            created_at="now",
         )
         stats = self.store.verify("t1")
         self.assertEqual(stats, {"partitions": 2, "records": 10})

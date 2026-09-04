@@ -101,49 +101,46 @@ def audit_high_risk(
     # Phase 43.2: high-risk events are written from authenticated request
     # paths (already scoped) and from system paths (not scoped) — bind the
     # event's own tenant so enforced RLS never rejects the evidence append.
-    ambient_scope = (
-        nullcontext() if current_scope_mode() == "tenant" else tenant_scope(tenant_id)
-    )
-    with ambient_scope:
-        with database.audit_transaction() as connection:
-            try:
-                event_id = database.audit_in_transaction(
-                    connection,
-                    tenant_id=tenant_id,
-                    conversation_id=conversation_id,
-                    actor=actor,
-                    event_type=event_type,
-                    payload=payload,
-                )
-                tail_hash, tail_seq = database._audit_chain_tail(connection)
-                connection.execute(
-                    """INSERT INTO audit_anchors
+    ambient_scope = nullcontext() if current_scope_mode() == "tenant" else tenant_scope(tenant_id)
+    with ambient_scope, database.audit_transaction() as connection:
+        try:
+            event_id = database.audit_in_transaction(
+                connection,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                actor=actor,
+                event_type=event_type,
+                payload=payload,
+            )
+            tail_hash, tail_seq = database._audit_chain_tail(connection)
+            connection.execute(
+                """INSERT INTO audit_anchors
                     (anchor_id, seq, chain_hash, event_type, reason, created_at)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        f"fr_{event_id}",
-                        int(tail_seq),
-                        str(tail_hash or ""),
-                        event_type,
-                        reason,
-                        utc_now(),
-                    ),
-                )
-            except Exception as exc:
-                # The whole transaction (audit row + frontier anchor) is rolled
-                # back by the context manager; surface a fail-closed signal so
-                # the mutation is never mistaken for a success.
-                logger.exception(
-                    "audit_high_risk.failed",
-                    extra={
-                        "event_type": event_type,
-                        "reason": reason,
-                        "tenant_id": tenant_id,
-                    },
-                )
-                raise AuditUnavailableError(
-                    f"audit trail unavailable; {event_type} mutation rolled back"
-                ) from exc
+                (
+                    f"fr_{event_id}",
+                    int(tail_seq),
+                    str(tail_hash or ""),
+                    event_type,
+                    reason,
+                    utc_now(),
+                ),
+            )
+        except Exception as exc:
+            # The whole transaction (audit row + frontier anchor) is rolled
+            # back by the context manager; surface a fail-closed signal so
+            # the mutation is never mistaken for a success.
+            logger.exception(
+                "audit_high_risk.failed",
+                extra={
+                    "event_type": event_type,
+                    "reason": reason,
+                    "tenant_id": tenant_id,
+                },
+            )
+            raise AuditUnavailableError(
+                f"audit trail unavailable; {event_type} mutation rolled back"
+            ) from exc
     return event_id
 
 

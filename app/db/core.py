@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any
 
 from app.cache import TTLCache
 from app.db._util import (

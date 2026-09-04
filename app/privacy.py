@@ -36,8 +36,9 @@ import hmac
 import json
 import logging
 import secrets
-from datetime import timedelta
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, timedelta
+from typing import Any
 
 from app.audit_gap import audit_high_risk
 from app.database import utc_now
@@ -275,7 +276,7 @@ class DataProtectionService:
         error_detail: str,
     ) -> None:
         """Flip an approved request to ``failed`` (re-approvable via retry)."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         with self.database.connect() as conn:
             conn.execute(
@@ -290,7 +291,7 @@ class DataProtectionService:
             payload={
                 "request_id": request_id,
                 "error_head": error_detail[:200],
-                "epoch": int(datetime.now(tz=timezone.utc).timestamp()),
+                "epoch": int(datetime.now(tz=UTC).timestamp()),
             },
             reason="data subject request execution failed",
         )
@@ -570,20 +571,20 @@ DataProtectionPipeline = DataProtectionService
 
 def utc_now_as_datetime() -> Any:
     """Return the server clock as a timezone-aware datetime (test-variable clock)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     raw = utc_now()
     try:
         return datetime.fromisoformat(raw)
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 __all__ = [
     "DEFERRED_DELETION_THRESHOLD",
     "DELETION_BATCH_SIZE",
-    "DataProtectionService",
     "DataProtectionPipeline",
+    "DataProtectionService",
     "DeferredDeletionStore",
     "DsrExecutionError",
 ]

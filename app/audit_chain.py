@@ -179,8 +179,14 @@ def validate_audit_archive_stream(
         header_line = next(stream)
     except StopIteration as exc:
         raise ValueError("audit archive stream is empty") from exc
-    header = json.loads(header_line.decode("utf-8") if isinstance(header_line, bytes) else header_line)
-    if not isinstance(header, dict) or header.get("record") != "header" or header.get("schema") != 1:
+    header = json.loads(
+        header_line.decode("utf-8") if isinstance(header_line, bytes) else header_line
+    )
+    if (
+        not isinstance(header, dict)
+        or header.get("record") != "header"
+        or header.get("schema") != 1
+    ):
         raise ValueError("audit archive schema mismatch")
     if meta.get("tenant_id") is not None and header.get("tenant_id") != meta["tenant_id"]:
         raise ValueError("audit archive tenant mismatch")

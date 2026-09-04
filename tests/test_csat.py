@@ -17,10 +17,10 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
+import app.webhooks as webhooks_module
 from app.config import Settings
 from app.main import create_app
 from app.webhooks import EVENT_CONVERSATION_RESOLVED
-import app.webhooks as webhooks_module
 
 ADMIN_KEY = "csat-admin-key-001"
 

@@ -40,7 +40,6 @@ from app.deprecation import (
 )
 from app.main import create_app
 
-
 _SAMPLE = Deprecation(
     operation="GET /api/conversations",
     deprecated_on="2026-08-22",
@@ -78,8 +77,9 @@ class RegistryTests(unittest.TestCase):
             sunset_on="2026-02-01",
             successor="/api/new",
         )
-        with patch("app.deprecation._DEPRECATIONS", (expired,)), patch(
-            "app.deprecation._REGISTRY", {"GET /api/old": expired}
+        with (
+            patch("app.deprecation._DEPRECATIONS", (expired,)),
+            patch("app.deprecation._REGISTRY", {"GET /api/old": expired}),
         ):
             problems = validate_registry(today="2026-03-01")
         self.assertEqual(len(problems), 1)
@@ -92,8 +92,9 @@ class RegistryTests(unittest.TestCase):
             sunset_on="2026-01-01",
             successor="/api/new",
         )
-        with patch("app.deprecation._DEPRECATIONS", (inverted,)), patch(
-            "app.deprecation._REGISTRY", {"GET /api/bad": inverted}
+        with (
+            patch("app.deprecation._DEPRECATIONS", (inverted,)),
+            patch("app.deprecation._REGISTRY", {"GET /api/bad": inverted}),
         ):
             problems = validate_registry(today="2026-06-01")
         self.assertTrue(any("precedes" in problem for problem in problems))
@@ -180,16 +181,15 @@ class MiddlewareHeaderTests(unittest.TestCase):
 
     def test_live_response_carries_headers_for_registered_operation(self) -> None:
         # Patch before create_app so the startup gate sees a healthy registry.
-        with patch("app.deprecation._DEPRECATIONS", (_SAMPLE,)), patch(
-            "app.deprecation._REGISTRY", {_SAMPLE.operation: _SAMPLE}
+        with (
+            patch("app.deprecation._DEPRECATIONS", (_SAMPLE,)),
+            patch("app.deprecation._REGISTRY", {_SAMPLE.operation: _SAMPLE}),
         ):
             app = create_app(self.settings)
             client = TestClient(app)
             response = client.get("/api/conversations", headers=_auth(app))
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(
-                response.headers[DEPRECATION_HEADER], "Sat, 22 Aug 2026 00:00:00 GMT"
-            )
+            self.assertEqual(response.headers[DEPRECATION_HEADER], "Sat, 22 Aug 2026 00:00:00 GMT")
             self.assertEqual(response.headers[SUNSET_HEADER], "Wed, 01 Sep 2027 00:00:00 GMT")
             # A non-deprecated endpoint stays clean.
             health = client.get("/health/ready")
@@ -204,8 +204,9 @@ class MiddlewareHeaderTests(unittest.TestCase):
             sunset_on="2027-09-01",
             successor="/api/v2/conversations/{conversation_id}",
         )
-        with patch("app.deprecation._DEPRECATIONS", (entry,)), patch(
-            "app.deprecation._REGISTRY", {entry.operation: entry}
+        with (
+            patch("app.deprecation._DEPRECATIONS", (entry,)),
+            patch("app.deprecation._REGISTRY", {entry.operation: entry}),
         ):
             app = create_app(self.settings)
             client = TestClient(app)
@@ -215,9 +216,7 @@ class MiddlewareHeaderTests(unittest.TestCase):
                 headers=_auth(app),
             )
             conversation_id = created.json()["id"]
-            detail = client.get(
-                f"/api/conversations/{conversation_id}", headers=_auth(app)
-            )
+            detail = client.get(f"/api/conversations/{conversation_id}", headers=_auth(app))
             self.assertEqual(detail.status_code, 200, detail.text)
             self.assertIn(DEPRECATION_HEADER, detail.headers)
         app.state.services.database.close()

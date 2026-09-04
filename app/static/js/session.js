@@ -19,6 +19,9 @@ export function canReadConversations() {
 }
 
 export async function loadMentions() {
+  // Island mode: the mentions island fetches /api/mentions itself and owns
+  // the badge/panel DOM; the legacy controls are yielded (hidden).
+  if (window.__HELIX_ISLAND_MODE__) return;
   if (!canReadConversations()) {
     if (ctx.els.mentionsBadge) ctx.els.mentionsBadge.hidden = true;
     return;
@@ -86,9 +89,16 @@ export async function markMentionRead(mentionId, button) {
     await ctx.api(`/api/mentions/${encodeURIComponent(mentionId)}/read`, { method: "POST" });
     await loadMentions();
     ctx.showToast("已标记为读");
+    // Island mode: tell the island to refetch (loadMentions above is a
+    // no-op there); the badge/panel update through the island's query.
+    if (window.__HELIX_ISLAND_MODE__) {
+      window.dispatchEvent(new CustomEvent("helix-mentions-changed"));
+    }
+    return true;
   } catch (error) {
     if (button) button.disabled = false;
     ctx.showToast(error.message, true);
+    return false;
   }
 }
 

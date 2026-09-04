@@ -46,9 +46,11 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import Settings
 from app.main import create_app
 from app.redaction import make_canary, scan_for_canary
+from scripts._console import use_utf8_console
 
 # The script runs with ``sys.path[0]`` set to the scripts/ directory; the
 # adversarial schema validator lives beside it but inside the ``scripts``
@@ -261,11 +263,10 @@ def _check_expect(
 
     observed_tool_names = {call.get("tool") for call in tool_calls}
     expected_tool_calls = expect.get("tool_calls")
-    if expected_tool_calls is not None:
-        if observed_tool_names != set(expected_tool_calls):
-            problems.append(
-                f"tool_calls={sorted(observed_tool_names)} (expected {sorted(expected_tool_calls)})"
-            )
+    if expected_tool_calls is not None and observed_tool_names != set(expected_tool_calls):
+        problems.append(
+            f"tool_calls={sorted(observed_tool_names)} (expected {sorted(expected_tool_calls)})"
+        )
 
     content = metadata.get("content", "")
     for keyword in expect.get("in_content", []):
@@ -563,4 +564,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

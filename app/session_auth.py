@@ -73,7 +73,7 @@ class OIDCConfig:
     scopes: tuple[str, ...] = ("openid", "profile", "email")
 
     @classmethod
-    def from_env(cls) -> "OIDCConfig":
+    def from_env(cls) -> OIDCConfig:
         return cls(
             client_id=os.getenv("OIDC_CLIENT_ID", ""),
             client_secret=os.getenv("OIDC_CLIENT_SECRET", ""),

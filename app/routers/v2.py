@@ -23,8 +23,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from app.event_outbox import DomainEventOutbox
 from app.db._util import utc_now
+from app.event_outbox import DomainEventOutbox
 from app.main import require_permission
 from app.pagination import (
     InvalidCursorError,
@@ -279,6 +279,8 @@ def build_router(deps: RouteDeps) -> APIRouter:
             "conversation.created",
             {"channel": channel, "customer_verified": bool(customer_ref), "source_api": "v2"},
         )
-        return _conversation_out(database.get_conversation(principal.tenant_id, conversation_id) or {})
+        return _conversation_out(
+            database.get_conversation(principal.tenant_id, conversation_id) or {}
+        )
 
     return router

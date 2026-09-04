@@ -4,8 +4,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from time import monotonic
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from app.context import maintenance_scope, request_id_context, tenant_scope
@@ -18,7 +19,6 @@ from app.orchestrator import (
 from app.queue import QueueUnavailableError, SQLiteTaskQueue, TaskQueue
 from app.telemetry import metrics as telemetry_metrics
 from app.webhooks import WebhookService
-
 
 logger = logging.getLogger("helix")
 
@@ -352,9 +352,7 @@ class TurnJobWorker:
         # 43.2: the retention sweep scans every tenant's resolved rows.
         with maintenance_scope("conversation-archive"):
             cutoff = utc_after_seconds(-self.archive_after_days * 86400)
-            archived = self.database.archive_resolved_conversations(
-                cutoff, self.archive_batch
-            )
+            archived = self.database.archive_resolved_conversations(cutoff, self.archive_batch)
         with self._lock:
             self._archived += archived
         return archived

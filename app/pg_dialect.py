@@ -28,7 +28,8 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,32 +46,32 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 _PRAGMA_TABLE_INFO = re.compile(
-    r"^\s*PRAGMA\s+table_info\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", re.I
+    r"^\s*PRAGMA\s+table_info\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", re.IGNORECASE
 )
-_SQLITE_MASTER = re.compile(r"\bsqlite_master\b", re.I)
-_INSERT_OR_IGNORE = re.compile(r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\b", re.I)
-_COLLATE_NOCASE = re.compile(r"\s+COLLATE\s+NOCASE\b", re.I)
-_CREATE_TRIGGER = re.compile(r"^\s*CREATE\s+TRIGGER\b", re.I)
-_VIRTUAL_TABLE = re.compile(r"^\s*CREATE\s+VIRTUAL\s+TABLE\b", re.I)
-_PRAGMA_ANY = re.compile(r"^\s*PRAGMA\b", re.I)
+_SQLITE_MASTER = re.compile(r"\bsqlite_master\b", re.IGNORECASE)
+_INSERT_OR_IGNORE = re.compile(r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\b", re.IGNORECASE)
+_COLLATE_NOCASE = re.compile(r"\s+COLLATE\s+NOCASE\b", re.IGNORECASE)
+_CREATE_TRIGGER = re.compile(r"^\s*CREATE\s+TRIGGER\b", re.IGNORECASE)
+_VIRTUAL_TABLE = re.compile(r"^\s*CREATE\s+VIRTUAL\s+TABLE\b", re.IGNORECASE)
+_PRAGMA_ANY = re.compile(r"^\s*PRAGMA\b", re.IGNORECASE)
 # SQLite's ``BEGIN IMMEDIATE`` takes the database write lock up front so that
 # a read-then-write sequence cannot interleave with another writer.  psycopg2
 # already opens a transaction implicitly, so the missing piece is the
 # serialization: a transaction-scoped advisory lock provides it and is
 # released automatically on commit or rollback.
-_BEGIN_MODE = re.compile(r"^\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\s*;?\s*$", re.I)
-_BEGIN_DEFERRED = re.compile(r"^\s*BEGIN\s*(DEFERRED)?\s*;?\s*$", re.I)
+_BEGIN_MODE = re.compile(r"^\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\s*;?\s*$", re.IGNORECASE)
+_BEGIN_DEFERRED = re.compile(r"^\s*BEGIN\s*(DEFERRED)?\s*;?\s*$", re.IGNORECASE)
 _WRITE_LOCK_KEY = 0x48454C58  # 'HELX'
 _WRITE_LOCK_SQL = f"SELECT pg_advisory_xact_lock({_WRITE_LOCK_KEY})"
 # SQLite treats integers as truthy in a boolean context; PostgreSQL demands a
 # real boolean.  A bare ``CASE WHEN ?`` (placeholder used directly as the
 # condition) therefore needs an explicit cast.
-_CASE_WHEN_PARAM = re.compile(r"\bCASE\s+WHEN\s+\?(?=\s+THEN\b)", re.I)
+_CASE_WHEN_PARAM = re.compile(r"\bCASE\s+WHEN\s+\?(?=\s+THEN\b)", re.IGNORECASE)
 # SQLite's implicit rowid is the monotonic insertion-order tiebreaker used in
 # ORDER BY clauses.  PostgreSQL has no rowid, so :mod:`app.pg_compat` adds a
 # monotonic ``seq`` columns on tables whose shared queries use ``rowid``;
 # rewriting the identifier keeps ordering deterministic on both backends.
-_ROWID = re.compile(r"\browid\b", re.I)
+_ROWID = re.compile(r"\browid\b", re.IGNORECASE)
 
 # ``PRAGMA table_info`` rows are consumed both positionally (``row[1]`` is the
 # column name) and by key (``row["name"]``), so the projection order matters.
@@ -147,8 +148,8 @@ def _convert_placeholders(sql: str, has_params: bool) -> str:
 # ambiguous while SQLite accepts it.  The dialect layer qualifies the
 # self-referencing column with the INSERT target table (``excluded.`` /
 # ``schema.table.`` references are already portable and are left alone).
-_UPSERT_INSERT_TABLE = re.compile(r"\bINSERT INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.I)
-_UPSERT_DO_SET = re.compile(r"\bDO UPDATE SET\b", re.I)
+_UPSERT_INSERT_TABLE = re.compile(r"\bINSERT INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.IGNORECASE)
+_UPSERT_DO_SET = re.compile(r"\bDO UPDATE SET\b", re.IGNORECASE)
 _ASSIGNMENT_RE = re.compile(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=")
 
 
@@ -320,7 +321,7 @@ class StatementResult:
     :mod:`app.database` does in several places.
     """
 
-    __slots__ = ("_rows", "_index", "rowcount", "lastrowid")
+    __slots__ = ("_index", "_rows", "lastrowid", "rowcount")
 
     def __init__(self, rows: list[Any], rowcount: int) -> None:
         self._rows = rows

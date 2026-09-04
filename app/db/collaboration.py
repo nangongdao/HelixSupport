@@ -15,7 +15,6 @@ Operator-facing collaboration primitives:
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import json
 from typing import Any
 from uuid import uuid4

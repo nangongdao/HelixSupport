@@ -42,14 +42,13 @@ from app.rls import (
     tenant_filter_clause,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 
 class FakeRow(dict):
-    def __getitem__(self, key: str) -> Any:  # noqa: D105
+    def __getitem__(self, key: str) -> Any:
         return dict.__getitem__(self, key)
 
 
@@ -101,8 +100,8 @@ def _baseline_tables_with_columns() -> dict[str, set[str]]:
     from app import migrations as migration_pkg
 
     tables: dict[str, set[str]] = {}
-    pattern = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\s*\);", re.S)
-    column_pattern = re.compile(r"^\s{8,}(\w+)\s+TEXT", re.M)
+    pattern = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\s*\);", re.DOTALL)
+    column_pattern = re.compile(r"^\s{8,}(\w+)\s+TEXT", re.MULTILINE)
     for module_name in migration_pkg._VERSION_MODULES:
         source = (Path(migration_pkg.__file__).parent / f"{module_name}.py").read_text(
             encoding="utf-8"
@@ -112,7 +111,7 @@ def _baseline_tables_with_columns() -> dict[str, set[str]]:
             # NOT NULL markers live on the same line as the column name.
             not_null = {
                 match.group(1)
-                for match in re.finditer(r"^\s{8,}(\w+)\s+TEXT[^\n]*NOT NULL", body, re.M)
+                for match in re.finditer(r"^\s{8,}(\w+)\s+TEXT[^\n]*NOT NULL", body, re.MULTILINE)
             }
             tables[table] = columns | {c for c in not_null}
     return tables
@@ -256,14 +255,12 @@ class ScopeSemanticsTests(unittest.TestCase):
         self.assertIsNone(current_scope_mode())
 
     def test_empty_tenant_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            with tenant_scope("   "):
-                pass
+        with self.assertRaises(ValueError), tenant_scope("   "):
+            pass
 
     def test_maintenance_requires_reason(self) -> None:
-        with self.assertRaises(ValueError):
-            with maintenance_scope("  "):
-                pass
+        with self.assertRaises(ValueError), maintenance_scope("  "):
+            pass
 
     def test_bind_tenant_scope_sets_without_reset_handle(self) -> None:
         from app.context import tenant_scope_context
@@ -340,17 +337,15 @@ def _postgres_database(*, rls: bool) -> Any:
 class BindTenantContextTests(unittest.TestCase):
     def test_disabled_flag_is_a_noop(self) -> None:
         database = _postgres_database(rls=False)
-        with tenant_scope("acme"):
-            with database.connect():
-                pass
+        with tenant_scope("acme"), database.connect():
+            pass
         statements = database._pg_pool.connection.statements
         self.assertEqual(statements, [])
 
     def test_tenant_scope_emits_sticky_set_config(self) -> None:
         database = _postgres_database(rls=True)
-        with tenant_scope("acme"):
-            with database.connect():
-                pass
+        with tenant_scope("acme"), database.connect():
+            pass
         statements = database._pg_pool.connection.statements
         self.assertEqual(len(statements), 1)
         sql, params = statements[0]
@@ -359,25 +354,22 @@ class BindTenantContextTests(unittest.TestCase):
 
     def test_maintenance_scope_binds_nothing(self) -> None:
         database = _postgres_database(rls=True)
-        with maintenance_scope("turn-worker-loop"):
-            with database.connect():
-                pass
+        with maintenance_scope("turn-worker-loop"), database.connect():
+            pass
         self.assertEqual(database._pg_pool.connection.statements, [])
 
     def test_missing_scope_fails_loudly(self) -> None:
         database = _postgres_database(rls=True)
-        with self.assertRaises(TenantContextError):
-            with database.connect():
-                pass
+        with self.assertRaises(TenantContextError), database.connect():
+            pass
 
     def test_context_does_not_leak_after_scope_exit(self) -> None:
         database = _postgres_database(rls=True)
         with tenant_scope("acme"):
             pass
         self.assertIsNone(current_tenant())
-        with self.assertRaises(TenantContextError):
-            with database.connect():
-                pass
+        with self.assertRaises(TenantContextError), database.connect():
+            pass
 
 
 # ---------------------------------------------------------------------------

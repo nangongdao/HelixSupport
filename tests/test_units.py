@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, Self
 from unittest.mock import patch
 
 import httpx
@@ -107,10 +107,10 @@ class _FakeClient:
     def __init__(self, response: _FakeResponse, **_: Any) -> None:
         self._response = response
 
-    def __enter__(self) -> "_FakeClient":
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         return None
 
     def post(self, *args: Any, **kwargs: Any) -> _FakeResponse:
@@ -321,6 +321,10 @@ class SettingsValidationTests(unittest.TestCase):
             app_env="production",
             auth_mode="api_key",
             api_keys_json='{"key": {"tenant_id": "t", "actor_id": "a", "role": "admin"}}',
+            # SEC-005 hardening: production deployments must not use the
+            # built-in development widget secret / control-plane fallback.
+            widget_secret="production-widget-secret-32bytes-long",
+            control_plane_secret="production-control-secret-32bytes-long",
         )
         settings.validate()
 
@@ -338,6 +342,22 @@ class SettingsValidationTests(unittest.TestCase):
         self.assertFalse(settings.local_drafts_enabled)
         self.assertEqual(settings.local_draft_ttl_minutes, 60)
         self.assertEqual(settings.cors_origins, ("https://a.example", "https://b.example"))
+
+    def test_from_env_reads_cell_registry_json(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CELL_REGISTRY_JSON": (
+                    '{"cell-a": {"db_url": "sqlite:///a.db", "redis_url": "redis://r/0", '
+                    '"health_url": "http://h/health", "region": "us-east-1", '
+                    '"capacity_tier": "default"}}'
+                ),
+            },
+            clear=False,
+        ):
+            settings = Settings.from_env()
+        self.assertIsNotNone(settings.cell_registry_config)
+        self.assertEqual(settings.cell_registry_config["cell-a"]["region"], "us-east-1")
 
 
 if __name__ == "__main__":

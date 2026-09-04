@@ -7,7 +7,7 @@
  * and the migration target.
  */
 
-import { newIdempotencyKey } from "./format.js?v=1.3.9";
+import { newIdempotencyKey } from "./format.js?v=1.4.0";
 
 /**
  * Perform an API request with timeout and Problem Details error parsing.

@@ -26,9 +26,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/run_restore_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
 from app.database import Database
 from app.worm_store import DiskWormStore
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -115,24 +123,20 @@ def _verify(
         "--environment",
         environment,
     ]
-    return subprocess.run(
-        args, capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _tamper(db: Path) -> None:
     """Flip a historical payload column; the hash chain must catch it."""
     with sqlite3.connect(db) as connection:
         connection.execute(
-            "UPDATE audit_events SET payload_json = '{\"id\":\"c1-tampered\"}' "
+            'UPDATE audit_events SET payload_json = \'{"id":"c1-tampered"}\' '
             "WHERE event_type = 'conversation.created'"
         )
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="supplychain/restore-drills.json")
     args = parser.parse_args()
@@ -166,9 +170,9 @@ def main() -> int:
         else:
             manifests = list(backup_dir.glob("*.manifest.json"))
             if manifests:
-                backup_file = backup_dir / json.loads(
-                    manifests[0].read_text(encoding="utf-8")
-                )["backup_file"]
+                backup_file = (
+                    backup_dir / json.loads(manifests[0].read_text(encoding="utf-8"))["backup_file"]
+                )
             if backup_file is None or not backup_file.exists():
                 failures.append("backup produced no manifest/backup file")
 
@@ -211,9 +215,7 @@ def main() -> int:
             if tampered.returncode == 0:
                 failures.append("tampered restore unexpectedly verified clean")
             if "TAMPER" not in tampered_output:
-                failures.append(
-                    f"tampered restore did not report TAMPER: {tampered_output[-300:]}"
-                )
+                failures.append(f"tampered restore did not report TAMPER: {tampered_output[-300:]}")
         elif not failures:
             failures.append("restore produced no restored.db to verify")
 
@@ -227,9 +229,11 @@ def main() -> int:
     ledger.setdefault("drills", []).append(
         {
             "drill_type": "audit_anchor_restore",
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "passed": passed,
-            "details": "; ".join(failures) if failures else "backup→restore→verify intact; tamper→TAMPER",
+            "details": "; ".join(failures)
+            if failures
+            else "backup→restore→verify intact; tamper→TAMPER",
         }
     )
     out.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -240,4 +244,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

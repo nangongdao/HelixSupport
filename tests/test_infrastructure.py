@@ -19,11 +19,11 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 from app.config import Settings
-from app.security import Authenticator
 from app.database import Database
 from app.migrations import all_migrations, run_migrations
 from app.queue import SQLiteTaskQueue, create_task_queue
 from app.retention import DEFAULT_RETENTION_DAYS, PII_FIELDS, RetentionService, redact_pii
+from app.security import Authenticator
 from app.session_auth import (
     OIDCAuthenticator,
     OIDCConfig,
@@ -264,6 +264,9 @@ class SecretsConfigTests(unittest.TestCase):
                 app_env="production",
                 auth_mode="api_key",
                 api_keys_file=secrets,
+                # Production must not fall back to the development secrets.
+                widget_secret="production-widget-secret-32bytes-long",
+                control_plane_secret="production-control-secret-32bytes-long",
             )
             settings.validate()  # must not raise: keys come from the file
 
@@ -538,9 +541,8 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(s.events[0]["name"], "midpoint")
 
     def test_span_nesting(self) -> None:
-        with span("parent") as p:
-            with span("child") as c:
-                pass
+        with span("parent") as p, span("child") as c:
+            pass
         self.assertIsNone(p.parent)
         self.assertIs(c.parent, p)
 
@@ -927,10 +929,10 @@ class SessionKeyRotationTests(unittest.TestCase):
     """Phase 28.2: session cookies support rolling signing-key rotation."""
 
     def _config(self, **overrides: Any) -> OIDCConfig:
-        kwargs: dict[str, Any] = dict(
-            session_secret="legacy-secret-for-testing-only",
-            session_ttl_minutes=60,
-        )
+        kwargs: dict[str, Any] = {
+            "session_secret": "legacy-secret-for-testing-only",
+            "session_ttl_minutes": 60,
+        }
         kwargs.update(overrides)
         return OIDCConfig(**kwargs)
 

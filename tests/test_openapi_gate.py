@@ -109,6 +109,242 @@ class OpenApiComparatorRedLightTests(unittest.TestCase):
             f"expected dashboard removal to be breaking, got {breaking}",
         )
 
+    def test_live_snapshot_compares_clean_against_itself(self) -> None:
+        """No false positives on the real 141-operation spec.
+
+        The comparator resolves $refs recursively; if that normalization were
+        not deterministic (or recursed into a self-referential schema), the
+        gate would fail on an unchanged spec and every future dump would look
+        breaking. Guards the fix as much as the detections below do.
+        """
+        import copy
+
+        baseline = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+        self.assertEqual(_breaking_changes(baseline, copy.deepcopy(baseline)), [])
+
+
+class OpenApiComparatorDepthTests(unittest.TestCase):
+    """Breaking changes the comparator used to report as no change at all.
+
+    Each case below returned ``[]`` before the shapes were resolved
+    recursively and parameters/requestBody were compared. The array case is
+    the load-bearing one: 31 of the 141 live operations return arrays,
+    including ``GET /api/conversations``, so dropping a field from any
+    conversation-list row was invisible.
+    """
+
+    ARRAY_SPEC = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/x": {
+                "get": {
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/components/schemas/It"},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "components": {
+            "schemas": {"It": {"type": "object", "properties": {"id": {}, "email": {}}}}
+        },
+    }
+
+    PARAM_SPEC = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/y": {
+                "get": {
+                    "parameters": [
+                        {
+                            "name": "tenant",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        },
+                        {
+                            "name": "page",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "integer"},
+                        },
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    def test_removed_property_inside_array_response_is_breaking(self) -> None:
+        import copy
+
+        current = copy.deepcopy(self.ARRAY_SPEC)
+        del current["components"]["schemas"]["It"]["properties"]["email"]
+        breaking = _breaking_changes(self.ARRAY_SPEC, current)
+        self.assertTrue(
+            any("email" in b for b in breaking),
+            f"array element field removal must be breaking, got {breaking}",
+        )
+
+    def test_removed_property_in_nested_object_is_breaking(self) -> None:
+        import copy
+
+        spec = {
+            "openapi": "3.1.0",
+            "paths": {
+                "/n": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "user": {"$ref": "#/components/schemas/U"}
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {"U": {"type": "object", "properties": {"id": {}, "phone": {}}}}
+            },
+        }
+        current = copy.deepcopy(spec)
+        del current["components"]["schemas"]["U"]["properties"]["phone"]
+        self.assertTrue(any("phone" in b for b in _breaking_changes(spec, current)))
+
+    def test_removed_required_parameter_is_breaking(self) -> None:
+        import copy
+
+        current = copy.deepcopy(self.PARAM_SPEC)
+        current["paths"]["/y"]["get"]["parameters"] = [
+            self.PARAM_SPEC["paths"]["/y"]["get"]["parameters"][1]
+        ]
+        self.assertTrue(any("tenant" in b for b in _breaking_changes(self.PARAM_SPEC, current)))
+
+    def test_optional_parameter_becoming_required_is_breaking(self) -> None:
+        import copy
+
+        current = copy.deepcopy(self.PARAM_SPEC)
+        current["paths"]["/y"]["get"]["parameters"][1]["required"] = True
+        self.assertTrue(
+            any("became required" in b for b in _breaking_changes(self.PARAM_SPEC, current))
+        )
+
+    def test_parameter_type_change_is_breaking(self) -> None:
+        import copy
+
+        current = copy.deepcopy(self.PARAM_SPEC)
+        current["paths"]["/y"]["get"]["parameters"][0]["schema"]["type"] = "integer"
+        self.assertTrue(
+            any("type changed" in b for b in _breaking_changes(self.PARAM_SPEC, current))
+        )
+
+    def test_new_required_request_body_field_is_breaking(self) -> None:
+        import copy
+
+        spec = copy.deepcopy(self.PARAM_SPEC)
+        spec["paths"]["/y"]["get"]["requestBody"] = {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["q"],
+                        "properties": {"q": {}, "o": {}},
+                    }
+                }
+            },
+        }
+        current = copy.deepcopy(spec)
+        current["paths"]["/y"]["get"]["requestBody"]["content"]["application/json"]["schema"][
+            "required"
+        ] = ["q", "o"]
+        self.assertTrue(
+            any("new required fields" in b for b in _breaking_changes(spec, current)),
+            "a field becoming required rejects every existing caller",
+        )
+
+    def test_contentless_response_removal_is_breaking(self) -> None:
+        import copy
+
+        spec = {
+            "openapi": "3.1.0",
+            "paths": {
+                "/z": {
+                    "delete": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "object", "properties": {"ok": {}}}
+                                    }
+                                }
+                            },
+                            "204": {"description": "no content"},
+                        }
+                    }
+                }
+            },
+        }
+        current = copy.deepcopy(spec)
+        del current["paths"]["/z"]["delete"]["responses"]["204"]
+        self.assertTrue(
+            any("204" in b for b in _breaking_changes(spec, current)),
+            "a bare 204 declared after a 200 was dropped by the old `if not shapes`",
+        )
+
+    def test_self_referential_schema_does_not_recurse_forever(self) -> None:
+        import copy
+
+        spec = {
+            "openapi": "3.1.0",
+            "paths": {
+                "/t": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/Node"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {
+                            "id": {},
+                            "children": {
+                                "type": "array",
+                                "items": {"$ref": "#/components/schemas/Node"},
+                            },
+                        },
+                    }
+                }
+            },
+        }
+        self.assertEqual(_breaking_changes(spec, copy.deepcopy(spec)), [])
+
 
 if __name__ == "__main__":
     unittest.main()

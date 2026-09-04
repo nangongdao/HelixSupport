@@ -42,17 +42,14 @@ class ProcessRoleConfigTests(unittest.TestCase):
 
     def test_web_role_does_not_run_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            s = Settings(
-                database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="web"
-            )
+            s = Settings(database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="web")
             self.assertFalse(s.runs_turn_worker)
 
     def test_invalid_role_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                Settings(
-                    database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="edge"
-                ).validate()
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            Settings(
+                database_path=Path(tmp) / "x.db", auth_mode="api_key", process_role="edge"
+            ).validate()
 
 
 class ProcessRoleAppTests(unittest.TestCase):

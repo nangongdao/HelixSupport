@@ -41,15 +41,15 @@ def _public_resolve(_host: str, _port: int) -> list[str]:
 
 def _settings(db_path: Path, **overrides: Any) -> Settings:
     principals = {ADMIN_KEY: {"tenant_id": "demo", "actor_id": "admin", "role": "admin"}}
-    defaults: dict[str, Any] = dict(
-        database_path=db_path,
-        auth_mode="api_key",
-        api_keys_json=json.dumps(principals),
-        rate_limit_per_minute=10000,
-        docs_enabled=False,
-        normal_sla_minutes=120,
-        high_sla_minutes=15,
-    )
+    defaults: dict[str, Any] = {
+        "database_path": db_path,
+        "auth_mode": "api_key",
+        "api_keys_json": json.dumps(principals),
+        "rate_limit_per_minute": 10000,
+        "docs_enabled": False,
+        "normal_sla_minutes": 120,
+        "high_sla_minutes": 15,
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 

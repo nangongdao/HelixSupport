@@ -22,9 +22,16 @@ from app.config import Settings
 from app.envelope_crypto import EnvelopeTamperError, TenantEnvelopeCipher
 from app.main import create_app
 
-
 ADMIN_KEY = "admin-test-key-0001"
 ACME_KEY = "acme-admin-key-0001"
+
+
+def _public_resolve(_host: str, _port: int) -> list[str]:
+    """Hermetic resolver so example.com is treated as public (test_webhooks
+    pattern). Sandbox DNS maps example.com to reserved 198.18.x.x, which the
+    SSRF guard rejects as private/loopback — without this the webhook tests
+    get 422 before the envelope fail-closed path can assert its 503."""
+    return ["93.184.216.34"]
 
 
 class EnvelopeRuntimeTests(unittest.TestCase):
@@ -55,6 +62,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
         )
         self.client = TestClient(create_app(self.settings))
         self.services = cast(Any, self.client.app).state.services
+        self.services.webhooks._resolve_host = _public_resolve
 
     def tearDown(self) -> None:
         self.client.close()
@@ -150,6 +158,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
             )
             client = TestClient(create_app(settings))
             services = cast(Any, client.app).state.services
+            services.webhooks._resolve_host = _public_resolve
             try:
                 self.assertIsNone(services.envelope_cipher)
                 response = client.post(
@@ -162,9 +171,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
                     headers={"X-API-Key": ADMIN_KEY, "X-Tenant-Id": "demo"},
                 )
                 self.assertEqual(response.status_code, 503, response.text)
-                self.assertIn(
-                    "envelope encryption is required", response.json()["detail"]
-                )
+                self.assertIn("envelope encryption is required", response.json()["detail"])
             finally:
                 client.close()
                 services.database.close()
@@ -183,9 +190,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
         for tenant_id in ("demo", "acme"):
             cipher.encrypt_text(tenant_id, "seed")
         for tenant_id in ("demo", "acme"):
-            self.assertEqual(
-                int(cipher.keystore.list_versions(tenant_id)[0]["kek_version"]), 1
-            )
+            self.assertEqual(int(cipher.keystore.list_versions(tenant_id)[0]["kek_version"]), 1)
         cipher.kms.rotate()
         self.assertEqual(cipher.kms.active_version(), 2)
 
@@ -213,9 +218,7 @@ class EnvelopeRuntimeTests(unittest.TestCase):
     def test_runtime_cipher_round_trip_and_cross_tenant(self) -> None:
         cipher = self.services.envelope_cipher
         envelope = cipher.encrypt_text("demo", "restricted-payload")
-        self.assertEqual(
-            cipher.decrypt_text("demo", envelope), "restricted-payload"
-        )
+        self.assertEqual(cipher.decrypt_text("demo", envelope), "restricted-payload")
         with self.assertRaises(EnvelopeTamperError):
             cipher.decrypt_text("acme", envelope)
 

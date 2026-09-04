@@ -7,6 +7,21 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.audit_gap import audit_high_risk, list_gaps, merge_gap_rows
+from app.credentials import (
+    API_KEY_CREDENTIAL_ID_PREFIX_LENGTH,
+    CredentialStatus,
+    InvalidCredentialTransition,
+    issue_api_key,
+    key_ref_for,
+)
+from app.db._util import utc_now
+from app.dsr import DsrExportError
+from app.envelope_crypto import EnvelopeCryptoError
+from app.main import (
+    require_permission,
+)
+from app.routers.common import RouteDeps
 from app.schemas import (
     AgentGroupCreateRequest,
     AgentGroupMemberOut,
@@ -33,21 +48,6 @@ from app.schemas import (
     WebhookDeliveryOut,
     WebhookOut,
 )
-from app.main import (
-    require_permission,
-)
-from app.credentials import (
-    API_KEY_CREDENTIAL_ID_PREFIX_LENGTH,
-    CredentialStatus,
-    InvalidCredentialTransition,
-    issue_api_key,
-    key_ref_for,
-)
-from app.audit_gap import audit_high_risk, list_gaps, merge_gap_rows
-from app.db._util import utc_now
-from app.dsr import DsrExportError
-from app.envelope_crypto import EnvelopeCryptoError
-from app.routers.common import RouteDeps
 from app.security import Principal
 
 logger = logging.getLogger("helix")

@@ -4,11 +4,12 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated, Any, Callable, Sequence
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -17,10 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.anchor_service import AnchorService
 from app.assets import STATIC_ASSET_VERSION, VERSIONED_STATIC_CACHE_CONTROL
-from app.config import Settings
+from app.audit_anchor import Ed25519KmsSigner
+from app.audit_gap import AuditGapTracker, AuditUnavailableError
 from app.channel_webhooks import InboundChannelRegistry
-from app.context import bind_tenant_scope, request_id_context
+from app.config import Settings
+from app.context import bind_tenant_scope, current_tenant, request_id_context
 from app.database import Database
 from app.db._util import utc_now
 from app.deprecation import apply_deprecation_headers as _apply_deprecation_headers
@@ -29,11 +33,7 @@ from app.errors import (
     not_found_response,
     problem_response,
 )
-from app.audit_anchor import Ed25519KmsSigner
-from app.anchor_service import AnchorService
-from app.audit_gap import AuditGapTracker, AuditUnavailableError
 from app.jobs import TurnJobWorker
-from app.queue import QueueUnavailableError, TaskQueue, create_task_queue
 from app.model_provider import OpenAICompatibleProvider
 from app.observability import RuntimeMetrics, configure_logging
 from app.orchestrator import (
@@ -42,15 +42,10 @@ from app.orchestrator import (
     InvalidTransitionError,
     TurnInProgressError,
 )
-from app.retention import RetentionService
-from app.webhooks import WebhookService
-from app.quality import QualityService
 from app.prompts import PromptRegistry
-from app.session_auth import (
-    OIDCConfig,
-    OIDCAuthenticator,
-)
-from app.telemetry import configure_tracing, metrics as telemetry_metrics, span
+from app.quality import QualityService
+from app.queue import QueueUnavailableError, TaskQueue, create_task_queue
+from app.retention import RetentionService
 from app.schemas import (
     CannedResponseOut,
     ConversationOut,
@@ -66,14 +61,20 @@ from app.security import (
     Principal,
     SlidingWindowRateLimiter,
 )
-
+from app.session_auth import (
+    OIDCAuthenticator,
+    OIDCConfig,
+)
+from app.telemetry import configure_tracing, span
+from app.telemetry import metrics as telemetry_metrics
+from app.webhooks import WebhookService
 
 configure_logging()
 configure_tracing()
 logger = logging.getLogger("helix")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-APP_VERSION = "1.3.0"
+APP_VERSION = "2.1.0"
 
 
 def _http_exception_code(status_code: int) -> str:
@@ -173,6 +174,7 @@ class AppServices:
     envelope_cipher: Any | None = None
     outbox_consumer: Any | None = None
     drift_monitor: Any | None = None
+    cell_registry: Any | None = None
 
 
 def get_services(request: Request) -> AppServices:
@@ -550,7 +552,14 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     from app.worm_store import DiskWormStore
 
     gap_tracker = AuditGapTracker()
-    anchor_signer = Ed25519KmsSigner.generate()
+    # SEC-005: the anchor signing key must survive restarts, otherwise the kid
+    # rotates on every boot and previously written anchors stop verifying.
+    # AUDIT_ANCHOR_KEY is an optional base64-encoded raw Ed25519 private key;
+    # when unset (dev), a fresh key is generated per run.
+    if settings.audit_anchor_key:
+        anchor_signer = Ed25519KmsSigner.from_encoded(settings.audit_anchor_key)
+    else:
+        anchor_signer = Ed25519KmsSigner.generate()
     anchor_worm = DiskWormStore(settings.audit_worm_dir)
     anchor_service = AnchorService(
         database=database,
@@ -699,14 +708,46 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         if reports:
             logger.warning(
                 "drift.canaries_stopped %s",
-                [
-                    {"tenant": r.tenant_id, "signals": [s.kind for s in r.signals]}
-                    for r in reports
-                ],
+                [{"tenant": r.tenant_id, "signals": [s.kind for s in r.signals]} for r in reports],
             )
 
     if settings.drift_enabled:
         turn_worker.housekeeping.extend([_housekeeping_drift_monitor])
+
+    # ROADMAP 2.1.x: shadow traffic health monitor. When shadow traffic is
+    # enabled, the hourly housekeeping sweep aggregates v1/v2 comparisons over
+    # a 24-hour window and logs an alert when mismatch rate or latency
+    # regressions breach thresholds. Failures are logged by the worker, never
+    # fatal.
+    from app.shadow_monitor import monitor_shadow_traffic
+
+    def _housekeeping_shadow_monitor() -> None:
+        try:
+            monitor_shadow_traffic(database, settings)
+        except Exception:
+            logger.exception("shadow.monitor_failed")
+
+    if settings.shadow_traffic_enabled:
+        turn_worker.housekeeping.extend([_housekeeping_shadow_monitor])
+
+    # ROADMAP 2.2.1: multi-cell registry. When cell_registry_config is set,
+    # build a CellRegistry from the config dict and start periodic health checks.
+    from app.cell_router import CellRegistry, CellSpec
+
+    cell_registry: CellRegistry | None = None
+    if settings.cell_registry_config:
+        cells = {
+            cell_id: CellSpec(
+                cell_id=cell_id,
+                db_url=spec["db_url"],
+                redis_url=spec["redis_url"],
+                health_url=spec["health_url"],
+                region=spec["region"],
+                capacity_tier=spec.get("capacity_tier", "default"),
+            )
+            for cell_id, spec in settings.cell_registry_config.items()
+        }
+        cell_registry = CellRegistry(cells)
 
     services = AppServices(
         settings=settings,
@@ -735,6 +776,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         envelope_cipher=envelope_cipher,
         outbox_consumer=outbox_consumer,
         drift_monitor=drift_monitor,
+        cell_registry=cell_registry,
     )
 
     app = FastAPI(
@@ -762,6 +804,56 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
             "task queue not ready (%s); turn worker will not start",
             queue.degraded_reason or "unknown",
         )
+
+    # ROADMAP 2.2.1: cell health checks run as background asyncio tasks alongside
+    # the turn worker; fire-and-forget (never fatal), only when configured.
+    if cell_registry is not None:
+
+        async def _start_cell_health_checks() -> None:
+            import asyncio
+
+            from app.cell_router import periodic_health_check
+
+            asyncio.create_task(periodic_health_check(cell_registry, interval_seconds=30))
+
+        app.router.on_startup.append(_start_cell_health_checks)
+
+        # ROADMAP 2.2.2: for every peer cell (any cell that is not the current
+        # one), start a replication worker that drains pending replication log
+        # entries to that peer's apply endpoint. The worker is fire-and-forget
+        # and never fatal.
+        from app.region_replication import ReplicationLog, ReplicationWorker, periodic_replication
+
+        peer_cells = [
+            cell for cell in cell_registry.list_cells() if cell.cell_id != settings.current_cell_id
+        ]
+
+        if peer_cells:
+
+            async def _start_replication_workers() -> None:
+                import asyncio
+
+                for peer in peer_cells:
+                    base_url = (
+                        peer.health_url.rsplit("/health", 1)[0]
+                        if "/health" in peer.health_url
+                        else peer.health_url
+                    )
+                    worker = ReplicationWorker(
+                        database=database,
+                        replication_log=ReplicationLog(database),
+                        target_region=peer.region,
+                        target_base_url=base_url,
+                        batch_size=50,
+                    )
+                    asyncio.create_task(periodic_replication(worker, interval_seconds=60))
+                logger.info(
+                    "replication.workers_started peer_count=%d",
+                    len(peer_cells),
+                )
+
+            app.router.on_startup.append(_start_replication_workers)
+
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -813,6 +905,35 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
             try:
                 response = await call_next(request)
                 status_code = response.status_code
+                # ROADMAP 2.1.x: sampled read traffic is replayed to v2 in
+                # the background. The v1 response body is approximated from
+                # the framework-level status (response_model serialization
+                # happens after the middleware) — comparison fidelity is
+                # best-effort by design; the shadow task never blocks v1.
+                # Requests carrying X-Shadow-Request (the shadow replay itself)
+                # are never shadowed again, avoiding a self-replay loop.
+                if (
+                    settings.shadow_traffic_enabled
+                    and request.headers.get("X-Shadow-Request") != "true"
+                ):
+                    try:
+                        from app.shadow_traffic import maybe_shadow_request
+
+                        maybe_shadow_request(
+                            settings=settings,
+                            db=database,
+                            method=request.method,
+                            path=request.url.path,
+                            headers=dict(request.headers),
+                            body=None,
+                            v1_status_code=status_code,
+                            v1_response_body={"status": "ok"},
+                            v1_latency_ms=int((perf_counter() - started) * 1000),
+                            tenant_id=current_tenant() or "demo",
+                            request_id=request_id,
+                        )
+                    except Exception:
+                        logger.exception("shadow.middleware_failed")
                 is_widget_document = request.url.path.rstrip("/") == "/widget"
                 response.headers["X-Request-Id"] = request_id
                 response.headers["X-Content-Type-Options"] = "nosniff"
@@ -953,9 +1074,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
             headers={"Retry-After": "30"},
         )
 
-    def _versioned_problem_response(
-        request: Request, **kwargs: Any
-    ) -> JSONResponse:
+    def _versioned_problem_response(request: Request, **kwargs: Any) -> JSONResponse:
         response = problem_response(request, **kwargs)
         # 43.3: v2 responses always disclose their API version, errors included.
         if request.url.path.startswith("/api/v2/"):
@@ -1024,16 +1143,16 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
         )
 
     # Phase 27.2: domain routers (extracted from create_app).
-    from app.routers.common import RouteDeps
-    from app.routers.system import build_router as build_system_router
-    from app.routers.conversations import build_router as build_conversations_router
-    from app.routers.knowledge import build_router as build_knowledge_router
     from app.routers.admin import build_router as build_admin_router
-    from app.routers.auth import build_router as build_auth_router
-    from app.routers.copilot import build_router as build_copilot_router
-    from app.routers.tickets import build_router as build_tickets_router
-    from app.routers.reports import build_router as build_reports_router
     from app.routers.attachments import build_router as build_attachments_router
+    from app.routers.auth import build_router as build_auth_router
+    from app.routers.common import RouteDeps
+    from app.routers.conversations import build_router as build_conversations_router
+    from app.routers.copilot import build_router as build_copilot_router
+    from app.routers.knowledge import build_router as build_knowledge_router
+    from app.routers.reports import build_router as build_reports_router
+    from app.routers.system import build_router as build_system_router
+    from app.routers.tickets import build_router as build_tickets_router
 
     route_deps = RouteDeps(
         settings=settings,

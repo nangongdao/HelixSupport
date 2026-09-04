@@ -93,8 +93,13 @@ def issue_capability_token(
 
 
 def verify_capability_token(
-    secret: bytes, grant: dict[str, Any], *, tool: str, tenant_id: str,
-    schema_digest: str = "", now: float | None = None
+    secret: bytes,
+    grant: dict[str, Any],
+    *,
+    tool: str,
+    tenant_id: str,
+    schema_digest: str = "",
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Verify signature, expiry, and subject binding; returns the token body.
 
@@ -163,18 +168,20 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> lis
                 # gateway passes explicit Nones so callers stay keyword-clean.
                 continue
             wanted = type_map.get(str(spec.get("type")))
-            if wanted is not None and not isinstance(value, bool | bytes) and not isinstance(
-                value, wanted
+            if (
+                wanted is not None
+                and not isinstance(value, bool | bytes)
+                and not isinstance(value, wanted)
             ):
                 problems.append(f"argument {name!r} must be {spec.get('type')}")
     return problems
 
 
 __all__ = [
-    "TOKEN_SCHEMA",
-    "CapabilityError",
     "DEFAULT_TOKEN_TTL_SECONDS",
     "SIDEEFFECT_CLASSES",
+    "TOKEN_SCHEMA",
+    "CapabilityError",
     "ToolPolicy",
     "issue_capability_token",
     "validate_arguments",

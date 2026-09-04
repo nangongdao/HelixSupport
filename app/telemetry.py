@@ -16,11 +16,12 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from statistics import quantiles
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,9 @@ try:
     )
     from opentelemetry.sdk.resources import Resource  # type: ignore[reportMissingImports]
     from opentelemetry.sdk.trace import TracerProvider  # type: ignore[reportMissingImports]
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[reportMissingImports]
+    from opentelemetry.sdk.trace.export import (  # type: ignore[reportMissingImports]
+        BatchSpanProcessor,
+    )
 
     _otel_available = True
 except ImportError:
@@ -211,3 +214,25 @@ class TelemetryMetrics:
 
 
 metrics = TelemetryMetrics()
+
+
+def record_shadow_comparison(
+    result: str,
+    latency_diff_ms: int | None = None,
+    route: str | None = None,
+) -> None:
+    """Record a shadow traffic comparison result.
+
+    Args:
+        result: "match", "mismatch", or "error"
+        latency_diff_ms: v2_latency - v1_latency (positive = v2 slower)
+        route: optional route identifier for per-endpoint tracking
+    """
+    tags = {"result": result}
+    if route:
+        tags["route"] = route
+
+    metrics.increment("shadow.comparison_result", 1, **tags)
+
+    if latency_diff_ms is not None:
+        metrics.observe("shadow.latency_diff_ms", float(latency_diff_ms), **tags)

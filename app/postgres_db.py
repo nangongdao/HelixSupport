@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
-from typing import Any, Iterator
+from typing import Any
 
 from app.context import current_scope_mode, current_tenant, maintenance_scope
 from app.database import Database
@@ -239,9 +240,7 @@ class PostgresDatabase(Database):
         if mode == "tenant":
             tenant = current_tenant()
             assert tenant is not None  # guaranteed by the "tenant" mode
-            connection.execute(
-                f"SELECT set_config('{TENANT_CONTEXT_GUC}', ?, true)", (tenant,)
-            )
+            connection.execute(f"SELECT set_config('{TENANT_CONTEXT_GUC}', ?, true)", (tenant,))
         elif mode is None:
             raise TenantContextError(
                 "row-level security is enforced: database access requires "

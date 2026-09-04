@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import json
-from typing import Any
 import secrets
+from typing import Any
 from uuid import uuid4
 
 from app.db._util import (

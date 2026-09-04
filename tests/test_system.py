@@ -14,7 +14,6 @@ from app.assets import STATIC_ASSET_VERSION, VERSIONED_STATIC_CACHE_CONTROL
 from app.config import Settings
 from app.main import create_app
 
-
 ADMIN_KEY = "admin-test-key-0001"
 CHANNEL_KEY = "channel-test-key-01"
 OPERATOR_KEY = "operator-test-key01"

@@ -94,6 +94,7 @@ class AttachmentScanner:
     # Any archive payload may not expand beyond this multiple of the blob
     # itself (compression-bomb guard for future archive content types).
     _BOMB_RATIO = 20
+
     def scan(self, data: bytes, filename: str, content_type: str) -> tuple[bool, str]:
         extension = Path(filename).suffix.lower().lstrip(".")
         if extension in _DENIED_EXTENSIONS:
@@ -101,7 +102,7 @@ class AttachmentScanner:
         if self._EICAR_SUFFIX in data:
             return False, "EICAR antivirus test signature detected"
         head = data[:8]
-        if head.startswith(b"MZ") or head.startswith(b"\x7fELF"):
+        if head.startswith((b"MZ", b"\x7fELF")):
             return False, "executable magic bytes detected"
         if head.startswith(b"#!"):
             return False, "script shebang detected"
@@ -110,9 +111,7 @@ class AttachmentScanner:
             return False, f"content does not match .{extension} signature"
         # Disguised MIME: a text/* claim with binary container magic is a
         # mismatch regardless of extension.
-        if content_type.startswith("text/") and (
-            head.startswith(b"PK\x03\x04") or head.startswith(b"\x1f\x8b")
-        ):
+        if content_type.startswith("text/") and (head.startswith((b"PK\x03\x04", b"\x1f\x8b"))):
             return False, f"binary container bytes declared as {content_type}"
         bomb_verdict = self._check_compression_bomb(data)
         if bomb_verdict:
@@ -173,7 +172,9 @@ class TimeoutMalwareScanner:
         finally:
             # Never block on a hung engine thread; the budget already expired.
             pool.shutdown(wait=False, cancel_futures=True)
-        if not isinstance(clean, bool) or (clean and str(verdict).lower() not in {"clean", "ok", "pass"}):
+        if not isinstance(clean, bool) or (
+            clean and str(verdict).lower() not in {"clean", "ok", "pass"}
+        ):
             # Unknown/ambiguous verdicts never pass (fail closed).
             return False, f"unrecognized scanner verdict: {verdict!r}"
         return clean, str(verdict)
@@ -446,13 +447,11 @@ class AttachmentService:
         if attachment is None or attachment["status"] != "stored":
             return None
         storage_key = str(attachment["storage_key"])
-        expected = attachment["sha256"] if "sha256" in attachment.keys() else None
+        expected = attachment.get("sha256", None)
         if self.store is not None:
             # Object tampering is detectable: the stored digest must match.
             if expected and not self.store.verify(storage_key, str(expected)):
-                logger.error(
-                    "attachment.integrity_failed", extra={"storage_key": storage_key}
-                )
+                logger.error("attachment.integrity_failed", extra={"storage_key": storage_key})
                 return None
             try:
                 path = self.store.path_for(storage_key)
@@ -479,7 +478,7 @@ class AttachmentService:
         if attachment is None:
             return False
         storage_key = str(attachment["storage_key"])
-        sha256 = attachment["sha256"] if "sha256" in attachment.keys() else None
+        sha256 = attachment.get("sha256", None)
         self._remove_object(storage_key)
         with self.database.connect() as connection:
             cursor = connection.execute(

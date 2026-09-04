@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 import sqlite3
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from app.db._util import (
     knowledge_search_terms,

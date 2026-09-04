@@ -19,7 +19,7 @@
  *                        for behavioural parity during migration.
  */
 
-import { computeWindow } from "./vqueue.js?v=1.3.9";
+import { computeWindow } from "./vqueue.js?v=1.4.0";
 
 let ctx = null;
 
@@ -116,6 +116,9 @@ export function renderLabelChips(labels, emptyText = "无标签") {
 
 export function renderBulkToolbar() {
   const els = ctx.els;
+  // Island mode: the React queue island owns the bulk toolbar (yielded);
+  // keep the selection state in sync through the snapshot publish instead.
+  if (window.__HELIX_ISLAND_MODE__) return;
   const count = ctx.state.bulkSelected.size;
   els.bulkToolbar.hidden = !ctx.canOperate() || count === 0;
   els.bulkCount.textContent = `已选 ${count} 项`;
@@ -185,6 +188,27 @@ export function renderWindowedQueue(win, rowHeight, opts) {
 
 export function renderQueue() {
   const { state, els } = ctx;
+  // Island mode: the React queue island owns the list DOM AND the strip
+  // controls (#queueCount/#loadMore are yielded by the loader). Publish the
+  // snapshot the island mirrors and stop painting the legacy DOM entirely —
+  // the load-more pagination lifecycle stays in app.js via the
+  // helix-queue-load-more bridge.
+  if (window.__HELIX_ISLAND_MODE__) {
+    window.dispatchEvent(
+      new CustomEvent("helix-conversations-updated", {
+        detail: {
+          conversations: state.conversations,
+          selectedId: state.selectedId,
+          bulkSelected: [...state.bulkSelected],
+          queueHasMore: state.queueHasMore,
+          queueLoadingMore: state.queueLoadingMore,
+          canOperate: ctx.canOperate(),
+          compact: ctx.isCompactDensity(state.density, state.lowPerf),
+        },
+      }),
+    );
+    return;
+  }
   els.queueCount.textContent = `${state.conversations.length}${state.queueHasMore ? "+" : ""} 个会话`;
   els.loadMore.hidden = !state.queueHasMore;
   els.loadMore.disabled = state.queueLoadingMore;
@@ -216,6 +240,8 @@ export function renderQueue() {
 
 export function renderLoadingQueue() {
   const els = ctx.els;
+  // Island mode: the React queue island owns the list DOM (see renderQueue).
+  if (window.__HELIX_ISLAND_MODE__) return;
   els.list.setAttribute("aria-busy", "true");
   els.list.innerHTML = '<div class="queue-loading">正在同步会话队列</div>';
 }
@@ -261,4 +287,85 @@ export function scheduleQueueWindowUpdate() {
 
 export function handleQueueScroll() {
   scheduleQueueWindowUpdate();
+}
+
+// ── Mobile queue drawer (≤900px): scrim, focus trap, inert background ──
+
+let queueScrim = null;
+
+export function isQueueDrawerMode() {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+export function setBackgroundInert(inert) {
+  const main = document.querySelector(".conversation-pane");
+  if (!main) return;
+  if (inert) main.setAttribute("inert", "");
+  else main.removeAttribute("inert");
+}
+
+function trapQueueFocus(event) {
+  if (event.key !== "Tab") return;
+  const focusable = ctx.els.queuePane.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+export function openQueueDrawer() {
+  ctx.els.queuePane.classList.add("is-open");
+  if (!queueScrim) {
+    queueScrim = document.createElement("button");
+    queueScrim.type = "button";
+    queueScrim.className = "queue-scrim";
+    queueScrim.setAttribute("aria-label", "关闭会话队列");
+    queueScrim.addEventListener("click", closeQueueDrawer);
+    ctx.els.queuePane.parentElement.insertBefore(queueScrim, ctx.els.queuePane);
+  }
+  queueScrim.hidden = false;
+  if (isQueueDrawerMode()) {
+    ctx.els.queuePane.setAttribute("role", "dialog");
+    ctx.els.queuePane.setAttribute("aria-modal", "true");
+    setBackgroundInert(true);
+    ctx.els.queuePane.addEventListener("keydown", trapQueueFocus);
+  }
+  ctx.els.mobileQueue.setAttribute("aria-expanded", "true");
+  document.getElementById("queueClose")?.focus({ preventScroll: true });
+}
+
+export function closeQueueDrawer(options = {}) {
+  ctx.els.queuePane.classList.remove("is-open");
+  if (queueScrim) queueScrim.hidden = true;
+  ctx.els.queuePane.removeAttribute("role");
+  ctx.els.queuePane.removeAttribute("aria-modal");
+  ctx.els.queuePane.removeEventListener("keydown", trapQueueFocus);
+  setBackgroundInert(false);
+  ctx.els.mobileQueue.setAttribute("aria-expanded", "false");
+  if (options.restoreFocus !== false) ctx.els.mobileQueue.focus({ preventScroll: true });
+}
+
+/** Bind the drawer toggle buttons and the Escape handler (exactly once). */
+export function bindQueueDrawer() {
+  if (!ctx?.els) return false;
+  ctx.els.mobileQueue.addEventListener("click", () => {
+    if (ctx.els.queuePane.classList.contains("is-open")) closeQueueDrawer();
+    else openQueueDrawer();
+  });
+  ctx.els.backToQueue.addEventListener("click", openQueueDrawer);
+  document.getElementById("queueClose")?.addEventListener("click", closeQueueDrawer);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && ctx.els.queuePane.classList.contains("is-open") && queueScrim && !queueScrim.hidden) {
+      closeQueueDrawer();
+    }
+  });
+  return true;
 }

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Hashable
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic
-from typing import Generic, Hashable, TypeVar
-
+from typing import Generic, TypeVar
 
 KeyT = TypeVar("KeyT", bound=Hashable)
 ValueT = TypeVar("ValueT")

@@ -94,9 +94,11 @@ class TurnStageContractTests(unittest.TestCase):
         so the orchestrator stops before the specialist."""
         svc = _MonkeyServices(self.database)
         stage = TurnPolicyStage(svc)
-        conversations = self.database.list_conversations("demo") if hasattr(
-            self.database, "list_conversations"
-        ) else []
+        conversations = (
+            self.database.list_conversations("demo")
+            if hasattr(self.database, "list_conversations")
+            else []
+        )
         if not conversations:
             self.skipTest("no conversation available")
         conv = conversations[0]

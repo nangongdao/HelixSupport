@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
-import logging
-import sqlite3
-
 import asyncio
 import json
+import logging
+import sqlite3
+from collections.abc import AsyncIterator
 from time import perf_counter
-from typing import Annotated, AsyncIterator
+from typing import Annotated
+from typing import Annotated as TAnnotated  # noqa: F401
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from typing_extensions import Annotated as TAnnotated  # noqa: F401
 
-from app.labels import normalize_conversation_labels
 from app.intake import backpressure_reason
+from app.labels import normalize_conversation_labels
+from app.main import (
+    IDEMPOTENCY_KEY_PATTERN,
+    _conversation_quota_exceeded,
+    _message_date_for_quality,
+    _message_intent_for_quality,
+    _message_prompt_version_for_quality,
+    conversation_out,
+    message_out,
+    require_any_permission,
+    require_permission,
+    turn_job_out,
+)
+from app.pagination import (
+    InvalidCursorError,
+    decode_conversation_cursor,
+    decode_message_cursor,
+    encode_conversation_cursor,
+    encode_message_cursor,
+)
+from app.routers.common import RouteDeps
 from app.schemas import (
-    AuditEventOut,
     AssignConversationRequest,
+    AuditEventOut,
     BulkConversationActionOut,
     BulkConversationActionRequest,
     CollaboratorOut,
@@ -48,28 +68,7 @@ from app.schemas import (
     TurnJobOut,
     TurnResponse,
 )
-from app.main import (
-    IDEMPOTENCY_KEY_PATTERN,
-    _conversation_quota_exceeded,
-    _message_date_for_quality,
-    _message_intent_for_quality,
-    _message_prompt_version_for_quality,
-    conversation_out,
-    message_out,
-    require_any_permission,
-    require_permission,
-    turn_job_out,
-)
-from app.pagination import (
-    InvalidCursorError,
-    decode_conversation_cursor,
-    decode_message_cursor,
-    encode_conversation_cursor,
-    encode_message_cursor,
-)
-from app.routers.common import RouteDeps
 from app.security import Principal, Role
-
 
 logger = logging.getLogger("helix")
 
@@ -958,7 +957,7 @@ def build_router(deps: RouteDeps) -> APIRouter:
                 channel=row["channel"] or "web",
                 mentioned_by=row["mentioned_by"],
                 note_id=row["note_id"],
-                note_preview=row["note_preview"] if "note_preview" in row else "",
+                note_preview=row.get("note_preview", ""),
                 created_at=row["created_at"],
                 read_at=row["read_at"],
                 unread=bool(row["unread"]),

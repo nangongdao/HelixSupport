@@ -202,8 +202,12 @@ class RedisQueueIntegrationTests(unittest.TestCase):
             if job is not None:
                 claimed.append((job["id"], f"worker-{index}"))
         self.assertEqual(len(claimed), 3, "every flushed job must be re-dispatched")
-        self.assertEqual({job_id for job_id, _ in claimed}, enqueued_ids, "no job lost or duplicated")
-        self.assertEqual(len({job_id for job_id, _ in claimed}), len(claimed), "double-claim detected")
+        self.assertEqual(
+            {job_id for job_id, _ in claimed}, enqueued_ids, "no job lost or duplicated"
+        )
+        self.assertEqual(
+            len({job_id for job_id, _ in claimed}), len(claimed), "double-claim detected"
+        )
 
         # A second recover pass after everything is completed must not
         # resurrect finished work or create phantom dispatches.

@@ -37,13 +37,21 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/run_pitr_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.attachments import AttachmentService
+from app.audit_anchor import Ed25519KmsSigner, build_anchor_claim
 from app.config import Settings
 from app.database import Database
 from app.privacy import DataProtectionService
 from app.retention import RetentionService
 from app.worm_store import DiskWormStore
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -154,9 +162,7 @@ def _verify_chain(db: Path, worm_dir: Path, trusted_kids: str) -> tuple[bool, st
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="supplychain/pitr-drills.json")
     parser.add_argument("--rto-budget-seconds", type=int, default=1800)
@@ -183,9 +189,7 @@ def main() -> int:
             keep = database.create_conversation(
                 "demo", "PITR Keep", "CUST-PITR-KEEP", "web", "admin", 120
             )["id"]
-            database.create_conversation(
-                "demo", "PITR Gone", "CUST-PITR-GONE", "web", "admin", 120
-            )
+            database.create_conversation("demo", "PITR Gone", "CUST-PITR-GONE", "web", "admin", 120)
             database.add_message("demo", keep, "customer", "cust-1", "pre-T0 message")
             database.audit("demo", None, "admin", "api_key.issued", {"credential_id": "k1"})
             database.audit("demo", None, "admin", "member.invited", {"member": "u2"})
@@ -309,9 +313,7 @@ def main() -> int:
                     if "in-window message" not in contents:
                         failures.append("RPO violation: in-window message missing after restore")
                     if "post-T1 marker" in contents:
-                        failures.append(
-                            "restore is not point-in-time: post-T1 marker came back"
-                        )
+                        failures.append("restore is not point-in-time: post-T1 marker came back")
                     if job_row is None or job_row["status"] != "queued":
                         failures.append("queued turn job did not survive the restore")
                     if len(attachment_rows) != 2:
@@ -340,7 +342,9 @@ def main() -> int:
                 reopened = Database(restored_db)
                 try:
                     retention = RetentionService(reopened, dsr_export_secret=DSR_SECRET)
-                    results = DataProtectionService(retention, sla_minutes=120).enforce_tombstones_after_restore()
+                    results = DataProtectionService(
+                        retention, sla_minutes=120
+                    ).enforce_tombstones_after_restore()
                     if results.get("failed"):
                         failures.append("tombstone re-application reported failures")
                 except Exception as exc:
@@ -349,9 +353,7 @@ def main() -> int:
                     reopened.close()
 
         if rto_seconds >= 0 and rto_seconds > args.rto_budget_seconds:
-            failures.append(
-                f"RTO budget exceeded: {rto_seconds:.1f}s > {args.rto_budget_seconds}s"
-            )
+            failures.append(f"RTO budget exceeded: {rto_seconds:.1f}s > {args.rto_budget_seconds}s")
 
     passed = not failures
     ledger_path = Path(args.out)
@@ -365,7 +367,7 @@ def main() -> int:
     ledger.setdefault("drills", []).append(
         {
             "drill_type": "pitr_restore",
-            "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "ran_at": dt.datetime.now(dt.UTC).isoformat(),
             "passed": passed,
             "rto_seconds": round(rto_seconds, 3) if rto_seconds >= 0 else None,
             "rto_budget_seconds": args.rto_budget_seconds,
@@ -387,4 +389,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

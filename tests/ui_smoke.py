@@ -9,7 +9,6 @@ from uuid import uuid4
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect, sync_playwright
 
-
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts"
 
@@ -101,6 +100,14 @@ def main() -> None:
         page.goto(BASE_URL)
         expect(page.locator("#operatorIdentity")).to_contain_text("demo.admin")
         expect(page.get_by_role("heading", name="会话队列")).to_be_visible()
+
+        # Low-perf probes depending on the runner's core count: 4-core CI
+        # hosts auto-enable it (detectConstrainedDevice), dev machines do
+        # not. Normalise to the "off" state first so the toggle exercises
+        # both directions deterministically.
+        if page.get_by_role("button", name="关闭低配模式").count():
+            page.get_by_role("button", name="关闭低配模式").click()
+            expect(page.locator("#perfHint")).to_be_hidden()
 
         with page.expect_response(
             lambda response: "/api/conversations?" in response.url and "limit=20" in response.url

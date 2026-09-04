@@ -24,7 +24,6 @@ from app.main import create_app
 from app.migrations import all_migrations, run_migrations
 from app.orchestrator import ConversationOrchestrator
 
-
 ADMIN_KEY = "admin-test-key-0001"
 OTHER_ADMIN_KEY = "other-admin-key-001"
 

@@ -6,6 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "click>=8.3.3,<9",
+  # SEC-005 audit anchoring: Ed25519 signing of the audit-chain tip
+  # (app/audit_anchor.py). Imported at module scope, so it must be a
+  # declared runtime dependency, not an optional extra. >=46.0.7 pins the
+  # buffer-overflow fix (PYSEC-2026-36); 50.0.1 is the audited version.
+  "cryptography>=46.0.7,<51",
   "fastapi>=0.139.2,<0.140",
   "httpx>=0.28.1,<1",
   "idna>=3.15,<4",
@@ -24,7 +29,11 @@ dev = [
   "pip-audit>=2.7,<3",
   "playwright>=1.50,<2",
   "pyright>=1.1.390,<2",
-  "ruff>=0.9,<1",
+  "pytest>=8.3,<9",
+  # Pinned, not ranged: ruff's default rule set and formatter style evolve
+  # with every minor, so a floating range silently re-scopes the lint/format
+  # gates (ruff 0.16 selects rules the 0.9-era codebase never opted into).
+  "ruff==0.9.9",
 ]
 # Production tracing: install ``pip install -e '.[otel]'`` and set
 # ``OTEL_EXPORTER_OTLP_ENDPOINT`` to forward spans to an OTLP collector.
@@ -52,6 +61,12 @@ app = ["static/*", "static/css/*", "static/js/*"]
 line-length = 100
 target-version = "py311"
 
+# scripts/ win at being runnable from a source checkout without installing:
+# they sys.path-insert the repo root before importing app.* and local
+# helpers. That deliberate pattern trips E402; exempt the directory.
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E402"]
+
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
@@ -69,3 +84,11 @@ omit = ["app/postgres_db.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+
+[tool.pytest.ini_options]
+# Limit collection to tests/ and app/ — scripts/ holds standalone harnesses
+# (e.g. rolling_restart_test.py) that import live-DB deps (psycopg) at module
+# top level and would otherwise crash collection.
+addopts = "-q"
+testpaths = ["tests", "app"]
+norecursedirs = ["artifacts", "node_modules", "frontend", "src-tauri"]

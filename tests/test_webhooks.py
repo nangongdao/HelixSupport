@@ -111,11 +111,10 @@ class WebhookServiceTests(unittest.TestCase):
             "http://metadata.google.internal/",
         )
         for url in blocked:
-            with self.subTest(url=url):
-                with self.assertRaises(ValueError):
-                    self.webhooks.register_endpoint(
-                        "tenant-1", url, ["conversation.created"], "secret-123"
-                    )
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.webhooks.register_endpoint(
+                    "tenant-1", url, ["conversation.created"], "secret-123"
+                )
         endpoint = self.webhooks.register_endpoint(
             "tenant-1", "https://example.com/hook", ["conversation.created"], "secret-123"
         )

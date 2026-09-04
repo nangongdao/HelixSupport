@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 from app.db._util import utc_now
@@ -133,9 +134,7 @@ class DomainEventOutbox:
                     )
                 raise
             delivered += 1
-            logger.info(
-                "outbox.published event_id=%s type=%s", row["event_id"], row["event_type"]
-            )
+            logger.info("outbox.published event_id=%s type=%s", row["event_id"], row["event_type"])
         return delivered
 
     def pending_count(self) -> int:

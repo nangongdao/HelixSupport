@@ -164,7 +164,7 @@ class LanguageServiceTests(unittest.TestCase):
     def test_translate_identity_output_treated_as_untouched(self) -> None:
         provider = FakeModelProvider(translation="你好")
         service = LanguageService(provider, "zh")
-        text, translated, source = service.translate("你好", "en")
+        _text, translated, source = service.translate("你好", "en")
         self.assertFalse(translated)
         self.assertEqual(source, "rule")
 

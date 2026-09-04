@@ -21,16 +21,16 @@ test("isNavView accepts every registered view", () => {
   assert.equal(isNavView(""), false);
 });
 
-test("isPlaceholderView marks settings only", () => {
-  assert.deepEqual(NAV_PLACEHOLDER_VIEWS, ["settings"]);
-  for (const view of NAV_PLACEHOLDER_VIEWS) assert.equal(isPlaceholderView(view), true);
+test("isPlaceholderView is empty now that settings is a real view (D1)", () => {
+  assert.deepEqual(NAV_PLACEHOLDER_VIEWS, []);
+  assert.equal(isPlaceholderView("settings"), false);
   assert.equal(isPlaceholderView("workspace"), false);
   assert.equal(isPlaceholderView("quality"), false);
   assert.equal(isPlaceholderView("admin"), false); // 17.3 admin page is real
 });
 
-test("real views are workspace, quality, knowledge, and admin", () => {
-  for (const view of ["workspace", "quality", "knowledge", "admin"]) {
+test("real views are workspace, quality, knowledge, admin, and settings", () => {
+  for (const view of ["workspace", "quality", "knowledge", "admin", "settings"]) {
     assert.equal(isPlaceholderView(view), false, `${view} must not be a placeholder`);
   }
 });

@@ -215,11 +215,11 @@ class ChainedModelProvider:
 
 
 __all__ = [
+    "PROVIDER_METADATA",
     "ChainedModelProvider",
     "ModelPolicyDecision",
     "ModelProvider",
     "ModelProviderError",
-    "PROVIDER_METADATA",
     "OpenAICompatibleProvider",
     "ProviderMetadata",
     "check_model_policy",

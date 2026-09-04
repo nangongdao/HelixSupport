@@ -50,8 +50,7 @@ def register_event_schema(schema: EventSchema) -> EventSchema:
         latest = history[-1]
         if schema.version <= latest.version:
             raise SchemaCompatibilityError(
-                f"event {schema.name}: version {schema.version} does not advance "
-                f"{latest.version}"
+                f"event {schema.name}: version {schema.version} does not advance {latest.version}"
             )
         _check_compatible(latest, schema)
     history.append(schema)
@@ -63,8 +62,7 @@ def _check_compatible(old: EventSchema, new: EventSchema) -> None:
         removed = sorted(set(old.fields) - set(new.fields))
         if removed:
             raise SchemaCompatibilityError(
-                f"event {new.name} v{new.version}: backward-incompatible field "
-                f"removal {removed}"
+                f"event {new.name} v{new.version}: backward-incompatible field removal {removed}"
             )
         retyped = {
             name
@@ -80,8 +78,7 @@ def _check_compatible(old: EventSchema, new: EventSchema) -> None:
         added = sorted(set(new.fields) - set(old.fields))
         if added:
             raise SchemaCompatibilityError(
-                f"event {new.name} v{new.version}: forward-incompatible field "
-                f"addition {added}"
+                f"event {new.name} v{new.version}: forward-incompatible field addition {added}"
             )
 
 

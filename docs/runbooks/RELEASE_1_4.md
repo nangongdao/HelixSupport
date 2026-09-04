@@ -9,7 +9,18 @@
 - [ ] 工作树与 tag 一致:`git describe --tags`(或核对 `APP_VERSION`)。
 - [ ] `CHANGELOG.md` 已新增 1.4.0 条目;`docs/API_POLICY.md` 无未走弃用的破坏变更。
 - [ ] `pip freeze`/`requirements.lock` 已更新,`requirements.lock` 有 pin。
-- [ ] 检查发布工具版本一致(`python -c "import app.main as m; print(m.APP_VERSION)"`)。
+- [ ] 检查发布工具版本一致(静态读取,不导入应用、无启动副作用):
+  ```bash
+  python - <<'PY'
+  import ast
+  from pathlib import Path
+  tree = ast.parse(Path("app/main.py").read_text(encoding="utf-8"))
+  for node in tree.body:
+      if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "APP_VERSION" for t in node.targets):
+          print(node.value.value)
+          break
+  PY
+  ```
 
 ## 1. CI 门禁复核(对应 RELEASE_CHECKLIST.md)
 

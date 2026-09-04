@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 # Host resolver returns IP strings for (hostname, port). Injectable so SSRF
@@ -55,7 +55,7 @@ def assert_public_webhook_url(url: str, *, resolve_host: HostResolver | None = N
     host = (parsed.hostname or "").strip().lower()
     if not host:
         raise ValueError("webhook url host is required")
-    if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost") or host.endswith(".local"):
+    if host in _BLOCKED_HOSTNAMES or host.endswith((".localhost", ".local")):
         raise ValueError("webhook url must not target a private or loopback address")
     try:
         addresses = [str(ipaddress.ip_address(host))]

@@ -13,7 +13,8 @@ so ``/openapi.json`` always reflects it.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # route key -> (summary, tags, permission note)
 _ENDPOINT_META: dict[str, tuple[str, list[str], str]] = {

@@ -25,7 +25,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from app.database import Database
 from app.domain import ConversationStatus
@@ -38,7 +38,7 @@ class _Fixture:
         self.kind = kind
         self._tmp_path = tmp_path
 
-    def __enter__(self) -> "_Fixture":
+    def __enter__(self) -> Self:
         if self.kind == "sqlite":
             self.path = self._tmp_path / "multi.db"
             self.a = Database(self.path, pool_size=2, busy_timeout_ms=4000)
@@ -65,7 +65,7 @@ class _Fixture:
         )
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.a.close()
         self.b.close()
 

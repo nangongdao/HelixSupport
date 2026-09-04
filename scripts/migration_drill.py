@@ -18,12 +18,20 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/migration_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.migrations import (
     all_migrations,
     migration_schema_version,
     run_migrations,
     verify_migration_chain,
 )
+from scripts._console import use_utf8_console
 
 
 def build_legacy_snapshot(path: Path) -> None:
@@ -124,4 +132,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

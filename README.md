@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>v1.3.9</code>&nbsp;
+  <code>v2.1.0</code>&nbsp;
   <code>Python 3.11+</code>&nbsp;
   <code>FastAPI</code>&nbsp;
   <code>SQLite / PostgreSQL</code>&nbsp;
@@ -37,10 +37,37 @@ Helix Support 把客户消息接入、策略检查、意图识别、知识/订�
 | 人工协作 | 认领/接管/解决/重开、内部备注与线程、@提及、旁观 SSE、快捷回复、工单和附件 |
 | 平台运营 | 租户/成员/配额、知识生命周期、自动路由、SLA、质量/CSAT、报表与 webhook 管理 |
 | 生产导向基础 | SQLite/PG 双后端、Redis durable queue、本地审计哈希链/冷热归档、保留/DSR、SLO/DR、SBOM 与发布门禁 |
+| **桌面应用（v1.4.0-desktop）** | Tauri 2.x 原生壳：Python sidecar 动态端口编排、崩溃自愈、单实例锁、启动遥测、Splash 屏、xterm.js 诊断终端；React 渐进式岛迁移双轨架构；NSIS 安装器 + 自动更新 |
+
+## 桌面应用（v1.4.0-desktop）
+
+基于 [Tauri 2.x](https://tauri.app/) 的原生桌面壳，替代浏览器启动流程：
+
+- **双击图标 → 工作区可交互 < 3 秒**：窗口先行创建 + Splash 屏，后端 sidecar 在后台并行启动
+- **PyInstaller onedir 打包**：后端编译为 `helix-server.exe`（~48MB），CI 冒烟测试验证 spawn → health → kill 全流程
+- **Sidecar 产品化**：动态端口分配、就绪探测退避（200ms→2s）、优雅停机、崩溃自愈（≤3 次/分钟）、单实例锁
+- **启动遥测**：三时间戳（t_window_created / t_backend_ready / t_ui_ready）写入 `%APPDATA%/HelixSupport/telemetry/startup.json`
+- **xterm.js 内置终端**：底部抽屉（Ctrl+` 呼出），白名单诊断命令（健康检查/迁移状态/日志），DEBUG 构建启用交互式 PTY
+- **React 渐进式岛迁移**：Vite + React 19 + Zustand v5 + TanStack Query v5；8 个业务岛（quality/knowledge/ticket/queue/composer/inspector/command-palette/session-shell）渐进替换 legacy 渲染，六道门禁全程保持绿色
+
+构建桌面包：
+
+```bash
+# 1. 打包 Python sidecar
+artifacts/rls-venv/Scripts/python.exe -m PyInstaller desktop/helix-server.spec --noconfirm
+# 2. 拷贝到 Tauri 资源目录
+cp -r desktop/dist/helix-server src-tauri/resources/server/
+# 3. 构建 Vite React 岛产物
+cd frontend && npm install && npx vite build
+# 4. 构建 Tauri NSIS 安装器
+cd ../src-tauri && cargo tauri build
+```
+
+详见 `DESKTOP_TAURI_PLAN.md` 规划文档。
 
 ## 界面预览
 
-> 截图为 v1.3.9 专业 SaaS 主题（中性板岩深色 + 靛蓝强调色）。操作台支持深/浅双主题切换，下方均为深色主题。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获。
+> 截图为 v1.4.0 专业 SaaS 主题（三层 @layer 设计令牌 + 动效令牌；中性板岩浅色 + 靛蓝强调色，默认主题）。操作台支持深/浅双主题切换。可通过 `scripts/readme_screenshots.py` 对 clean-DB 本地服务重新捕获（七张，含桌面壳）。
 
 ### 人工接管与质量洞察
 
@@ -79,6 +106,14 @@ Helix Support 把客户消息接入、策略检查、意图识别、知识/订�
 </p>
 
 Web Chat 使用短期签名 bootstrap token 换取会话绑定 token，以带认证的 fetch-SSE 流式接收回复；支持品牌名、主题色、语言、刷新恢复和人工接管状态。
+
+### 桌面壳（Tauri）
+
+<p align="center">
+  <img src="docs/assets/screenshots/desktop-shell.png" alt="Tauri 桌面壳渲染的坐席工作台，React 岛接管队列/编排/检查器">
+</p>
+
+桌面应用（v1.4.0-desktop）以 Tauri 2.x 原生壳启动同一控制台：React 岛接管队列、编排器与检查器渲染（D3 双轨迁移），Python sidecar 动态端口后台启动，构建与发布细节见 [`DEPLOYMENT_DESKTOP.md`](DEPLOYMENT_DESKTOP.md)。
 
 ## 系统架构
 
@@ -308,7 +343,7 @@ npm audit --audit-level=high
 | 容量与性能 | [`docs/CAPACITY.md`](docs/CAPACITY.md) · [`docs/PERF_NOTES.md`](docs/PERF_NOTES.md) |
 | 坐席与租户手册 | [`docs/guides/operator-manual.md`](docs/guides/operator-manual.md) · [`docs/guides/tenant-admin-manual.md`](docs/guides/tenant-admin-manual.md) |
 | 交付证据 | [`IMPLEMENTATION_REPORT_PHASE_38.md`](IMPLEMENTATION_REPORT_PHASE_38.md) · [`CHANGELOG.md`](CHANGELOG.md) |
-| README 截图重捕获 | `HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py`（对 clean-DB 服务，覆盖 `docs/assets/screenshots/`） |
+| README 截图重捕获 | `HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py`（对 clean-DB 服务，覆盖 `docs/assets/screenshots/`，七张含桌面壳） |
 
 ## 安全与生产边界
 

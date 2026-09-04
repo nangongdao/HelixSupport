@@ -21,3 +21,4 @@
 | [0015](0015-postgres-row-level-security.md) | PostgreSQL 行级租户隔离（RLS 纵深防御） | 已接受（Phase 43.2 contract a） |
 | [0016](0016-ai-governance-v2.md) | AI Governance v2（provider 治理 / 工具能力令牌 / drift 自动停 canary） | 已接受（Phase 43.5） |
 | [0017](0017-frontend-maintainability-performance.md) | 前端可维护性与性能预算（inspector 状态机 / 双层 performance gate / 稳定面视觉回归） | 已接受（Phase 43.6） |
+| [0018](0018-break-zero-build-vite-react.md) | 打破零构建原则引入 Vite + React 构建链（桌面化 React 岛迁移） | 已接受（v1.4.0-desktop） |

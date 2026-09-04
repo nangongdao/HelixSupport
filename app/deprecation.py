@@ -147,8 +147,8 @@ def enrich_openapi_with_deprecations(paths: dict[str, Any]) -> int:
 
 __all__ = [
     "DEPRECATION_HEADER",
-    "Deprecation",
     "SUNSET_HEADER",
+    "Deprecation",
     "active_deprecations",
     "apply_deprecation_headers",
     "deprecation_for",

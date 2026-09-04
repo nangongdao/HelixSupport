@@ -151,7 +151,7 @@ def build_router(deps: RouteDeps) -> APIRouter:
             )
             raise HTTPException(status_code=_flow_error_status(exc), detail=detail) from exc
 
-        principal, cookie = oidc_authenticator.create_session(
+        _principal, cookie = oidc_authenticator.create_session(
             identity.tenant_id,
             identity.actor_id,
             identity.role,

@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Main window access, including the dynamic-port sidecar origin the webview navigates to after backend readiness. Remote pages are ACL-checked even for app commands, so the shell's custom commands are explicitly granted here.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "allow-ui-ready",
+    "allow-desktop-info",
+    "allow-list-diagnostics",
+    "allow-run-diagnostic",
+    "allow-spawn-pty",
+    "allow-write-pty",
+    "allow-kill-pty"
+  ]
+}

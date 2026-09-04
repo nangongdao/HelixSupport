@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.migrations import _ensure_column
-from app.migrations import migration
+from app.migrations import _ensure_column, migration
 
 
 @migration(

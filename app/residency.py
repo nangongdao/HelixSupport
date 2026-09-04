@@ -116,9 +116,7 @@ def summarize_tenant_residency(
                 "tenant_ids": sorted(tenant_ids),
                 # Unknown regions fall back to the local spec; flag them so
                 # an unmanaged name can't silently inherit its posture.
-                "spec_status": (
-                    "known" if region in table else "unknown-fallback-local"
-                ),
+                "spec_status": ("known" if region in table else "unknown-fallback-local"),
             }
             for region, tenant_ids in sorted(by_region.items())
         },

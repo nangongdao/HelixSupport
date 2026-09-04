@@ -19,16 +19,25 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/run_rotation_drill.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.config import Settings
 from app.credentials import key_ref_for
 from app.db._util import utc_now
 from app.main import create_app
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger("helix")
 
@@ -47,7 +56,11 @@ class RotationDrill(unittest.TestCase):
             auth_mode="api_key",
             api_keys_json=json.dumps(
                 {
-                    self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"},
+                    self.admin_key: {
+                        "tenant_id": "demo",
+                        "actor_id": "admin.user",
+                        "role": "admin",
+                    },
                     self.survivor_key: {
                         "tenant_id": "demo",
                         "actor_id": "survivor",
@@ -90,7 +103,11 @@ class RotationDrill(unittest.TestCase):
         promoted_json = json.loads(
             json.dumps(
                 {
-                    self.admin_key: {"tenant_id": "demo", "actor_id": "admin.user", "role": "admin"},
+                    self.admin_key: {
+                        "tenant_id": "demo",
+                        "actor_id": "admin.user",
+                        "role": "admin",
+                    },
                     self.survivor_key: {
                         "tenant_id": "demo",
                         "actor_id": "survivor",
@@ -163,7 +180,7 @@ class RotationDrill(unittest.TestCase):
 def _record(out_path: Path, passed: bool, details: str) -> None:
     import datetime as dt
 
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now = dt.datetime.now(dt.UTC).isoformat()
     if out_path.exists():
         ledger = json.loads(out_path.read_text(encoding="utf-8"))
     else:
@@ -194,4 +211,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

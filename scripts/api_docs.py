@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(ROOT))
+from scripts._console import use_utf8_console
+
 SNAPSHOT = ROOT / "api" / "openapi.json"
 OUTPUT = ROOT / "docs" / "api" / "reference.md"
 
@@ -133,10 +137,12 @@ def generate() -> str:
         "",
         f"Version: `{info.get('version', 'unknown')}`",
         "",
-        "This reference is generated from the OpenAPI contract snapshot "
-        "(`api/openapi.json`) by `scripts/api_docs.py`. The error contract is "
-        "documented in [ERRORS.md](../ERRORS.md); versioning and deprecation "
-        "policy in [API_POLICY.md](../API_POLICY.md).",
+        (
+            "This reference is generated from the OpenAPI contract snapshot "
+            "(`api/openapi.json`) by `scripts/api_docs.py`. The error contract is "
+            "documented in [ERRORS.md](../ERRORS.md); versioning and deprecation "
+            "policy in [API_POLICY.md](../API_POLICY.md)."
+        ),
         "",
     ]
     # Group by first tag.
@@ -167,4 +173,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

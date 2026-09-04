@@ -30,9 +30,7 @@ class SimulatedSignTests(unittest.TestCase):
 
     def test_manifest_change_changes_signature(self) -> None:
         payload = {"a": 1, "b": 2}
-        self.assertNotEqual(
-            _simulate_sign({**payload, "a": 99}, "n"), _simulate_sign(payload, "n")
-        )
+        self.assertNotEqual(_simulate_sign({**payload, "a": 99}, "n"), _simulate_sign(payload, "n"))
 
     def test_nonce_change_changes_signature(self) -> None:
         payload = {"a": 1, "b": 2}
@@ -77,13 +75,11 @@ class SeedDbAnchorsTests(unittest.TestCase):
             conn = self._seeded_connection(Path(tmp))
             try:
                 _seed_db_anchors(conn)
-                rows = conn.execute("SELECT seq, event_type FROM audit_anchors ORDER BY seq").fetchall()
-                self.assertEqual(
-                    [r["seq"] for r in rows], [2, 4], "one anchor per high-risk event"
-                )
-                self.assertTrue(
-                    all(r["event_type"] in self.HIGH_RISK for r in rows)
-                )
+                rows = conn.execute(
+                    "SELECT seq, event_type FROM audit_anchors ORDER BY seq"
+                ).fetchall()
+                self.assertEqual([r["seq"] for r in rows], [2, 4], "one anchor per high-risk event")
+                self.assertTrue(all(r["event_type"] in self.HIGH_RISK for r in rows))
             finally:
                 conn.close()
 

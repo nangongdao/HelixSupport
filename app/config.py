@@ -247,17 +247,41 @@ class Settings:
     # turn.budget_exceeded / tool.denied); None disables that counter.
     drift_max_model_denials: int | None = 50
     drift_max_tool_denials: int | None = 50
+    # ROADMAP 2.2.1: multi-cell deployment configuration. When non-None, loads
+    # the cell registry from this JSON structure; each cell specifies its
+    # database URL, Redis URL, health check endpoint, region, and capacity tier.
+    cell_registry_config: dict[str, dict[str, str]] | None = None
+    # ROADMAP 2.2.1: the identifier of the current cell this process belongs to.
+    # Used for health checks and inter-cell routing decisions.
+    current_cell_id: str = "cell-default"
+    # ROADMAP 2.1.x: shadow traffic opt-in. When true, sampled v1 requests are
+    # replayed to v2 endpoints; results are compared and logged to
+    # shadow_traffic_comparisons for automated monitoring. The sampling rate
+    # controls overhead (0.0 = disabled, 1.0 = shadow every request).
+    shadow_traffic_enabled: bool = False
+    shadow_traffic_sample_rate: float = 0.05
+    # ROADMAP 2.1.x: base URL for the v2 endpoint shadowed requests are
+    # replayed to. Defaults to the local port so a single-process dev
+    # deployment shadows itself; production must point at the real v2 API.
+    shadow_traffic_base_url: str = "http://127.0.0.1:8000"
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         origins = tuple(
             origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()
         )
-        widget_frame_ancestors = tuple(
-            "'self'" if source.strip() in {"self", "'self'"} else source.strip()
-            for source in os.getenv("WIDGET_FRAME_ANCESTORS", "'self'").split(",")
-            if source.strip()
-        )
+        # An unset variable keeps the "'self'" default; an explicitly empty
+        # value parses to an empty tuple and fails validation in __post_init__
+        # instead of silently reverting to the default.
+        widget_frame_ancestors_env = os.getenv("WIDGET_FRAME_ANCESTORS")
+        if widget_frame_ancestors_env is None:
+            widget_frame_ancestors: tuple[str, ...] = ("'self'",)
+        else:
+            widget_frame_ancestors = tuple(
+                "'self'" if source.strip() in {"self", "'self'"} else source.strip()
+                for source in widget_frame_ancestors_env.split(",")
+                if source.strip()
+            )
         api_keys_file_raw = os.getenv("API_KEYS_FILE")
         channel_webhooks_file_raw = os.getenv("CHANNEL_WEBHOOKS_FILE")
         deployment_profile = os.getenv("DEPLOYMENT_PROFILE", "single").strip().lower()
@@ -317,7 +341,7 @@ class Settings:
             enable_session_auth=_env_bool("ENABLE_SESSION_AUTH", False),
             prompt_canary_ratio=float(os.getenv("PROMPT_CANARY_RATIO", "0.0")),
             widget_secret=os.getenv("WIDGET_SECRET", "helix-widget-dev-secret"),
-            widget_frame_ancestors=widget_frame_ancestors or ("'self'",),
+            widget_frame_ancestors=widget_frame_ancestors,
             channel_webhooks_json=os.getenv("CHANNEL_WEBHOOKS_JSON", "{}"),
             channel_webhooks_file=(
                 Path(channel_webhooks_file_raw) if channel_webhooks_file_raw else None
@@ -385,6 +409,20 @@ class Settings:
             drift_max_tool_denials=(
                 int(os.environ["DRIFT_MAX_TOOL_DENIALS"])
                 if os.getenv("DRIFT_MAX_TOOL_DENIALS")
+                else None
+            ),
+            shadow_traffic_enabled=_env_bool("SHADOW_TRAFFIC_ENABLED", False),
+            shadow_traffic_sample_rate=float(os.getenv("SHADOW_TRAFFIC_SAMPLE_RATE", "0.05")),
+            shadow_traffic_base_url=os.getenv(
+                "SHADOW_TRAFFIC_BASE_URL", "http://127.0.0.1:8000"
+            ).strip(),
+            # ROADMAP 2.2.x: multi-cell inventory as JSON
+            # ({"cell-id": {"db_url": ..., "redis_url": ..., "health_url": ...,
+            #   "region": ..., "capacity_tier": ...}}). Loaded eagerly so a
+            # malformed value fails fast at startup.
+            cell_registry_config=(
+                json.loads(os.environ["CELL_REGISTRY_JSON"])
+                if os.getenv("CELL_REGISTRY_JSON")
                 else None
             ),
         )
@@ -539,6 +577,20 @@ class Settings:
             _read_secrets_file(self.channel_webhooks_file)
         if self.is_production and self.effective_api_keys_json.strip() in {"", "{}"}:
             raise ValueError("API keys must configure at least one principal in production")
+        if self.is_production and self.widget_secret == "helix-widget-dev-secret":
+            raise ValueError(
+                "WIDGET_SECRET must be replaced with a long random value in production "
+                "(the built-in 'helix-widget-dev-secret' lets anyone forge widget tokens)"
+            )
+        if (
+            self.is_production
+            and not self.control_plane_secret
+            and self.widget_secret == "helix-widget-dev-secret"
+        ):
+            raise ValueError(
+                "CONTROL_PLANE_SECRET must be set in production (it currently falls "
+                "back to the development widget secret)"
+            )
         if not 0 <= self.prompt_canary_ratio <= 1:
             raise ValueError("PROMPT_CANARY_RATIO must be between 0 and 1")
         if not 5 <= self.webhook_delivery_interval_seconds <= 3600:

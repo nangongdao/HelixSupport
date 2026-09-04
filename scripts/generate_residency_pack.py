@@ -28,6 +28,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/generate_residency_pack.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.control_plane import ControlPlaneError, TenantControlPlane
 from app.residency import (
     DATA_CLASSES,
@@ -36,6 +43,7 @@ from app.residency import (
     is_known_region,
     resolve_region,
 )
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +245,7 @@ class _DatabaseShim:
     def __init__(self, database_path: Path) -> None:
         self._path = database_path
 
-    def connect(self) -> "_ConnectionScope":
+    def connect(self) -> _ConnectionScope:
         connection = sqlite3.connect(str(self._path))
         connection.row_factory = sqlite3.Row
         return _ConnectionScope(connection)
@@ -295,4 +303,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

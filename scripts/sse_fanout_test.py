@@ -27,11 +27,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from statistics import quantiles
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +91,7 @@ async def probe_one(host: str, port: int, path: str, duration_s: float) -> SsePr
             if not line:  # 服务端关闭
                 break
             text = line.decode("utf-8", "replace").strip()
-            if not text or text.startswith("data:") or text.startswith("retry:"):
+            if not text or text.startswith(("data:", "retry:")):
                 continue
             if text.startswith("event:"):
                 kind = text.split(":", 1)[1].strip()
@@ -105,7 +110,7 @@ async def probe_one(host: str, port: int, path: str, duration_s: float) -> SsePr
             await writer.wait_closed()
         except Exception:
             pass
-    except asyncio.TimeoutError:
+    except TimeoutError:
         probe.error = "timeout"
     except Exception as exc:
         probe.error = f"{type(exc).__name__}"
@@ -174,4 +179,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

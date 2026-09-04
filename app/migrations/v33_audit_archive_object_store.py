@@ -23,12 +23,6 @@ from app.migrations import migration
     phase="expand",
 )
 def migrate(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        "ALTER TABLE audit_archives ADD COLUMN object_key TEXT"
-    )
-    connection.execute(
-        "ALTER TABLE audit_archives ADD COLUMN object_sha256 TEXT"
-    )
-    connection.execute(
-        "ALTER TABLE audit_archives ADD COLUMN object_bytes INTEGER"
-    )
+    connection.execute("ALTER TABLE audit_archives ADD COLUMN object_key TEXT")
+    connection.execute("ALTER TABLE audit_archives ADD COLUMN object_sha256 TEXT")
+    connection.execute("ALTER TABLE audit_archives ADD COLUMN object_bytes INTEGER")

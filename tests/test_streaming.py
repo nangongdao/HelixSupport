@@ -22,7 +22,6 @@ from app.jobs import split_stream_tokens
 from app.main import create_app
 from app.migrations import all_migrations, run_migrations
 
-
 ADMIN_KEY = "stream-admin-key-0001"
 
 
@@ -180,6 +179,9 @@ class Migration005Tests(unittest.TestCase):
                     38,
                     39,
                     40,
+                    41,
+                    42,
+                    43,
                 ],
             )
 

@@ -115,9 +115,7 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--database", help="SQLite database path (default DATABASE_PATH)")
     group.add_argument("--database-url", help="PostgreSQL URL (default DATABASE_URL)")
-    parser.add_argument(
-        "--verify-only", action="store_true", help="No-DDL readiness check"
-    )
+    parser.add_argument("--verify-only", action="store_true", help="No-DDL readiness check")
     parser.add_argument("--json", action="store_true", help="Print the machine-readable report")
     args = parser.parse_args()
 

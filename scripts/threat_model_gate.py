@@ -41,6 +41,10 @@ from typing import Any
 _DESCRIPTION = (__doc__ or "security governance gate").strip().splitlines()[0]
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console
+
 DEFAULT_DELTAS = ROOT / "supplychain" / "threat-model-deltas.json"
 DEFAULT_DRILLS = ROOT / "supplychain" / "security-drills.json"
 
@@ -116,7 +120,7 @@ def _parse_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None
 
@@ -265,4 +269,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

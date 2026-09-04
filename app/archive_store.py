@@ -28,9 +28,10 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("helix")
 
@@ -72,7 +73,7 @@ class ManifestEntry:
         }
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ManifestEntry":
+    def from_dict(cls, raw: dict[str, Any]) -> ManifestEntry:
         return cls(
             object_id=str(raw["object_id"]),
             partition_key=str(raw["partition_key"]),
@@ -232,8 +233,7 @@ class ArchiveObjectStore:
                 )
             handle.seek(0)
             gz = gzip.GzipFile(fileobj=handle, mode="rb")
-            for line in gz:
-                yield line
+            yield from gz
 
     def iter_lines(self, tenant_id: str, object_id: str) -> Iterator[bytes]:
         """Stream one partition's raw decompressed JSONL lines (verified).

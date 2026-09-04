@@ -19,7 +19,15 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/backup.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from app.residency import summarize_tenant_residency
+from scripts._console import use_utf8_console
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +106,8 @@ def backup_database(
         import gzip
 
         compressed_path = backup_path.with_suffix(".db.gz")
-        with open(backup_path, "rb") as f_in:
-            with gzip.open(compressed_path, "wb") as f_out:
-                f_out.writelines(f_in)
+        with open(backup_path, "rb") as f_in, gzip.open(compressed_path, "wb") as f_out:
+            f_out.writelines(f_in)
         backup_path.unlink()
         backup_path = compressed_path
         manifest["backup_file"] = backup_path.name
@@ -149,4 +156,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

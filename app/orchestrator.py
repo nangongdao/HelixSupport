@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from time import monotonic
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from app.agents import (
@@ -31,11 +32,11 @@ from app.database import Database
 from app.domain import (
     ConversationStatus,
 )
-from app.model_provider import ModelProvider
 from app.language import LanguageService
+from app.model_provider import ModelProvider
 from app.prompts import PromptRegistry
-from app.queue import SQLiteTaskQueue, TaskQueue
 from app.quality import QualityService
+from app.queue import SQLiteTaskQueue, TaskQueue
 from app.summaries import SummaryService
 from app.telemetry import metrics as telemetry_metrics
 from app.tools import ToolGateway

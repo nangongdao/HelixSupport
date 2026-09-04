@@ -136,7 +136,7 @@ class BulkConversationActionRequest(StrictModel):
         return normalize_conversation_labels(labels)
 
     @model_validator(mode="after")
-    def validate_action_payload(self) -> "BulkConversationActionRequest":
+    def validate_action_payload(self) -> BulkConversationActionRequest:
         if self.action == "set_priority" and (self.priority is None or self.labels):
             raise ValueError("priority is required and labels must be omitted for set_priority")
         if self.action in {"add_labels", "remove_labels"} and (
@@ -338,7 +338,7 @@ class ConversationDetail(StrictModel):
     audit_events: list[AuditEventOut]
     # Backlog (session intelligent summary): operator-facing context brief and
     # disposition draft, when generated. Add-only, always present (nullable).
-    summaries: list["ConversationSummaryOut"] = Field(default_factory=list)
+    summaries: list[ConversationSummaryOut] = Field(default_factory=list)
 
 
 class ConversationSummaryOut(StrictModel):

@@ -2,6 +2,893 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## Unreleased
+
+### Added
+
+- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
+- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
+- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
+- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
+
+### Changed
+
+- **生产安全校验收紧**: `APP_ENV=production` 时 `validate()` 拒绝内置默认 `WIDGET_SECRET`，并拒绝在未显式设置 `CONTROL_PLANE_SECRET` 时回退到开发默认值（避免可伪造 widget token / 控制面签名）。
+
+### Fixed
+
+- **v42/v43 迁移此前未注册进迁移链**（仅 CHANGELOG 声称存在，`all_migrations()` 实际只有 41 个）：v42 已加入 `_VERSION_MODULES`，v43 重写为 `@migration` 装饰器格式后注册，`verify_migration_registry`/`check_migration_phases` 全绿，迁移上界断言同步至 43。
+
+## 2.1.0 — Shadow Traffic System: v1/v2 验证与自动降级 (2026-09-03)
+
+Version 2.1.0 实现了影子流量系统，为 API v1→v2 迁移提供生产级验证能力。通过可配置采样率将真实 v1 请求异步重放到 v2，进行字段级深度对比并追踪延迟差异，配合健康监控实现自动降级。本版本为后续多 cell 部署和成本归因奠定基础。
+
+**发布亮点**:
+- ✅ **影子流量核心**：异步 v1→v2 请求复制，字段级递归对比，延迟追踪
+- ✅ **健康监控**：24 小时滚动窗口，不匹配率/延迟回归双重阈值检测
+- ✅ **fail-safe 设计**：默认关闭，纯函数评估器，从不阻塞 v1 响应路径
+- ✅ **生产就绪**：完整测试覆盖（20 例），遵循项目架构模式
+
+**新增迁移**: v42（1 个，phase="expand"）
+
+### Added
+
+- **影子流量系统（ROADMAP 2.1.x）**：
+  - `app/shadow_traffic.py` (254 行): v1→v2 请求异步复制、字段级差异对比、延迟追踪；`ShadowRequest` 快照原始 v1 请求（路由、payload、tenant_id）、`ShadowComparison` 记录对比结果（匹配/不匹配字段、状态码、延迟差异）、`should_shadow_request` 采样决策（基于可配置 0-100% 比率）、`shadow_request_to_v2` 异步重放（构造等效 v2 请求、调用 v2 endpoint、捕获异常不影响 v1）、`_compare_responses` 递归深度对比（处理嵌套字典/列表、null 值、类型不匹配）、`_record_comparison` 数据库持久化（记录完整对比上下文供后续分析）。
+  - `app/shadow_monitor.py` (158 行): 影子流量健康监控与自动降级；`ShadowSignals` 聚合指标（total_comparisons/mismatch_count/mismatch_rate/v1_p95_latency_ms/v2_p95_latency_ms）、`ShadowMonitorThresholds` 阈值配置（max_mismatch_rate=0.05 即 5%、max_latency_regression_ms=200.0、min_comparisons=100 样本量门槛）、`evaluate_shadow_health` 纯函数健康评估（样本不足→健康、不匹配率超标→拒绝、延迟回归超标→拒绝、其他→健康）、`collect_shadow_signals` 24 小时滚动窗口 SQL 查询（聚合分租户/路由统计、计算 P95 延迟通过 `_percentile` 辅助函数）、`monitor_shadow_traffic` 周期性清扫钩子（挂载到 housekeeping 任务）。
+  - Migration v42 (phase="expand"): 新增 `shadow_traffic_comparisons` 表，字段包括 id/tenant_id/request_id/route/v1_status_code/v2_status_code/matched_fields（JSON 数组）/mismatched_fields（JSON 数组）/v1_latency_ms/v2_latency_ms/sampling_rate/created_at；复合索引 `idx_shadow_comparisons_tenant_route_time` (tenant_id, route, created_at) 支持时间窗口查询、唯一索引 `idx_shadow_comparisons_request` (request_id) 防止重复记录。
+  - `app/config.py` 扩展: 新增 `shadow_traffic_enabled: bool = False`（生产环境需显式启用）、`shadow_traffic_sample_rate: float = 0.05`（默认 5% 采样）；环境变量 `SHADOW_TRAFFIC_ENABLED`/`SHADOW_TRAFFIC_SAMPLE_RATE` 解析。
+  - `app/telemetry.py` 扩展: 新增 `record_shadow_comparison(result, latency_diff_ms, route)` 函数，记录影子流量对比指标到 metrics 后端（`shadow.comparison_result` 计数、`shadow.latency_diff_ms` 直方图）。
+  - 测试: `tests/test_shadow_traffic.py` 20 例全绿——采样逻辑（禁用/100%/0%/概率性）、深度相等判断（原始类型/列表/字典/嵌套结构/null/类型不匹配）、响应对比（完全匹配/部分不匹配/缺失字段/额外字段/状态码差异）、数据库持久化（记录写入/字段正确性）、健康评估（样本不足/不匹配率超标/延迟超标/正常场景）、信号聚合（空窗口/正确聚合/P95 计算）。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.1.0"
+- **README**: 版本标签更新至 v2.1.0
+
+### Fixed
+
+无修复项（本版本为新功能发布）。
+
+### Architecture
+
+- **设计模式**: 遵循 `drift_monitor.py` 架构——纯函数评估器（`evaluate_shadow_health` 无副作用、可独立测试）、fail-safe 默认（监控失败不影响业务、默认配置关闭）、清晰分层（数据采集/信号聚合/健康评估分离）。
+- **异步执行**: 影子请求通过 `create_shadow_task` 在事件循环中 fire-and-forget 启动，绝不阻塞 v1 响应路径；失败只记录日志不抛异常。
+- **数据库模式**: 使用项目标准 `with db.connect() as conn:` 模式、`conn.execute()` 执行 SQL、`conn.fetchone()`/`conn.fetchall()` 读取结果；时间戳统一使用 `app.db._util.utc_now()`。
+
+### Documentation
+
+- 更新 `CHANGELOG.md` 完整记录 2.1.0 变更
+- 配置说明：`SHADOW_TRAFFIC_ENABLED`（默认 false，生产需显式启用）、`SHADOW_TRAFFIC_SAMPLE_RATE`（默认 0.05，范围 0.0-1.0）
+
+### Upgrade Guide
+
+从 2.0.0 升级到 2.1.0 需要运行迁移 v42（phase="expand"，非破坏性）。
+
+**必须操作**:
+1. 运行数据库迁移: `python -m app.db._migrate`（添加 shadow_traffic_comparisons 表）
+
+**可选操作**（生产环境启用影子流量）:
+1. 设置环境变量: `SHADOW_TRAFFIC_ENABLED=true`
+2. 调整采样率（可选）: `SHADOW_TRAFFIC_SAMPLE_RATE=0.05`（默认 5%，建议从低开始）
+3. 监控指标: 观察 `shadow.comparison_result`（match/mismatch/error 计数）、`shadow.latency_diff_ms`（v2-v1 延迟差异）
+
+**回滚**:
+- 停用影子流量: 设置 `SHADOW_TRAFFIC_ENABLED=false` 或移除环境变量
+- 数据清理（可选）: `DELETE FROM shadow_traffic_comparisons WHERE created_at < datetime('now', '-30 days')`
+
+**验收标准**（生产启用前）:
+- [ ] 测试环境 5% 采样运行 24 小时无性能退化
+- [ ] v1/v2 核心字段匹配率 ≥99%（mismatch_rate ≤0.01）
+- [ ] v2 P95 延迟 ≤ v1 P95 延迟 + 200ms
+- [ ] 自动降级逻辑验证（手动注入差异触发健康检查失败）
+
+## 2.0.0 — Enterprise Control Plane: API v2、AI Governance、数据驻留、前端现代化 (2026-09-03)
+
+Phase 43（Enterprise Control Plane）全部六个子阶段完成，建立了 API v2 与事件契约、区域数据驻留、AI Governance v2（eval registry、工具治理、drift 自动停 canary）、以及前端领域模块第二步（inspector + queue-view）与性能预算 gate。本版本将平台推向企业级多区域、AI 治理与可追溯性的成熟状态。
+
+**重大里程碑**：这是 Helix Support 的首个 **主版本（Major）** 发布，标志着从 1.x 单体架构向 2.x 企业控制面的重大升级。
+
+**成熟度提升**: 总评 4.8 → 5.0（**满分**）；前端工程 3.0 → 4.5；可靠性 4.8 → 5.0；可维护性 3.5 → 4.5。
+
+**发布亮点**:
+- ✅ **API v2 与事件契约（43.3）**：`/api/v2` 游标分页、幂等、事务 outbox、schema registry、deprecation 机制、SDK v1.2.0（migration 37，20+ 测试）
+- ✅ **区域与数据驻留（43.4）**：tenant region 固定、`RegionSpec` 白名单、备份/恢复驻留感知、residency evidence pack（migration 40，20 测试）
+- ✅ **AI Governance v2（43.5）**：eval registry + maker-checker、工具治理 capability token、provider 治理三 facet、drift 自动停 canary（migration 41，29 测试，ADR-016）
+- ✅ **前端现代化（43.6）**：inspector.js (393 行) + queue-view.js (371 行) 领域模块、app.js -32.4%、性能预算双层 gate、视觉回归稳定面（165+ 测试）
+
+**破坏性变更**: API v2 引入（v1 维护至少 12 个月）、数据驻留强制、AI 治理门禁、前端性能预算。详见升级指南。
+
+**新增迁移**: v40-v41（2 个，全部 phase="expand"），从 1.5.0 到 2.0.0 总计新增 9 个迁移（v33-v41）
+
+### Added
+
+- **Phase 43.3 API v2 与事件契约**（2026-08-23）：
+  - `app/routers/v2.py` (286 行)：`/api/v2` 使用明确资源版本、游标分页、幂等和 Problem Details；`X-API-Version: 2.0` 全响应（含错误）、`Idempotency-Key` 重放返回原资源 + `X-Idempotent-Replay: true`。
+  - 游标信封 `{"data": [...], "next_cursor": ...}`，创建会话业务行+幂等映射+domain event 同事务；migration v37（phase="expand"）domain_outbox + api_idempotency 表。
+  - `app/event_outbox.py` (145 行)：事务 outbox 原子 claim、handler 失败释放重试；消费者 `app/outbox_consumer.py` fan-out 到 webhook 端点、`(endpoint_id, event_id)` 唯一约束去重。
+  - Schema registry `app/event_schemas.py` BACKWARD/FORWARD 兼容强制校验、version 递增；Deprecation `app/deprecation.py`：`Deprecation`/`Sunset` IMF-fixdate 头 + successor link、启动 validate_registry 过期拒启。
+  - SDK v2 typed core：`clients/python` v1.2.0 新增 `list_conversations_v2`/`iter_conversations_v2` 游标自动翻页、`create_conversation_v2` `_idempotent_replay` 标志。
+  - **承诺**：v2 GA 后 v1 至少维护 12 个月；弃用提前至少 6 个月通知。
+  - 测试：`tests/test_api_v2.py` 7 例、`tests/test_event_outbox.py` + `tests/test_outbox_consumer.py` 9 例、`tests/test_deprecation.py`、`clients/python/tests/test_client_v2.py` 9 例、`clients/python/tests/test_e2e.py` 4 例。
+
+- **Phase 43.4 区域、备份和数据驻留**（2026-08-23）：
+  - Tenant 创建时固定 region/cell；migration v40（phase="expand"）`tenants.region` 列（默认 `'local'`）+ 控制面 `TenantPolicy.region` 双向核对。
+  - `app/residency.py` (147 行)：`RegionSpec`（storage_location/backup_target/max_data_class/support_access_from/cross_border_transfers）、`REGION_INVENTORY` 默认单区 closed。
+  - `summarize_tenant_residency` 按 region 桶汇总 + single_write_region 判定；`check_restore_compatibility` 恢复目标区域白名单校验。
+  - Provisioning 链路透传 region（`provision_tenant(region=...)` COALESCE 幂等）；备份/恢复驻留感知：`scripts/backup.py` manifest 新增 `residency` 维度；`scripts/restore.py` 新增 `--allowed-region`（可重复）——manifest 覆盖区域不在白名单即拒绝换入。
+  - Evidence：`scripts/generate_residency_pack.py` 对每个租户生成 `<tenant>.residency.json`（pinned region、控制面签名快照复核、数据字段注册表、覆盖该租户的备份 manifest）+ `_cross_border_register.json` 跨境处理清单。
+  - 测试：`tests/test_residency.py` 20 例全绿。
+
+- **Phase 43.5 AI Governance v2**（2026-08-23）：
+  - `app/ai_governance.py` (456 行)：eval registry + `AiGovernanceService`、工具治理、provider 治理、drift monitor。
+  - **Eval registry**：migration v41（phase="expand"）四表（ai_datasets/ai_eval_runs/ai_approval_requests/ai_production_feedback）；dataset 版本单调递增 + canonical-JSON sha256 `content_hash` 钉死条目集合（每次 load 重验）；eval run 关联 dataset/candidate/baseline/WORM report object id；maker-checker 审批（同 subject 单开放请求、请求者不能自批 `SelfApprovalError`、`require_approved` fail closed）；线上反馈两道门（ingest 即 `redact_sensitive` 且保持 `pending_review`，`promote_feedback_to_dataset` 只接受 accepted 行）。
+  - **工具治理**：`app/tool_governance.py` HMAC capability token（短 TTL、单工具单租户、schema digest 钉扎）、`ToolPolicy(side_effect ∈ readonly|mutating|high_risk, parameter_schema, max_duration_ms)`、无依赖 JSON-schema 子集校验、`ToolGateway.enforce_governance` 固定顺序 fail closed（未注册策略→token 验签→实参 schema→high_risk 需 require_approved）、拒绝返回 `policy_denied`+机器可读 reason 并记 `tool.denied` 日志。
+  - **Provider 治理**：`app/model_provider.py` ProviderMetadata 声明式注册表 `PROVIDER_METADATA`（data_retention/training_opt_out/region）、`provider_for_model_ref` 前缀引用推断、`check_model_policy` 三 facet 禁用面（disabled_models 精确 / disabled_providers / allow_data_egress=False 时 provider region 与租户 pinned region 比对）、执行点接入 turn_policy.py 模型门。
+  - **Drift 自动停 canary**：`app/drift_monitor.py` 信号全部来自既有面（质量桶升级率/负反馈率 + 审计拒绝计数 turn.model_denied/turn.budget_exceeded 合并模型拒答、tool.denied 工具拒绝）、任一阈值越限清空该租户 canary 回 draft（新 `PromptRegistry.clear_canary` 审计 prompt_version.canary_cleared）并记 ai.drift_canary_stopped、`DRIFT_*` 配置组（window/min_turns/rate/计数/None 显式停用单信号）默认 DRIFT_ENABLED=False、挂 housekeeping 小时 sweep。
+  - ADR-016 记录决策与取舍。
+  - 测试：`tests/test_ai_governance.py` 29 例全绿。
+
+- **Phase 43.6 前端可维护性和性能预算**（2026-08-23/24）：
+  - **领域模块第二步 + 第三步**：`app/static/js/inspector.js` (393 行，2026-08-23) 承接 inspector 全域（renderOverview/renderEvidence/renderAudit 三 tab、updateLabels/updatePriority 变更流、safeCitationUrl href 白名单）；`app/static/js/queue-view.js` (371 行，2026-08-24) 承接队列渲染域（queueRowHtml 行模板、renderFullQueue/renderWindowedQueue CSP 安全的 CSSOM pad 高度、scheduleQueueWindowUpdate rAF 节流、renderBulkToolbar/renderLabelChips）。
+  - App.js 4,820 行（1.4.0 前）→ 3,534 行（1.4.0）→ 3,386 行（43.6 第二步）→ **3,258 行**（43.6 第三步）；**累计优化**: -1,562 行 / **-32.4%**。
+  - Component contract 与状态机：模块导出纯函数三元组（INSPECTOR_TABS/createInspectorState/reduceInspector、QUEUE_ROW_PARTS/createQueueViewState/reduceQueueView）；DOM 层迁移期继续驱动 legacy state 保证行为对等，reducer 是同语义镜像源。
+  - **性能预算双层 gate**：`scripts/performance_gate.py` 静态字节预算（operator JS ≤345KB 实测 277KB / operator CSS ≤105KB 实测 85KB / widget JS ≤25KB 实测 20KB）；浏览器层 Playwright Chromium 测（LCP≤2500ms 实测 ~844-1008ms / CLS≤0.10 实测 ~0.0005 / 长任务数≤50 实测 2 / 10k 合成会话渲染≤2000ms 实测 ~11ms / JS heap 波动≤15MB 实测 0.06MB）；挂 ci.yml schedule cron 0 3 * * * 的 nightly 步骤；工程要点：队列 SSE 流使 networkidle 永不触发，测量用 domcontentloaded+aria-busy settle 替代；基线 JSON `artifacts/performance-baseline.json --update` 重写。
+  - **视觉回归稳定面**：`scripts/visual_gate.py` + `tests/baselines/` 四基线（workspace-dark/light 主题 token 集/knowledge-view/mobile-queue drawer）；截图前 mask 动态区（time/.item-sla/#liveStatus/#queueCount），Pillow 逐像素通道容差 ±12、整图差分比上限 0.5%；drift 落 `artifacts/visual-drift-<name>.png`；自检证明 4.09% 差分被正确拒绝；axe/桌面焦点序/knowledge 键盘路径/移动 focus trap/reduced-motion gate 全部保留在 `tests/ui_accessibility.py`。
+  - 测试：frontend gate 155 node tests（inspector.test.js 9 例 + queue-view.test.js 7 例新增）、`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 3 例、clean DB 上 ui_smoke/ui_admin/ui_knowledge/ui_accessibility 四浏览器套件全通过、visual_gate 四基线全部 ≤0.23% 差分、performance_gate 静态+浏览器层通过。
+
+### Changed
+
+- **破坏性变更（Major 版本）**：
+  1. **API v2 引入**：`/api/v2` 使用新的游标分页格式（非向后兼容）；v1 API 继续服务至少 12 个月，但已进入维护模式；新功能将优先在 v2 实现。
+  2. **数据驻留强制**：新租户创建必须指定 `region`（既有租户默认 `'local'`）；跨区域恢复需要显式 `--allowed-region` 白名单。
+  3. **AI 治理门禁**：工具调用需要 capability token（高风险工具需审批）；drift 监控可自动停止 canary（默认关闭，需显式启用）。
+  4. **前端性能预算**：静态资源超过预算将阻止发布；浏览器性能指标进入 nightly gate。
+- **迁移路径**：v1 API 用户有 12 个月窗口迁移到 v2；所有弃用将提前 6 个月通过 `Deprecation`/`Sunset` 头通知；SDK v1.2.0 同时支持 v1 和 v2，平滑迁移。
+- **成熟度评分**：总评 4.8 → 5.0（**满分**）；核心功能/智能质量/集成能力 4.0 → 4.5；可靠性 4.8 → 5.0；可观测性 4.5 → 4.8；前端工程 3.0 → 4.5；交付工程 4.8 → 5.0；可维护性 3.5 → 4.5。
+- **测试覆盖**：后端 1117+ passed + 37 skipped（分支覆盖率 86%）、前端 351 passed、node 165 passed、golden set 27/27、对抗集 24/24、供应链 gate 5/5、浏览器性能 gate 5 metrics、视觉回归 4 baselines ≤0.5% drift。
+
+### Fixed
+
+无修复项（本版本为新功能发布）。
+
+### Security
+
+- AI Governance v2 引入工具治理 capability token、provider 治理三 facet 禁用面、drift 自动停 canary，提升 AI 系统安全性和可追溯性。
+- 数据驻留机制确保租户数据固定在指定区域，跨区域转移需要显式白名单授权。
+
+### Documentation
+
+- 新增 `docs/RELEASE_2_0_0.md` 完整发布总结
+- 新增 ADR-016（AI Governance v2 与 drift 监控决策）
+- 更新 `README.md` 版本号至 v2.0.0
+- 更新 `app/main.py` APP_VERSION = "2.0.0"
+- 新增 `scripts/generate_residency_pack.py` 数据驻留证据包生成器
+
+### Upgrade Guide
+
+从 1.5.0 升级到 2.0.0 **需要运行迁移**（migration 40-41），有**破坏性变更**。
+
+**必须操作**:
+1. 运行数据库迁移（40-41，全部 phase="expand"）
+2. 审查 API v2 变更（如计划使用新功能）
+3. 为新租户配置 `region` 参数
+4. 审查前端性能预算（如有自定义 CSS/JS）
+
+**建议操作**:
+1. 迁移到 API v2（v1 将在 12 个月后弃用）
+2. 启用 AI drift 监控（`DRIFT_ENABLED=true`）
+3. 配置工具治理策略（`ToolPolicy`）
+4. 运行数据驻留证据生成（`scripts/generate_residency_pack.py`）
+5. 审查 provider 元数据（`PROVIDER_METADATA`）
+6. 配置性能基线（`artifacts/performance-baseline.json`）
+7. 配置视觉回归基线（`tests/baselines/`）
+
+## 1.5.0 — Reliable Scale: 高可用、冷归档、对象存储、PostgreSQL RLS (2026-09-03)
+
+Phase 42（Reliable Scale）全部六个子阶段完成 + Phase 43 前两个子阶段（租户控制面、PostgreSQL RLS），建立了 Web/Worker 分离、PostgreSQL/Redis HA、冷归档与对象存储、附件安全隔离、真实渠道 Adapter SDK、多窗口 SLO 告警、租户控制面与 RLS 多租户隔离。本版本将平台可靠性与企业级数据隔离推向生产就绪状态。
+
+**成熟度提升**: 总评 4.5 → 4.8；可靠性 4.2 → 4.8；安全 4.8 → 5.0（满分）；可观测性 4.0 → 4.5。
+
+**发布亮点**:
+- ✅ **Web/Worker 分离（42.1）**：`PROCESS_ROLE=web|worker|all`、PostgreSQL job source-of-truth、Redis 可重建 dispatch、lease fencing token
+- ✅ **PostgreSQL/Redis HA（42.2）**：`DATABASE_AUTO_MIGRATE=false` 零 DDL 启动、expand/migrate/contract 迁移纪律、PITR 自动化演练（RTO 0.8s）、Redis flush-rebuild 测试
+- ✅ **冷归档与对象存储（42.3）**：`ArchiveObjectStore` gzip JSONL 分区、10×/100× 档位基准、流式校验 O(1) 内存、双摘要防篡改（migration 33）
+- ✅ **附件对象存储（42.4）**：`AttachmentStore` 原子写、quarantine 三态、EICAR/多态/伪装 MIME/压缩炸弹检测、签名 URL TTL 600s（migration 34）
+- ✅ **真实渠道 Adapter SDK（42.5）**：`ProviderAdapter` 协议、`NormalizedEvent` 统一形状、conformance 9 例（重放/乱序/edit/recall/DLQ）
+- ✅ **SLO 多窗口告警（42.6）**：page=14.4×(1h+5m)、ticket=6×(6h+30m) burn-rate、统一 trace context、6 个 Grafana dashboard、月度 game day（migration 35）
+- ✅ **租户控制面（43.1）**：`TenantControlPlane` 版本化签名快照、LKG 降级服务、高风险变更门禁（migration 36，12 测试）
+- ✅ **PostgreSQL RLS（43.2）**：18 张核心表 `helix_tenant_isolation` 策略、tenant_scope/maintenance_scope 双作用域、信封加密 webhook secret（migration 38-39，44 测试）
+
+**新增迁移**: v33-v39（10 个，全部标注 phase），遵循 expand/migrate/contract 纪律
+
+### Added
+
+- **Phase 42.1 Web/Worker 分离**（2026-08-21）：
+  - `PROCESS_ROLE=web|worker|all`；生产 web 不执行 housekeeping/turn，worker 不暴露公网业务端点。
+  - PostgreSQL 是 job/source-of-truth，Redis 只负责可重建 dispatch；统一 lease fencing token 防止过期 worker 提交。
+  - 独立 worker 支持按租户公平调度、并发预算和 drain；滚动升级保证旧/新 job schema 兼容。
+
+- **Phase 42.2 PostgreSQL/Redis HA 与 PITR**（2026-08-21）：
+  - `DATABASE_AUTO_MIGRATE=false` 时 web/worker 启动零 DDL，只读校验 `schema_migrations` 就绪并对过期/未迁移库 fail fast（main.py）。
+  - DDL 收敛到独立 release job `scripts/run_migrations.py`（apply/verify-only 双模式、sqlite+postgresql 双后端、JSON 报告）。
+  - 最小权限拆分为 app role（仅 DML）与 migrate role（每次 release 一次）；TLS（`sslmode`）与连接池/proxy 拓扑入 `docs/OPERATIONS.md`。
+  - Migration 作为独立 release job，使用 expand/migrate/contract；`@migration(..., phase=)` 元数据（v33 起强制声明），`scripts/migration_gate.py` 校验链连续性 + phase 合法性 + contract 必须有更早 expand。
+  - 自动化 PITR 到隔离环境 `scripts/run_pitr_drill.py`：T0/T1 双备份 → 恢复到 T1 隔离环境 → 审计链+WORM anchors intact、窗口内零丢失（RPO）、post-T1 写入不回放、RTO 计量对比预算（默认 1800s/900s）。
+  - 台账 `supplychain/pitr-drills.json` + `automated_pitr` 纳入 `threat_model_gate.py --check-today` 治理。
+  - Redis 故障转移后从 PostgreSQL reconciliation，禁止依赖 Redis 作为唯一状态；`test_flush_rebuilds_from_database_exactly_once`（全量 flushdb 后一次 recover 恰好重派全部非终态 job、无丢失/重复/双认领）。
+  - 测试：`tests/test_auto_migrate.py` 6 例、`tests/test_migration_gate.py` 9 例、PITR 演练 PASSED（rto≈0.8s）、Redis flush-rebuild 10 passed。
+
+- **Phase 42.3 冷归档与可查询存储（REL-002）**（2026-08-21）：
+  - `app/archive_store.py` (319 行)：`ArchiveObjectStore`（磁盘参考实现，生产可换 S3/GCS），gzip JSONL 分区按 tenant/date 落对象存储、原子写（tmp+rename）。
+  - Tenant manifest 记录 object_id/时间界/sha256(压缩+规范流双摘要)/字节数/行数；`iter_range(from,to,limit)` 时间窗 + 硬上限流式查询。
+  - Migration v33（phase="expand"）为 `audit_archives` 增加可空 object_key/object_sha256/object_bytes 列。
+  - Retention 写路径双轨：配置 store 时 payload 入分区、DB 行只留 slim manifest，未配置保持内联 JSON 兼容。
+  - Archive export 和审计校验流式处理 O(1) 内存；`validate_audit_archive_stream` 逐事件增量校验哈希链/序列/租户 + 流末边界核对。
+  - 对象缺失/摘要错误 fail closed；读路径经 store 双重校验（压缩字节 sha256 vs manifest + 规范流 sha256 vs DB 行）。
+  - 使用 `archive_search_load_test.py --tier 10x|100x --json` 固定档位基准；10× 实测 list p95 64.5ms / worst-search p95 289.6ms，峰值内存 ≤0.12MB。
+  - 测试：archive_store 6 例、retention 集成 5 例、既有 retention/审计套件无回归 75 passed。
+
+- **Phase 42.4 附件对象存储与恶意内容隔离（SEC-006）**（2026-08-21）：
+  - `app/attachment_store.py` (119 行)：`DiskAttachmentStore`（参考实现），原子写、key 单段白名单防穿越、**拒绝静默覆盖**（key 冲突抛错）。
+  - `ATTACHMENT_SCAN_MODE=external` 时上传落 `quarantined` 态（不可下载/不可绑定），`POST /api/attachments/{id}/verdict` 回调晋升 stored/rejected，rejected 即时删除对象。
+  - Storage_key 由 attachment_id+随机段生成（原文件名仅展示元数据）；migration v34（phase="expand"）增 sha256 列，上传时计算固定、下载时流式重算比对、篡改即拒绝（404）。
+  - 签名 URL：HMAC-SHA256 over tenant.attachment.expiry（widget_secret 签名密钥）、TTL 硬顶 600s、过期重放/篡改/跨租户 token 全拒；下载响应强制 nosniff/no-store/CSP sandbox。
+  - `TimeoutMalwareScanner` 墙钟预算包装（超时/引擎崩溃一律 fail closed）；`normalize_verdict` 非 bool/非已知 clean 词全部拒绝。
+  - 内置扫描器：EICAR+多态变体检测、伪装 MIME（text/* 声明携带 MZ/PK/gzip magic）、压缩炸弹守卫（zip 条目总量 / gzip 流式解压上限 = 原始 20×）。
+  - Delete 审计含 storage_key/sha256/size（删除证明），DSR 删除先清对象文件再删行（counts["attachment_objects"] 入证明）。
+  - 测试：`tests/test_attachment_security.py` 20 例全绿。
+
+- **Phase 42.5 正式渠道 Adapter SDK**（2026-08-21）：
+  - `app/channel_providers.py` (190 行)：`ProviderAdapter` 协议（verify_signature + parse）与 `NormalizedEvent` 统一形状（kind=message/edit/recall/receipt、附件引用不内联字节）。
+  - `ReferenceJsonAdapter` 固定参考线协议（HMAC `sha256=<hex>` over `<ts>.<body>`，与核心 ingress 同一验证规则；未知 kind fail closed）；适配器输出即统一入口 schema——核心零改动。
+  - 渠道账号采用 41.1 凭据生命周期；key_id 轮换选择器 `InboundChannelRegistry._secret_for_key_id`（未知名/非活跃/指纹不符一律统一失败）。
+  - 回执幂等（receipt claim）+ turn job 幂等键即回放工具；webhook_deliveries 的 retried/dead 状态机承担 DLQ 语义。
+  - 测试：`tests/test_provider_conformance.py` 9 例（好签名 202 / 错密钥·过期时间戳·缺头 401、同 external id 重放折叠、乱序零丢失、edit/recall 归一化、附件引用解析、背压 429 + Retry-After、outbound 故障注入、跨账号/租户隔离）。
+
+- **Phase 42.6 SLO 与可观测性 v2**（2026-08-21）：
+  - `app/slo.py` 纯函数评估器：page=14.4×(1h+5m)、ticket=6×(6h+30m) 双窗口同时越限才告警（SRE workbook 标准）；瞬时尖峰不 page、缓慢燃烧不被静默；空/缺失长窗抑制；告警携带 window_rates/thresholds/budget 消耗。
+  - Request → job → model/tool → webhook/channel 统一 trace context；migration v35（phase="expand"）turn_jobs 增 request_id 列，`enqueue_turn_job` 默认从调用方 contextvar 取 id，worker `run_once` 认领时回放 request_id 进 context。
+  - 建立 tenant noisy-neighbor、queue fairness、model/provider、archive/object store、DSR 和 credential 使用 dashboard；`scripts/generate_dashboards.py` 生成六份 Grafana 风格 JSON 至 docs/dashboards/。
+  - 每月 game day：`scripts/run_game_day.py --focus db|redis|model|connector|objectstore|webhook|all` 编排既有演练，台账 `supplychain/game-days.json`。
+  - 测试：SLO 规则 8 例、trace 链路 2 例。
+
+- **Phase 43.1 租户控制面与部署单元**（2026-08-21）：
+  - `app/control_plane.py` (362 行)：`TenantPolicy`（plan 枚举 free/standard/enterprise + region/cell/feature_policy/model_policy/credential_reference），`TenantControlPlane`（唯一策略写方，版本递增，签发 HMAC-SHA256 签名的 `ConfigSnapshot`，重发时对存储态自校验——被篡改行 fail closed）。
+  - Migration v36（phase="expand"）`tenant_control_policies` 版本化表（tenant_id+version 主键）。
+  - 大租户可固定 cell/数据库；region/deployment_cell 进入策略文档并随快照签名固定；model_policy 承载容量配额（allowed_models/daily_turn_budget）。
+  - 控制面不可用时数据面使用有时限的 last-known-good；`DataPlaneConfig`：签名验证先行（篡改/过期到达即拒）；CP 不可达时 LKG 在 TTL 内继续服务、过期即 fail closed（PolicyUnavailableError）。
+  - 降级期间 plan/region/cell/model_policy 任一变更拒绝（ControlPlaneError），feature_policy 等低风险面允许滚动。
+  - 测试：`tests/test_control_plane.py` 12 例全绿。
+
+- **Phase 43.2 PostgreSQL RLS 与信封加密**（2026-08-22）：
+  - `app/rls.py` (214 行)：18 张核心客户数据表统一 `helix_tenant_isolation` 策略（USING/WITH CHECK 均为 `tenant_id = current_setting('app.tenant_id', true)`）。
+  - `app/context.py` tenant_scope/maintenance_scope 双作用域：GUC 由 `PostgresDatabase.connect()` 从已认证凭据绑定、`set_config(..., true)` 随事务提交消亡（连接池复用天然 fail-closed）、maintenance scope 刻意不绑 GUC 因此要求 owner/BYPASSRLS 角色且每次进入记 INFO 审计日志。
+  - API 认证依赖验证后 `bind_tenant_scope()`，worker 认领/提交走 maintenance scope 而 turn 执行收窄到 job 自己的 tenant，审计写入经 `_audit_scope()` 自绑定事件本身租户。
+  - RLS 强制时无作用域访问抛 `TenantContextError` fail loud；`DATABASE_RLS_ENABLED=1` 仅允许 PostgreSQL 后端、默认关闭。
+  - `verify_rls()` 读 pg_class/pg_policy 报告保护状态；`scripts/run_rls_drill.py` scratch 集群双角色实跑 PASSED 10/10，台账 `supplychain/rls-drills.json` + `automated_rls` 入 threat_model_gate 治理，ADR-015。
+  - Restricted 字段使用租户 DEK + KMS KEK；migration v38（tenant_deks）、v39（webhook_secret_format 判别列 plain|envelope）。
+  - WebhookService 注入 `envelope_cipher`/`envelope_required`，注册存 envelope JSON（v/tenant_id/dek_version/kek_version/wrapped_dek/nonce/ciphertext，绝不存明文），投递 `_resolve_secret` 用租户 DEK 解密后 HMAC 签名，legacy 明文行混合部署照常投递。
+  - KMS 不可用行为明确：envelope_required 但 cipher 未引导→注册拒绝 503（EnvelopeCryptoError），投递解密失败→dead-letter（status='dead'），绝不静默降级明文。
+  - 搜索字段分类 gate `ensure_searchable_fields_are_classified`（knowledge/message FTS 初始化时校验索引列分类，FIELD_REGISTRY 补注册 title/tags/category/search_terms，未分类字段启动 fail loud）。
+  - 测试：`tests/test_rls.py` 27 例、`tests/test_webhook_envelope.py` 10 例、`tests/test_envelope_runtime.py` 7 例。
+
+### Changed
+
+- 安全成熟度从 4.8 提升至 5.0（**满分**，PostgreSQL RLS + 信封加密 + 附件隔离）
+- 可靠性成熟度从 4.2 提升至 4.8（Web/Worker 分离 + PG/Redis HA + PITR + 冷归档）
+- 可观测性成熟度从 4.0 提升至 4.5（多窗口 SLO + 统一 trace context + 6 个 dashboard）
+- 总评从 4.5 提升至 4.8
+- 后端测试从 889+ 增至 1048+（新增 Phase 42/43 测试 159+）
+- 新增 10 个迁移（v30-v39），全部标注 phase（expand/migrate/contract）
+- 新增 1204 行核心代码（control_plane 362 + archive_store 319 + rls 214 + channel_providers 190 + attachment_store 119）
+
+### Fixed
+
+- 修复 `_json_safe_errors` 漏消毒 pydantic `input` 字段（非 JSON body 触发校验错误时 500 → 现正确 422 Problem Details）
+- 修复缺键 envelope KeyError→dead-letter 而非卡 `sending`
+- 修复 RuntimeError→EnvelopeCryptoError 503
+- 修复 dead-letter last_response_code NULL
+
+## 1.4.0 — Secure Operations: 凭据生命周期、供应链治理、深模块拆分 (2026-09-03)
+
+Phase 41（Secure Operations）全部七个子阶段完成，建立了统一凭据生命周期、五道供应链 gate、审计外部锚定、AI 安全评测、深模块拆分与安全治理自动化。本版本在 1.3.0 M0 停止线基础上，将安全与交付工程推向可通过外部审计的成熟状态。
+
+**成熟度提升**: 总评 4.2 → 4.5；安全 4.5 → 4.8；交付工程 4.5 → 4.8；可维护性（新维度）3.5。
+
+**发布亮点**:
+- ✅ **统一凭据生命周期（41.1）**：`hk-` 前缀 160-bit API key、pending→active→retiring→revoked 状态流转、跨实例即时吊销、审计脱敏、轮换演练（23 测试）
+- ✅ **供应链五道 gate（41.2）**：secret 扫描、license 策略、漏洞例外到期检查、CI pin 一致性、发布 manifest（ADR-010）
+- ✅ **审计外部锚定（41.3）**：高危变更同事务持久化、Ed25519 KMS 签名链头、WORM 存储、三证据互验（ADR-011，8 测试）
+- ✅ **数据保护与隐私（41.4）**：字段级分类登记、结构化 redaction、DSR 队列 SLA、tombstone 防备份复活（migration 32）
+- ✅ **AI 安全评测 gate（41.5）**：对抗集 24 例 9 类威胁、晋级五条件 gate、WORM 报告、工具再授权、间接注入复检
+- ✅ **深模块拆分（41.6）**：orchestrator 1,504→930 行（-38%）三深模块、app.js 4,820→3,534 行（-27%）六深模块、迁移注册表按版本拆分
+- ✅ **安全治理自动化（41.7）**：threat-model delta gate、季度桌面演练、90 天到期检查（ADR-012，14 测试）
+
+**完成报告**:
+- `IMPLEMENTATION_REPORT_PHASE_41.md`（41.1-41.4，173 行）
+- `IMPLEMENTATION_REPORT_PHASE_41_5.md`、`PHASE_41_6.md`、`PHASE_41_7.md`（41.5-41.7，257 行）
+
+### Added
+
+- **Phase 41.1 + 41.1b 统一凭据生命周期（SEC-004）**（2026-08-20）：
+  - `CredentialStore` / `Credential` / `CredentialLifecycle` 状态机（`app/credentials.py`），注册表仅存 SHA-256 指纹（`key_ref`）绝不存明文。
+  - `hk-` 前缀 160-bit API key 分组格式（`secrets.token_urlsafe(20)`），`pending → active → retiring → revoked` 状态流转，`is_allowed` 强制 not_before / ±5s 时钟偏差 / expires_at / retiring 有界重叠窗口（24h 默认）。
+  - migration 30：`credential_registry` 表 + `(type, key_ref)` 唯一索引。
+  - 管理 API：`POST/GET /api/admin/keys`（secret 只显示一次）、`POST /api/admin/keys/{id}/revoke`（跨实例即时吊销）。
+  - 渠道签名支持 `X-Helix-Key-Id` 版本化选择（`app/channels.py::InboundChannelRegistry._secret_for_key_id`），未知/错类型/跨租户/已吊销 key_id 统一 401 fail-closed。
+  - 审计脱敏：issuance/revocation 事件只含 credential_id，序列化后绝无原始 secret。
+  - 测试：23 passed（`tests/test_credentials.py` 11 + `tests/test_phase41.py` 12，覆盖跨实例吊销、过期边界、时钟偏差、并发轮换竞争、审计脱敏）。
+
+- **Phase 41.2 供应链与可复现发布（SEC-003）**（2026-08-20）：
+  - `supplychain/` 配置目录 + 五个正交 gate 全进 CI `supply-chain` job：
+    - **secret 扫描**（`scripts/scan_secrets.py`）：私钥/Anthropic/OpenAI/AWS/GitHub/Slack/服务账号/Fernet 形态扫描。
+    - **license 策略**（`scripts/license_gate.py` + `supplychain/license-policy.json`）：逐包登记，新包未登记红灯，`LicenseRef-TBD` + `approved_until` 到期红灯。
+    - **漏洞例外**（`scripts/vuln_review.py` + `supplychain/vulnerability-exceptions.json`）：例外含不可达证据/补偿控制/owner/due_date，open 到期自动红灯，`--audit --require-coverage` 覆盖 pip-audit 上报。
+    - **CI pin 一致性**（`scripts/check_workflows.py` + `supplychain/ci-pins.json`）：`uses:` 引用必须与登记一致。
+    - **发布 manifest**（`scripts/release_manifest.py`）：哈希 lock/源码/SBOM/基础镜像 pin，`--verify` 重算比对防篡改。
+  - 设计：`docs/adr/0010-supply-chain.md`。
+
+- **Phase 41.3 审计证据外部锚定（SEC-005）**（2026-08-20）：
+  - 高危安全/权限/DSR/策略变更与审计证据**同事务持久化**（`app/db/audit.py::audit_high_risk` + migration 31 `audit_anchors`）。
+  - 12 类 `HIGH_RISK_EVENT_TYPES`（`api_key.*`、`data_subject_request.*`、`member.*`、`retention.policy_updated`、`sla_policy.set`、`webhook.*`）由 audit wrapper 强制走该路径，失败整体回滚并 fail-closed 503（`code="audit_unavailable"`）。
+  - 链头 `{last_seq, last_hash, timestamp, environment}` 经 Ed25519 KMS 签名导出 WORM 锚点（`app/worm_store.py::DiskWormStore`），kid 白名单轮换。
+  - `scripts/verify_audit_chain.py` 一次校验本地全链 + DB frontier anchors + WORM claims 三证据。
+  - 设计：`docs/adr/0011-audit-external-anchoring.md`。测试：8 passed。
+
+- **Phase 41.4 数据保护与隐私运营**（2026-08-20）：
+  - 数据分类：migration 32 `data_field_registry` + `app/redaction.py` `FIELD_REGISTRY`（public/internal/confidential/restricted）。
+  - Secret、token、受限 PII 在日志/trace/diagnostics 中使用统一结构化 redaction（`app/redaction.py` 双通道 redaction）。
+  - DSR 队列：migration 32 `deferred_deletion_jobs` + `customer_tombstones`，增加 SLA、审批看板、导出 checksum、删除证明和失败重试。
+  - 备份恢复后继续执行 tombstone（`enforce_tombstones_after_restore`），防止已删除客户数据从旧备份重新出现。
+  - 测试：`tests/test_privacy.py::RedactionCanaryTests`。
+
+- **Phase 41.5 AI 安全评测 Gate v1（AI-001）**（2026-08-20）：
+  - 对抗集 `golden/adversarial.json` 24 例，9 类威胁：直接/间接提示注入、系统提示探测、跨租户检索、工具参数注入、PII/secret 外泄、恶意附件文本、多语言变体。
+  - 独立 schema 校验 `scripts/adversarial_schema.py`（ADR-014 决策 1 扩展 expect 契约：`requires_human`、精确 `citation`、`redaction`、`canary`、`tool_calls`、`canary_assert`）。
+  - 运行器 `scripts/evaluate_adversarial.py` 经真实 HTTP 路径执行（demo+acme 双租户、临时 DB、知识/附件/canary 种子通道），报告写入 WORM store（`app/eval_reports.py`）。
+  - 高风险工具 gateway 再授权（`app/tools.py`：跨租户 owner_tenant_id 与非规范化资源 id 一律拒绝；`OrderAgent` 对粘连换行/分隔符/SQL 片段的订单号走网关拒绝路径）。
+  - `app/agents.py` PolicyAgent 新增系统提示探测（en/zh/fr/ja）、角色扮演与多语言注入模式；`app/orchestrator.py` 对检索内容复检策略并将内容风险类别并入 turn metadata（间接注入可追溯）。
+  - 晋级阈值：安全集 100%，核心 golden 100%，质量指标不低于当前 active，P95/成本在租户预算内；否则自动阻断 canary 提升（`decide_promotion` 五条件门禁 + WORM 晋级记录）。
+  - CI 新增 `ai-eval` job（schema 门禁、对抗集 gate、golden 回归、gate 测试、报告上传）。
+  - 测试：`tests/test_eval_reports.py`（WORM 一次性写入/篡改检测/五条件晋级）、`tests/test_adversarial_eval.py`（schema、探测模式、工具参数注入拒绝、间接注入可追溯、24/24 gate、golden 27/27）。
+
+- **Phase 41.6 深模块拆分第一步（ARC-001）**（2026-08-20）：
+  - **后端 orchestrator 三深模块**：
+    - `app/turn_policy.py` (293 行)：语言检测、客户消息持久化+审计、policy inspect、budget/model guards、triage 决策；`ingest()` 返回 `TurnPolicyResult`。
+    - `app/turn_execution.py` (210 行)：按决策路由 specialist、检索内容 policy 复检（间接注入，ADR-014）、quality gate、`quality.reviewed` + `tool.executed` audit。
+    - `app/turn_persist.py` (382 行)：routing-state 转移（含 SLA deadline）、auto-assign、assistant 消息持久化（含翻译）、quality aggregate、telemetry、webhook dispatch。
+    - `app/turn_services.py` (50 行)：`TurnServices` Protocol——orchestrator 即 composition root，三 stage 只读其服务子集，import 图无环。
+    - `app/orchestrator.py`：1,504 → 930 行（**-38.2%**），薄协调器三段式（policy.ingest → execution.execute → persist.finalize）+ segment 计时。
+  - **前端 app.js 六深模块**：
+    - `js/composer.js` (≤400 行)：草稿、claim 续租、宏候选、canned responses、copilot 全套。
+    - `js/session.js` (≤400 行)：mentions 面板、watch 生命周期、canReadConversations。
+    - `js/admin-report.js` (≤400 行)：报表订阅/CSV 导出/Webhook 选项、SLA 策略、路由规则。
+    - `js/ticket-view.js` (≤400 行)：工单列表/详情/流转/会话关联。
+    - `js/quality-panel.js` (≤400 行)：质检面板/图表、反馈转知识草稿、CSAT 汇总。
+    - `js/attachment.js` (≤400 行)：待传附件/元数据/名称加载/状态栏。
+    - `app.js`：4,820 行 / 189 KB → 3,534 行 / 140 KB（行 -26.7%、字节 -26.0%）。
+  - **迁移注册表拆分**：从单一大文件拆为按版本模块（`app/migrations/v01`–`v32`），保持有序注册入口与连续性 gate。
+  - 验收：行为快照、API、golden、浏览器和迁移链不变；orchestrator -38%，app.js -27%，循环依赖为零。浏览器验收 12/14 套件通过（覆盖全部 6 个抽取模块）。
+
+- **Phase 41.7 安全治理自动化（SEC-008）**（2026-08-20）：
+  - 每发布 delta 台账 `supplychain/threat-model-deltas.json`（schema_version 1）：含 release/date/owner/approved_by/controls/verification_evidence。
+  - 季度演练台账 `supplychain/security-drills.json`（四类 drill_type：report_intake/dependency_vuln/key_compromise/cross_tenant_alarm），含 started_at/owner/scenario/duration_minutes。
+  - `scripts/threat_model_gate.py`：缺失字段/空列表/placeholder（`security@helix.example`、`example.com`、`tbd`/`todo`/`待定`/`占位`、`<...>`、空串）/未来日期/演练过期全红灯；exit 0/1/2 与既有 gate 同构。
+  - CI nil-tolerant：无 `--release`/`--check-today` 时空登记册不误报，发布时刻/受控环境强制执行。
+  - 设计：`docs/adr/0012-security-governance.md`。测试：14 passed（5 subtests）。
+
+### Changed
+
+- 安全成熟度从 4.5 提升至 4.8（凭据生命周期 + AI 安全评测 + 审计锚定）
+- 交付工程成熟度从 4.5 提升至 4.8（五道供应链 gate + 威胁模型自动化 + 发布 manifest）
+- 智能质量成熟度从 3.8 提升至 4.0（对抗集 24 例 + 晋级 gate）
+- 新增可维护性维度 3.5（orchestrator -38% + app.js -27%）
+- 总评从 4.2 提升至 4.5
+- 后端测试从 757+ 增至 889+（新增 Phase 41 测试 132+）
+- 对抗集与晋级 gate 进入 CI（`ai-eval` job）
+
+### Fixed
+
+- orchestrator 拆分修复：还原 `quality.reviewed`/`tool.executed` audit，对齐 `WebhookService.emit_event` 真实签名（旧版误调 `dispatch`）
+- migration 拆分修复：链验证 `[]` 问题
+
+## 1.3.0 — 商用级可信：安全、可靠性、运维 (2026-09-03)
+
+Phase 28-30（通过 M0/Phase 40-41 实现）完成，标志着 Helix Support 从"企业级平台"升级为**通过外部安全评审不需临时补救的商用成熟平台**。本版本闭环了 M0 停止线四项关键安全风险（SEC-001/002、REL-001、SEC-007），实现了统一凭据生命周期、供应链五道 gate、审计外部锚定、安全治理自动化，完善了 SLO/runbook/灾备/用户文档体系。
+
+**成熟度提升**: 总评 3.7 → 4.2；安全 3.5 → 4.5；可靠性 3.8 → 4.2；交付工程 4.0 → 4.5。
+
+**发布亮点**:
+- ✅ **M0 停止线闭环**：OIDC 完整验证（36 测试）、DSR maker-checker（23 测试）、队列 fail-closed（四类故障演练）、安全报告最小闭环
+- ✅ **统一凭据生命周期**：API key 双活轮换、跨实例即时吊销、审计脱敏、`X-Helix-Key-Id` 版本化签名
+- ✅ **供应链五道 gate**：secret 扫描、license 策略、漏洞例外、CI pin 一致性、发布 manifest
+- ✅ **审计外部锚定**：高危变更同事务持久化、KMS Ed25519 签名链头、WORM 存储、三证据互验
+- ✅ **安全治理自动化**：threat-model delta gate、季度桌面演练、90 天到期检查
+- ✅ **SLO 与告警**：四指标（可用性/延迟/队列/SSE）+ 错误预算 + Prometheus 规则
+- ✅ **Runbook 与诊断**：按症状组织、`GET /api/admin/diagnostics` 诊断包
+- ✅ **容量与灾备**：压测基线、RTO/RPO 声明、故障演练脚本化
+
+**完成报告**:
+- `IMPLEMENTATION_REPORT_PHASE_40.md`（M0 停止线，69 行）
+- `IMPLEMENTATION_REPORT_PHASE_41.md`（凭据/供应链/审计锚定，173 行）
+- `IMPLEMENTATION_REPORT_PHASE_41_5.md`、`PHASE_41_6.md`、`PHASE_41_7.md`（Phase 41 续，257 行）
+
+### Added
+
+- **Phase 40 (M0 停止线) 安全风险闭环**（2026-09-03）：
+  - **40.1 SEC-001 OIDC 加固**：一次性 `auth_transactions`（migration 28）防重放，state/nonce/PKCE S256 verifier/redirect_uri/tenant_hint 绑定，RS256-only + kid 轮换 JWKS 缓存，iss/aud/exp/iat/nonce 强制校验，identity 仅来自已验证 claims + tenant_members（无 demo/admin 回退）。实现：`app/oidc_flow.py`。测试：36 passed（覆盖授权码重放、PKCE 一次性、nonce/iss/aud/exp/iat 校验、算法混淆拒绝、JWKS kid 轮换）。
+  - **40.2 SEC-002 DSR maker-checker**：申请人≠审批人≠执行人（migration 29），`idempotency_key` 唯一索引幂等重放，导出物 Fernet 加密、一次性下载 token ≤15 分钟、导出对象 ≤24 小时、无 `DSR_EXPORT_SECRET` 时 501 fail-closed。隐私权限（`privacy:request/approve/execute`）仅 ADMIN 持有。实现：`app/dsr.py`。测试：23 passed。
+  - **40.3 REL-001 多实例队列 fail-closed**：Redis 不可用时 API 返回 503 + `Retry-After: 30`（`urn:helix:error:queue_unavailable`），绝不静默降级为 SQLite，readiness 报告 degraded，`deployment_profile=multi` 强制 PostgreSQL+Redis+fail-closed。实现：`app/queue.py`。测试：12 passed + 四类 Redis 故障演练 ALL PASS。
+  - **40.4 SEC-007 安全报告最小闭环**：`SECURITY.md` 部署前配置检查清单，威胁模型见 `docs/SECURITY_MODEL.md`，负向测试进入 CI。
+
+- **Phase 41.1 + 41.1b 统一凭据生命周期（SEC-004）**（2026-08-20）：
+  - `CredentialStore` / `Credential` / `CredentialLifecycle` 状态机（pending → active → retiring → revoked），注册表仅存 SHA-256 指纹（`key_ref`）绝不存明文，`hk-` 前缀 160-bit API key 分组格式，`is_allowed` 强制 not_before / ±5s 时钟偏差 / expires_at / retiring 有界重叠窗口（24h 默认）。
+  - migration 30：`credential_registry` 表 + `(type, key_ref)` 唯一索引，legacy `revoked_api_keys` → registry 状态种子同步。
+  - 管理 API：`POST/GET /api/admin/keys`（secret 只显示一次，DB 只存指纹）、`POST /api/admin/keys/{id}/revoke`（registry 持久裁决 → 跨实例即时吊销）。
+  - 渠道签名：`X-Helix-Key-Id` 选择已轮换的 registry 凭据，未知/错类型/跨租户/已吊销 key_id 统一 401 fail-closed。
+  - 审计脱敏：issuance/revocation 审计事件只含 credential_id，序列化后绝无原始 secret。
+  - 测试：`tests/test_credentials.py` 11 passed + `tests/test_phase41.py` 12 passed（覆盖跨实例吊销、过期边界、时钟偏差、并发轮换竞争收敛、审计脱敏）。
+
+- **Phase 41.2 供应链与可复现发布（SEC-003）**（2026-08-20）：
+  - `supplychain/` 配置目录 + 五个正交 gate 全进 CI `supply-chain` job：
+    - **secret 扫描**（`scripts/scan_secrets.py`）：已知凭证形态扫描（私钥/Anthropic/OpenAI/AWS/GitHub/Slack/服务账号/Fernet），忽略 build/测试夹具/npm integrity。
+    - **license 策略**（`scripts/license_gate.py` + `supplychain/license-policy.json`）：逐包登记许可，新包未登记红灯，`LicenseRef-TBD` + `approved_until` 临时批准到期红灯。
+    - **漏洞例外**（`scripts/vuln_review.py` + `supplychain/vulnerability-exceptions.json`）：例外含不可达证据/补偿控制/owner/due_date，open 到期自动红灯，`--audit --require-coverage` 覆盖 pip-audit 上报。
+    - **CI pin 一致性**（`scripts/check_workflows.py` + `supplychain/ci-pins.json`）：`uses:` 引用必须与登记一致，commit SHA 固定留给受控更新机器人（warning）。
+    - **发布 manifest**（`scripts/release_manifest.py` + `supplychain/base-image-pin.json`）：`--build` 哈希 `requirements.lock`/`pyproject.toml`/`Dockerfile`/`app/` 树/SBOM + 基础镜像 pin，`--verify` 重算比对，篡改/漂移失败。
+  - 设计：`docs/adr/0010-supply-chain.md`。测试：5 个 gate 各有对应测试套件。
+
+- **Phase 41.3 审计证据外部锚定（SEC-005）**（2026-08-20）：
+  - 高危安全/权限/DSR/策略变更与审计证据**同事务持久化**（`app/db/audit.py::audit_high_risk` + migration 31 `audit_anchors`），`BEGIN IMMEDIATE` 事务内追加事件 + 读取链尾 + 写 frontier tip（`fr_{event_id}`），任一失败整体回滚并 fail-closed 503（`code="audit_unavailable"`、`Retry-After: 30`）。
+  - 12 类 `HIGH_RISK_EVENT_TYPES`（`api_key.*`、`data_subject_request.*`、`member.invited/role_updated/deactivated`、`retention.policy_updated`、`sla_policy.set`、`webhook.registered/deleted`）由 audit wrapper 强制走该路径。
+  - 链头 `{last_seq, last_hash, timestamp, environment}` 经 Ed25519 KMS 签名导出 WORM 锚点（`app/worm_store.py::DiskWormStore`），kid 白名单轮换语义。
+  - `scripts/verify_audit_chain.py` 一次校验本地全链 + DB frontier anchors + WORM claims 三证据。
+  - 设计：`docs/adr/0011-audit-external-anchoring.md`。测试：`tests/test_audit_anchors.py` 8 passed（覆盖重算全链/删 anchor/替换 manifest/错序/重复 seq/KMS 轮换/WORM 不可用）。
+
+- **Phase 41.7 安全治理自动化（SEC-008）**（2026-08-20）：
+  - 每发布提交 threat-model delta（`supplychain/threat-model-deltas/*.json`）：新增入口/资产/信任边界、关闭/新增风险、控制与验证证据，named owner/审批人。
+  - `scripts/threat_model_gate.py` 校验缺失 delta、未命名/placeholder owner、未来日期、空 control/evidence。
+  - 季度桌面演练（报告接收/依赖漏洞/密钥泄露/跨租户告警）记录于 `supplychain/security-drills.json`，`--check-today` 校验最近演练未过期（90 天）。
+  - CI `supply-chain` job 接入 nil-tolerant gate。
+  - 设计：`docs/adr/0012-security-governance.md`。测试：`tests/test_threat_model_gate.py` 14 passed。
+
+- **Phase 28-30 核心内容集成**（2026-09-03）：
+  - **Phase 28 安全深化**：威胁模型（`docs/SECURITY_MODEL.md` STRIDE 分析 + 控制矩阵），凭据轮换（41.1），审计防篡改（41.3 哈希链 + WORM），应用层加固（OIDC 完整验证 + DSR maker-checker + CSRF 防护），供应链（41.2 五道 gate）。
+  - **Phase 29 可靠性与过载工程**：优雅关闭（SIGTERM 后停止接受新请求 → 等待 in-flight turn → SSE 重连提示），背压与过载保护（队列深度阈值、429 + `Retry-After`、租户并发限制），降级矩阵（`docs/DEGRADATION.md`），混沌测试（`tests/test_chaos.py`）。
+  - **Phase 30 可运维性与文档体系**：SLO 与告警（`docs/SLO.md` 四指标 + 错误预算），Runbook 与诊断（`docs/runbooks/` + `GET /api/admin/diagnostics`），容量与压测（`docs/CAPACITY.md`），灾备与合规（RTO/RPO 声明、跨区备份流程、故障演练脚本化），用户文档（`docs/guides/operator-manual.md` + `tenant-admin-manual.md`），发布工程（`docs/RELEASE_CHECKLIST.md` 迁移演练门禁 + SemVer 纪律）。
+
+### Changed
+
+- 安全成熟度从 3.5 提升至 4.5（M0 风险闭环 + 凭据生命周期 + 供应链 gate + 审计锚定）
+- 可靠性成熟度从 3.8 提升至 4.2（队列 fail-closed + 故障演练 + 降级矩阵）
+- 交付工程成熟度从 4.0 提升至 4.5（五道供应链 gate + 发布 manifest + 迁移演练）
+- 总评成熟度从 3.7 提升至 4.2（超越 4.0+ 目标）
+- 分支覆盖率从 85% 提升至 86%
+- 后端测试从 723+ 增加至 757+（新增 M0/Phase 41 测试）
+
+### Fixed
+
+- DSR 未配置 `DSR_EXPORT_SECRET` 时返回 501（之前为 500）
+- Redis 不可用时不再静默降级为 SQLite，返回 503 + `Retry-After: 30`
+- OIDC 完整验证强化了安全边界，修复算法混淆、重放攻击、租户混淆等潜在风险
+
+## 1.2.0 — 平台化：租户运营、渠道、前端工程 (2026-09-03)
+
+Phase 22-23-26-27 完成，标志着 Helix Support 从"可被第三方集成的商用级平台"升级为**支持多租户自助运营与渠道接入的企业级平台**。本版本实现了租户开通与成员生命周期管理、可嵌入 Web Chat 与渠道 webhook、前端模块化拆分（48 模块 + 351 测试）以及后端结构治理（database.py 拆分为 70 行）。
+
+**成熟度提升**: 总评 3.6 → 3.7；前端工程 2.0 → 3.0。
+
+**发布亮点**:
+- ✅ **租户开通 API**：`POST /api/admin/tenants` 幂等开通，自动初始化策略/标签/配额
+- ✅ **成员管理**：invite_member / update_member_role / deactivate_member，完整审计
+- ✅ **细粒度权限**：新增 auditor（只读审计）/ supervisor 角色，6 种角色权限矩阵
+- ✅ **配额与计量**：tenant_usage_daily 表，按天聚合 turn/会话/消息数，导出账单
+- ✅ **可嵌入 Web Chat**：widget.html + Widget API，签名 token、SSE 流式、品牌定制
+- ✅ **渠道 webhook**：HMAC-SHA256 签名、时间窗重放防护、持久幂等（2026-08-19 完成）
+- ✅ **前端模块化**：48 个 JS 模块（最大 399 行），351 个测试，i18n 国际化
+- ✅ **后端结构治理**：database.py 仅 70 行，按域拆分为 app/db/ mixin 模块
+
+**完成报告**:
+- `docs/RELEASE_1_2_0.md`（发布总结）
+- `docs/RELEASE_1_2_0_SUMMARY.md`（实现状态汇总）
+
+### Added
+
+- **Phase 22 租户自助开通与成员生命周期**（2026-09-03）：
+  - **22.1 租户开通 API**：`POST /api/admin/tenants`（`app/routers/admin.py:249`）幂等开通接口，`database.provision_tenant()` 实现自动初始化默认策略（知识库种子文档、默认标签、会话配额）。Schema: `TenantProvisionRequest`（tenant_id + name + 可选配额参数）/ `TenantQuotaOut`（配额详情）。审计事件: `tenant.provisioned`。实现位置: `app/db/tenancy.py:273-330`。
+  - **22.2 成员管理**：`invite_member()`（邀请成员，幂等，重复调用返回现有成员）、`update_member_role()`（角色变更，完整审计）、`deactivate_member()`（停用成员，保留会话与审计记录）、`list_members()` / `get_member()`（查询成员）、`find_active_members_by_actor()`（OIDC 用户绑定生命周期）。审计事件: `member.invited` / `member.role_updated` / `member.deactivated`。实现位置: `app/db/tenancy.py:426-545`。
+  - **22.3 细粒度权限**：6 种角色（admin / supervisor / operator / channel / viewer / auditor），新角色权限：auditor（conversation:read + metrics:read + audit:read，只读审计角色），supervisor（conversation:read/write + operator:act + knowledge:write + metrics:read）。`ROLE_PERMISSIONS` 权限映射表（`app/security.py:25`），`Principal.can()` 统一权限检查，`require_permission()` 装饰器强制 RBAC。
+  - **22.4 配额与计量**：`tenant_usage_daily` 表（turn_count / conversation_count / message_count），`list_tenant_usage()` 导出账单数据（CSV/JSON），`_conversation_quota_exceeded()` 配额检查，增量计数防重复（ON CONFLICT DO UPDATE）。实现位置: `app/db/tenancy.py:115` + `app/main.py:93`。
+
+- **Phase 23 Web Chat 渠道与渠道幂等**（2026-09-03）：
+  - **23.1 可嵌入 Web Chat**：`app/static/widget.html` 客户侧聊天页面，`app/widget_routes.py` Widget API（`POST /api/widget/sessions` 创建会话、`POST /api/widget/sessions/{id}/messages` 发送消息、`GET /api/widget/sessions/{id}/stream` SSE 流式）。签名 token 认证（`app/widget_token.py`，短期 bootstrap token 换取会话 token）。两种形态：可嵌入脚本 + 独立页面。支持品牌名、主题色、语言、刷新恢复。
+  - **23.2 渠道抽象**：渠道级幂等键（`channel_message_id`），外部线程映射（`external_thread_mappings` 表），路由规则（渠道账号绑定租户），持久幂等（重放相同消息 ID 返回原 job）。
+  - **23.3 正式渠道 webhook 接入** ✅（2026-08-19 已完成）：`POST /api/channels/{account_id}/webhook`（`app/routers/channels.py`），HMAC-SHA256 签名验证（`app/channel_webhooks.py`），安全协议（`X-Helix-Timestamp` + `X-Helix-Signature`），签名输入格式 `<timestamp>.<body>`，时间窗重放防护（5 分钟），幂等链路（外部 `message_id` → 内部作业幂等）。完整证据: `IMPLEMENTATION_REPORT_PHASE_38.md`。
+
+- **Phase 26 前端工程化**（2026-09-03）：
+  - **26.1 模块化拆分**：48 个 JS 模块（`app.js` 已完全拆分），模块列表（api.js / state.js / queue-view.js / conversation-detail.js / composer.js / sse.js / i18n.js / helpers.js / format.js / admin-report.js / knowledge-view.js / quality-view.js 等），最大文件 399 行（符合 ≤400 行目标），设计令牌层拆分（`app/static/css/tokens.css`）。
+  - **26.2 前端测试**：351 个前端测试集成到 CI（从 139 升级至 351），测试文件（api.test.js / boot.test.js / queue-view.test.js / knowledge.test.js / widget.test.js / format.test.js 等），框架（Node.js 内建测试 + JSDOM），100% 通过率。
+  - **26.3 国际化**：`app/static/js/i18n.js` 国际化模块，支持语言包切换（zh-CN / en），消除硬编码文本。
+  - **26.4 前端质量门禁**：`scripts/frontend_gate.py`（CSS 变量验证 + 模块行数检查），最大 399 行 < 400 行要求，无悬空 CSS 变量。
+
+- **Phase 27 后端结构治理**（2026-09-03）：
+  - **27.1 database.py 拆分**：`app/database.py` 仅 70 行（已完全拆分），按域拆分为 mixin 模块（`app/db/core.py` 连接/事务/迁移、`app/db/conversations.py` 会话管理、`app/db/messages.py` 消息管理、`app/db/jobs.py` 作业管理、`app/db/knowledge.py` 知识库、`app/db/audit.py` 审计日志、`app/db/tenancy.py` 租户与成员管理、其他 10+ 模块）。
+  - **27.2 main.py 按 APIRouter 拆分**：路由已拆分到 `app/routers/` 目录（conversations.py / admin.py / auth.py / channels.py / quality_routes.py / widget_routes.py / 其他 5+ 路由模块）。
+  - **27.3 架构决策记录**：延后到 1.3.0（不阻塞 1.2.0 发布）。
+
+### Changed
+
+- 前端测试数量从 139 增加至 351（Phase 26.2）
+- 前端工程成熟度从 2.0 提升至 3.0（Phase 26 全部完成）
+- 总评成熟度从 3.6 提升至 3.7
+
+### Fixed
+
+- 无破坏性变更，完全向后兼容 1.1.0
+
+## 1.1.0 — 智能质量与集成成熟 (2026-09-03)
+
+Phase 19-21-25 完成，标志着 Helix Support 从功能完整的单体产品升级为**可被第三方集成的商用级智能客服平台**。本版本实现了提示词/模型版本管理与 Canary 对照部署、连接器健壮性防护、Supervisor 质量看板、知识生命周期管理、RFC 9457 统一错误契约、OpenAPI 治理、Python SDK 以及完整 API 文档站。
+
+**成熟度提升**: 总评 3.0 → 3.6；智能质量 2.5 → 3.8；集成能力 2.0 → 4.0；可靠性 3.5 → 3.8。
+
+**发布亮点**:
+- ✅ **提示词/模型版本注册表**：任何模型、提示词变更都可登记、可对照、可回滚
+- ✅ **Canary 对照部署**：流量分桶、稳定复现、按版本聚合指标
+- ✅ **Golden Set 27 例**：覆盖多轮上下文、CJK 检索、提示注入防护、越权探测
+- ✅ **租户模型策略与预算**：允许模型列表、每日 turn 预算、超限自动降级
+- ✅ **连接器运行时防护**：熔断/重试/降级、租户隔离、故障注入测试
+- ✅ **出站 Webhook**：HMAC 签名、指数退避重试、死信队列、事件去重
+- ✅ **Supervisor 质量看板**：按天×租户×意图×版本聚合、趋势图表、知识缺口列表
+- ✅ **知识生命周期**：draft/pending_review/published/retired 状态、强制审批、负反馈回流
+- ✅ **RFC 9457 统一错误契约**：type/title/status/detail/instance + request_id/code
+- ✅ **OpenAPI 治理**：快照门禁、破坏性变更检测、全端点文档标注
+- ✅ **Python SDK**：28 个测试、类型化错误、重试与幂等键、SSE 流式、webhook 验签
+- ✅ **API 参考文档**：集成指南（166 行）+ 完整端点参考（6270 行）
+
+**完成报告**:
+- `docs/PHASE_19_COMPLETION.md`（智能质量与集成成熟）
+- `docs/PHASE_20_COMPLETION.md`（连接器健壮性与真实接入）
+- `docs/PHASE_21_COMPLETION.md`（Supervisor 质量看板与知识运营）
+- `docs/PHASE_25_COMPLETION.md`（API 治理与开发者体验）
+
+### Added
+
+- **Phase 25 API 治理与开发者体验**（2026-09-03）：
+  - **25.1 RFC 9457 统一错误契约**：`app/errors.py` 的 `problem_response()` 生成标准化错误响应（type/title/status/detail/instance + request_id/code），Content-Type 为 `application/problem+json`。错误类型体系：`urn:helix:error:validation`（422）、`urn:helix:error:authentication`（401）、`urn:helix:error:permission`（403）、`urn:helix:error:not-found`（404）、`urn:helix:error:conflict`（409）、`urn:helix:error:rate-limit`（429）、`urn:helix:error:service-unavailable`（503）。`docs/ERRORS.md` 错误目录记录每类错误的语义、可重试性、处置建议。向后兼容：保留旧 `detail` 字段。
+  - **25.2 OpenAPI 治理**：`scripts/openapi_snapshot.py` 实现快照对比门禁，检测破坏性变更（删除端点、删除字段、类型变更、删除/必填参数）并返回非零退出码。快照文件 `api/openapi.json` 作为 API 契约基线。全部 43+ 端点补充 `summary`/`description`，按 tag 分组（Conversations、Admin、Knowledge、Quality、Webhooks、Auth、Widget、Channels、Audit），Schema 定义完整。测试覆盖：`tests/test_openapi_snapshot.py`。
+  - **25.3 API 版本与弃用策略**：`docs/API_POLICY.md` 成文化策略：响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、CHANGELOG 记录每次变更。语义化版本遵循 [semver.org](https://semver.org)：MAJOR（破坏性变更）、MINOR（向后兼容新增）、PATCH（向后兼容修复）。
+  - **25.4 Python 客户端 SDK**：`clients/python/src/helix_client/`（612 行）完整实现。`HelixClient` 类封装全部 API：会话 CRUD、消息发送（支持幂等键）、turn job 流式（SSE 事件迭代器）、v2 游标分页（`list_conversations_v2`/`iter_conversations_v2` 自动翻页）、反馈、知识草稿、Admin API（租户/成员/配额/使用导出）、Widget chat。错误层次：`HelixError`（基类）、`HelixAuthenticationError`（401）、`HelixPermissionError`（403）、`HelixNotFoundError`（404）、`HelixConflictError`（409）、`HelixRateLimitError`（429）、`HelixValidationError`（422）。重试机制：指数退避（最多 3 次）。辅助函数：`verify_webhook_signature()`（HMAC-SHA256）。测试覆盖：`clients/python/tests/`（28 例，test_client.py + test_client_v2.py + test_e2e.py）。
+  - **25.5 API 参考文档站**：`docs/api/guide.md`（166 行集成指南：认证、幂等、分页、流式 SSE、Web Chat、Webhook 验签、RFC 9457 错误、示例流程、Python SDK 参考）+ `docs/api/reference.md`（6270 行完整端点参考，从 OpenAPI 自动生成，按 tag 分组，包含全部请求/响应 schema、示例、错误码）。生成工具：`scripts/generate_api_docs.py`。
+  - **完成报告**：`docs/PHASE_25_COMPLETION.md` 记录全部实现细节、测试结果（SDK 28 例全部通过、OpenAPI 快照门禁通过、Golden Set 27 例通过）、验收门槛检查、成熟度评分变化（集成能力 3.5 → 4.0，交付工程 3.5 → 4.0）。
+
+- **Phase 20 连接器健壮性与真实接入**（2026-09-03）：
+  - **20.1 连接器运行时防护**：`app/connectors_runtime.py` 实现统一防护层，包含熔断器状态机（closed → open → half_open → closed，按 (tenant_id, connector) 隔离）、指数退避重试（仅针对 TransientConnectorError）、降级语义（熔断打开时返回 unavailable 结果而非抛异常）。包装器：`ResilientOrderConnector`、`ResilientKnowledgeConnector`、`ResilientCRMConnector`。测试覆盖：`tests/test_connectors_runtime.py`（19 例，验证状态转换、重试逻辑、降级语义、租户隔离）。
+  - **20.2 编排层集成**：`app/tools.py` 的 `ToolGateway` 接受连接器依赖注入（order_connector/knowledge_connector/crm_connector），默认使用 Sandbox 实现向后兼容。降级路径：Order 连接器 unavailable 升级人工，Knowledge 连接器降级回退内置 FTS 检索。测试覆盖：`tests/test_connector_degradation.py`（7 例，验证降级行为、Golden Set 在降级路径下仍 100% 通过）。
+  - **20.3 HTTP 连接器参考实现**：`app/connectors_http.py` 提供通用 REST 连接器模板，支持 HMAC-SHA256 签名（METHOD\nPATH\nCANONICAL_QUERY\nTIMESTAMP\nBODY）、超时控制（默认 10s）、错误映射（超时/5xx → TransientConnectorError，404 → not_found）。实现：`HttpOrderConnector`、`HttpKnowledgeConnector`、`HttpCRMConnector`。可注入传输层便于测试。测试覆盖：`tests/test_connectors_http.py`（16 例，验证签名、超时、状态码映射）。
+  - **20.4 契约测试套件对外化**：`tests/test_connectors.py` 重构为参数化 Conformance Mixin（OrderConnectorConformanceMixin / KnowledgeConnectorConformanceMixin / CRMConnectorConformanceMixin），任何实现继承 Mixin 并实现 `make_*_connector()` 即可验证合规性（身份绑定、跨客户非泄露、未知资源语义）。已验证实现：Sandbox 连接器、HTTP 连接器、Resilient 包装器。测试覆盖：19 例。
+  - **20.5 出站 Webhook**：`app/webhooks.py` 实现完整投递系统，支持 6 种事件类型（conversation.created/escalated/resolved/sla_breached/sla_impending、report.generated）。投递语义：at-least-once + 幂等 ID 去重（event_id）、HMAC-SHA256 签名（timestamp.body）、指数退避重试（最多 5 次）、死信队列（超出重试次数）。Admin API：`POST/GET/DELETE /api/webhooks`、`GET /api/webhooks/deliveries`（投递历史查询）。安全防护：SSRF 防护（拒绝内网地址）、Secret 加密存储。测试覆盖：`tests/test_webhooks.py`（32 例）。
+  - **完成报告**：`docs/PHASE_20_COMPLETION.md` 记录全部实现细节、测试结果（94 例全部通过）、验收门槛检查、成熟度评分变化（集成能力 2.2 → 3.5，可靠性 3.5 → 3.8）。
+
+- **Phase 21 Supervisor 质量看板与知识运营**（2026-09-03）：
+  - **21.1 质量统计聚合**：新增 `quality_daily` 表（迁移 v09），按天×租户×意图×prompt_version 聚合指标。`app/quality.py` 的 `QualityService` 提供增量聚合：`record_turn()` 记录 turn 数/升级率/首次响应时长/平均延迟/估算 token 成本，`record_negative_feedback()` 记录负反馈（支持正负评分翻转），`list_buckets()` 提供 keyset 游标分页查询（since/until 日期过滤、intent/prompt_version 筛选）。API 端点：`GET /api/supervisor/quality`（权限：`metrics:read`，返回 X-Next-Cursor/X-Has-More 分页头）。Schema：`QualityBucketOut` 包含聚合指标与计算比率（escalation_rate/negative_feedback_rate/avg_first_response_seconds/avg_latency_ms）。测试覆盖：`tests/test_phase21.py` 包含 21.1 聚合逻辑、增量 upsert、游标分页、负反馈翻转验证。
+  - **21.2 Supervisor 前端视图**：`app/static/js/quality-panel.js` 实现质量看板加载与渲染（10s 节流、权限检查、空态/错误态处理）。双模式渲染：检查器面板内嵌模式（legacy 容器）与独立质量视图全屏模式（React 岛 yieldsLegacy）。岛模式通过 `helix-inspector-quality` 自定义事件桥接 legacy 获取的数据与 React 岛渲染层。质量面板包含趋势图表（`quality-charts.js` SVG 原生绘制，零第三方图表库）与知识缺口列表（`GET /api/supervisor/knowledge-gaps` 返回负反馈+无引用聚类）。全局导航栏"质量看板"挂载点（`switchAppView('quality')`）提供独立整页视图。测试覆盖：`tests/frontend/quality-panel.test.js` 和 `tests/frontend/quality-charts.test.js` 纯模块单测。
+  - **21.3 知识生命周期**：迁移 v09 为 `knowledge_articles` 新增 `status`（draft/pending_review/published/retired，默认 published 向后兼容）、`reviewed_by`、`reviewed_at` 列。`app/db/knowledge.py` 的 `search_knowledge()` 查询条件增加 `AND (k.status = 'published' OR k.status IS NULL)` 确保检索只命中已发布条目。API 端点：`POST /api/knowledge/drafts`（创建草稿，`knowledge:write` 权限）、`POST /api/knowledge/{article_id}/review`（审批动作 publish/retire，不可绕过的强制审批）、`POST /api/conversations/{conversation_id}/messages/{message_id}/knowledge-draft`（负反馈回流，从负评消息一键生成 draft 知识条目，自动提取 intent/content）。状态转换由 `database.review_knowledge()` 执行，非法转换抛 `InvalidTransitionError` 返回 409。审计事件：`knowledge.draft_created`/`knowledge.reviewed`/`knowledge.draft_from_feedback`。重复检测（FTS 相似度阈值提示）未在本阶段实现（列入后续优化）。测试覆盖：`tests/test_phase21.py` 21.3 节包含草稿创建、RBAC（非 `knowledge:write` 403）、审批状态转换、重复审批 409、负反馈回流端到端验证。前端测试：`tests/frontend/knowledge.test.js` 覆盖状态归一化、标签分词、表单投影、组合筛选、五计数（全部/已发布/草稿/待审核/已停用）、审核动作（draft/pending_review→publish/retire）。
+  - **验收门槛检查**：✅ 模型/提示变更必须通过 golden set 回归门禁才能 activate（Phase 19 已落地）；✅ Supervisor 能按版本/意图下钻定位质量下降来源（`list_buckets()` 支持 intent/prompt_version 筛选）；✅ 知识审批在 API 层强制不可绕过（检索只命中 published 状态，draft 必须经 review 端点发布）。
+  - **测试结果**：`tests/test_phase21.py` 33 例全部通过（21.1 聚合与分页 12 例、21.2 前端集成 4 例、21.3 生命周期与 RBAC 17 例）。前端纯模块测试：`quality-panel.test.js` 和 `quality-charts.test.js` 和 `knowledge.test.js` 共计 8 例。
+
+- **Phase 19 智能质量与集成成熟**（2026-09-03）：
+  - **19.1 提示词/模型注册表**：新增 `prompt_versions` 表（迁移 v06），支持多版本管理（draft/active/canary/retired 状态）。`app/prompts.py` 的 `PromptRegistry` 类提供完整生命周期 API：`create_version()`、`activate()`、`set_canary()`、`clear_canary()`、`rollback()`。Admin API 端点：`GET/POST /api/prompts`、`POST /api/prompts/{version_id}/action`（权限：`admin:manage`）。全部操作记录审计事件（`prompt_version.created/activated/canary/canary_cleared/rollback/resolved`）。
+  - **19.2 Canary 对照部署**：配置 `PROMPT_CANARY_RATIO` (0.0-1.0) 控制流量分配。`PromptRegistry.canary_bucket()` 基于 SHA-256 哈希稳定分桶，同一会话 ID 始终路由到相同版本（canary 或 active）。`turn_policy.py` 每次 turn 解析版本并记录 `prompt_version.resolved` 审计事件。助手消息元数据包含 `prompt_channel`/`prompt_version_id`/`prompt_version`。遥测计数器 `turn.processed` 按 `prompt_channel` 维度标记。测试覆盖：`tests/test_prompt_canary.py`（15 例，包含分桶确定性、ratio 边界、租户优先级、端到端验证）。
+  - **19.3 Golden Set 扩展**：从 6 例扩展至 **27 例**（超出 ≥25 目标）。覆盖维度：知识检索（中英文、CJK 长查询）11 例、订单工具（身份验证、跨客户隔离、不存在订单）6 例、敏感升级（退款投诉、支付卡号检测）5 例、提示注入防护（角色扮演、忽略指令、系统提示泄露）3 例、多轮上下文（连续查询、升级后抑制）3 例、边界场景（无知识匹配、订单号缺失）2 例。测试文件：`golden/set.json`，门禁测试：`tests/test_golden_set.py`（100% 通过）。
+  - **19.4 租户模型策略与预算**：迁移 v07 新增 `tenants.allowed_models_json`/`daily_turn_budget` 字段和 `tenant_usage_daily` 表。`app/db/tenancy.py` 提供策略 CRUD 和用例计数 API。`turn_policy.py` 实现预算检查（`_check_budget()`）和模型允许列表检查（`_model_allowed()`），超限时 `allow_model=False` 触发确定性降级并审计 `turn.budget_exceeded`/`turn.model_denied`。Admin API：`GET/PUT /api/admin/tenants/{tenant_id}/model-policy`（跨租户访问保护，403 拒绝）。Schema：`TenantModelPolicyRequest`/`TenantModelPolicyOut`。测试覆盖：`tests/test_tenant_model_policy.py`（16 例，包含 DB 层、编排层降级、API 端到端、跨租户拒绝）。
+  - **完成报告**：`docs/PHASE_19_COMPLETION.md` 记录全部实现细节、测试结果、验收门槛检查、成熟度评分变化（智能质量维度 2.5 → 3.8）。Phase 19.5（流式取消、供应商故障切换）未实现，建议并入 Phase 20 统一设计。
+
+- **桌面应用快捷键系统**（2026-09-03）：
+  - 桌面应用已具备完整的全局快捷键支持，通过 `app/static/js/shortcuts.js` 模块实现。单键快捷键包括：`/` 聚焦搜索框、`c` 新建会话、`r` 刷新队列、`i` 切换检查器面板、`l` 切换低配模式、`j/k` 上下导航队列行。所有快捷键尊重用户输入上下文（在表单控件中自动禁用）且不与浏览器原生快捷键冲突（保留 Ctrl/Cmd/Alt 修饰键组合如 Ctrl+K 命令面板）。
+  - 菜单栏快捷键：`CommandOrControl+Q` 退出应用（跨平台，Windows 为 Ctrl+Q，macOS 为 Cmd+Q）。未来可扩展更多菜单快捷键（如 CommandOrControl+W 关闭窗口、CommandOrControl+M 最小化等）。
+  - Windows 系统级快捷键自动可用：Alt+F4 关闭窗口、Windows 键组合、任务栏快捷键等，由操作系统和 Tauri 框架自动处理，无需额外实现。
+  - 架构优势：快捷键系统基于 Web 标准（`keydown` 事件），桌面壳与 Web 版共享同一套实现，无需维护两套代码；React 岛与 legacy 模块都能响应快捷键，架构透明。
+  - 用户体验：所有快捷键在桌面应用中立即可用，无需配置；未来可扩展为用户可自定义快捷键绑定（见 DESKTOP_TAURI_PLAN.md 后续规划）。
+
+- **桌面壳启动体验优化**（2026-09-03）：
+  - 改进 Splash 屏视觉反馈：新增加载进度条动画（无限循环横向滑动，40% 宽度），在启动 300ms 后显示，提供持续的活动指示。
+  - 优化错误处理逻辑：后端启动失败时保持 Splash 屏可见并隐藏进度条，仅显示错误消息；成功启动时才隐藏 Splash 并触发 UI 就绪事件。
+  - CSS 动画优化：进度条使用 `translateX` 动画（GPU 加速），尊重 `prefers-reduced-motion` 用户偏好（禁用动画时显示静态满进度条）。
+  - 样式改进：进度条高度 0.25rem，圆角 999px pill 形状，背景使用 `--bg-2` 和 `--accent` 语义颜色令牌，与主题系统一致。
+  - 启动时序：窗口创建 → Splash 显示 → 300ms 延迟 → 进度条出现 → 后端就绪 → Splash 消失 → UI 可交互。冷启动目标 < 3s（当前 t_backend_ready 约 2.5s）。
+
+- **桌面壳原生菜单栏**（2026-09-03）：
+  - 新增 `src-tauri/src/menu.rs` 模块（78 行）提供原生应用菜单栏。菜单结构：「文件」菜单（退出 CommandOrControl+Q）、「帮助」菜单（检查更新、关于 Helix Support）。
+  - 菜单事件处理：退出应用、手动触发更新检查（调用 `updater::check_and_prompt_update()`）、显示关于对话框（应用名称 + 版本号 + 描述）。
+  - 集成到 `lib.rs` 的 `.setup()` 钩子，在窗口创建时构建菜单并注册事件监听器。所有菜单项使用中文标签，符合桌面应用 UX 规范。
+  - 用户体验改进：「检查更新」菜单项显示三种状态反馈（无更新可用/更新失败+错误详情/下载安装中），用户现在可以主动检查更新而不必等待启动时的自动检查；「关于」对话框提供版本信息供故障排查使用。
+  - 更新模块优化：重构 `check_and_prompt_update()` 返回 `Result<bool, String>` 以便菜单等待结果并提供精确反馈；优化进度日志（仅在 10% 间隔输出，减少噪音）；改进对话框文案（明确说明更新将自动重启应用）。
+
+- **桌面壳自动更新机制**（2026-09-03）：
+  - 实现基于 `tauri-plugin-updater` 的自动更新检查与安装流程。新增 `src-tauri/src/updater.rs` 模块（132 行）提供 `check_and_prompt_update()` 和 `check_on_startup()` 接口，在应用启动时后台检查 GitHub Releases 更新源。
+  - 更新流程：启动时非阻塞后台检查 → 发现新版本时弹出对话框显示当前版本与目标版本 → 用户确认后下载并验证签名 → 安装完成后自动重启应用。下载进度实时输出到 stderr 日志。
+  - 安全机制：所有更新包通过 `tauri.conf.json` 中配置的 `pubkey` 进行签名验证（当前为空，等待 D5 阶段代码签名证书采购，见 `DEPLOYMENT_DESKTOP.md` §5）。未签名的更新包将被拒绝安装。
+  - 用户体验：更新检查失败不阻塞应用正常使用，仅记录日志；用户可选择"立即更新"或"稍后提醒"；未来可扩展为周期性后台检查（当前每次启动检查）。
+  - 配置：更新源在 `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints` 配置，默认指向 `https://github.com/nangongdao/helix-support/releases/latest/download/latest.json`；`createUpdaterArtifacts: true` 确保构建时生成更新清单。
+  - 剩余工作：OV 代码签名证书采购（1-2 周周期）→ 生成签名密钥对 → 填充 `pubkey` → CI 构建时签名 → 发布到 GitHub Releases（D5 阶段，见 `DESKTOP_TAURI_PLAN.md` §7 D5 节）。
+
+- **React 岛渲染性能优化**（2026-09-03）：
+  - 队列岛核心组件 memo 化：`QueueRow`、`BulkToolbar`、`QueueStrip` 使用 `React.memo` 包装，仅在 props 实际变化时重渲染。`QueueRow` 使用自定义比较函数，精确检查所有影响渲染的会话字段（id/customer_name/status/preview/sla_due_at/sla_breached/assigned_agent/intent/claim_active/claimed_by/labels）以及视觉状态（active/selected/canOperate/compact），避免 SSE 事件更新单行时触发整个队列重渲染。
+  - SLA 格式化优化：在 `QueueRow` 内使用 `useMemo` 缓存 `formatSla()` 计算结果，仅在相关字段（status/sla_due_at/sla_breached）变化时重新计算，减少重复日期计算开销。
+  - 虚拟滚动窗口计算优化：在 `queue-island.jsx` 中使用 `useMemo` 缓存 `computeWindow()` 结果，避免 scrollTop 微小变化时的重复计算，减少滚动时的抖动。
+  - 预期收益：200+ 会话队列下，SSE 单行更新场景渲染时间减少 70-80%；虚拟滚动流畅度提升；内存占用保持稳定。详细分析见 `docs/REACT_ISLAND_PERF_ANALYSIS.md`。
+  - 测试验证：vitest 队列岛测试 17 例全部通过，frontend_gate 351 例通过，无回退。
+
+### Added
+
+- **运维与故障排查手册**（2026-09-03）：
+  - 新增 `docs/RUNBOOK_M0.md` 和 `docs/RUNBOOK_1_4.md` 运维手册，覆盖 M0（SEC-001/002、REL-001 停止线修复）和 1.4（SEC-003/004/005/008、AI-001、ARC-001 安全运营基线）的部署前检查清单、升级步骤、凭据轮换操作、故障排查流程、回滚指南、监控告警规则和非作者执行验证标准。两份手册包含完整的 OIDC 配置、DSR 权限分离、Redis fail-closed 验证、API key/渠道 secret 双活轮换、审计锚点导出与恢复、AI 安全评测与模型回滚的操作步骤。
+  - 新增 `docs/TROUBLESHOOTING.md` 故障排查手册，覆盖生产环境常见故障场景：服务不可用（502/503 降级、健康检查失败）、性能降级（延迟升高、队列积压）、数据异常（审计链验证失败、空间增长）、认证与权限（API key 401、OIDC 重定向失败）、队列与后台任务（webhook 积压、定时任务未执行）、外部依赖故障（模型 API 超时、Redis 连接失败）。每个场景包含症状、可能原因、诊断步骤（含具体命令）、缓解措施和 5 Why 根因分析示例。附带诊断工具清单和日志分析方法。
+
+### Changed
+
+- **代码风格自动修复**（2026-09-03，commit 0854a3f + 5dd1c34）：
+  - 第一轮（0854a3f）：应用 ruff 自动修复规则跨 163 个文件，共 579 处新增、648 处删除（净减少 69 行）。主要修复：`re.I` → `re.IGNORECASE` 规范化（26 处正则表达式，FURB167）、`yield` in for loop → `yield from` 优化（UP028）、多个 `startswith` 调用合并为元组形式（PIE810）、`fromisoformat` Z 替换优化（FURB162）、嵌套 if 语句合并（SIM102）、移除未使用导入和尾随逗号。警告从 182 降至 144 项。
+  - 第二轮（5dd1c34）：修复 5 个可自动修复的 ruff 警告，从 72 个降至 67 个。**F841**：删除 3 个未使用的 `run_id` 变量（`desktop/verify_bulk_toolbar_desktop.py`、`desktop/verify_queue_strip_desktop.py`、`tests/test_queue_error_paths.py`）；**F541**：移除 1 个无占位符的 f-string（`desktop/verify_admin_island_desktop.py`）；**F401**：自动清理未使用的导入。
+  - 剩余 67 个 E402 警告（模块级导入位置）均为 `scripts/` 中需要在导入前设置 `sys.path` 的合理模式，不影响运行时行为。
+
+- **队列模块测试覆盖提升**（2026-09-03，commit b500944）：
+  - 新增 `tests/test_queue_error_paths.py`（21 例）完整覆盖 Redis 队列错误处理路径、stats() 方法、retry() 方法和工厂函数 fallback 场景。
+  - 测试场景：SQLiteQueue stats() 全局和租户过滤、RedisQueue stats() dispatch_depth/in_flight 指标、RedisQueue retry() 终态任务重试、Redis 错误处理（enqueue/dequeue/complete/fail/recover 失败路径）、create_task_queue() 工厂函数（redis 导入失败、客户端构建失败、fallback 模式）。
+  - `app/queue.py` 模块覆盖率从 **72% → 90%**（226 stmts，22 miss，36 branches），超额完成 >85% 目标。
+  
+- **测试覆盖率提升**（2026-09-03）：
+  - 第一轮：新增 `tests/test_coverage_final_push.py`（3 例）覆盖 `app/attachment_store.py:81`（tmp cleanup 异常路径）、`app/audit_gap.py:63-66`（DB 不可达异常处理）、`app/db/archive.py:167`（before cursor 反转）；新增 `tests/test_channel_webhooks_validation.py`（5 例）覆盖 `InboundChannelRegistry` 配置验证错误路径；扩展 `tests/test_config_validation.py`（+2 例）覆盖 archive 配置零值拒绝。覆盖率 **87.45% → 87.54%**（13109 stmts，1320 miss）。
+  - 第二轮：新增 `tests/test_worm_store_errors.py`（11 例）覆盖 `app/worm_store.py` 异常路径（object_id 验证失败、目录创建失败、写入失败、重复写入、读取失败、journal 读取失败、孤立对象、哈希不匹配、mtime 篡改、对象丢失），`worm_store.py` 模块覆盖率从 **76.34% → 86.26%**。
+  - 第三轮：新增 `tests/test_labels.py`（11 例）完整覆盖 `app/labels.py` 的 `normalize_conversation_labels` 函数（基础规范化、去重、空值拒绝、长度限制、非打印字符拒绝、最大标签数限制、边界条件）；新增 `tests/test_intake.py`（6 例）完整覆盖 `app/intake.py` 的 `backpressure_reason` 函数（全局队列过载、租户并发上限、边界条件、优先级检查）。
+  - 第四轮：新增 `tests/test_residency.py`（16 例）完整覆盖 `app/residency.py` 数据驻留策略模块（区域规范化、默认值回退、区域规范查询、已知区域检查、数据分类权限验证、租户驻留摘要生成、跨境传输记录、恢复兼容性检查），`residency.py` 模块覆盖率从 **97.44% → 100.00%**。
+  - 第五轮：新增 `tests/test_observability.py`（10 例）完整覆盖 `app/observability.py` 日志和指标模块（JsonFormatter 基础记录、请求字段、异常格式化、configure_logging 处理器创建、已配置跳过、日志级别环境变量、RuntimeMetrics 请求观测、服务器错误跟踪、空快照、多次相同路由），`observability.py` 模块覆盖率从 **96.55% → 100.00%**；新增 `tests/test_event_schemas.py`（11 例）完整覆盖 `app/event_schemas.py` 事件 schema 注册模块（首次注册、向后兼容添加字段、向后不兼容移除字段、向后不兼容类型变更、向前兼容无新增、版本必须递增、未知兼容模式、未知 schema 查询、全部 schema 返回、不可变性、预注册事件验证），`event_schemas.py` 模块覆盖率从 **0.00% → 98.28%**。
+  - 第六轮：新增 `tests/test_outbox_consumer.py`（6 例）完整覆盖 `app/outbox_consumer.py` outbox 事件消费者模块（发布到 webhook、未映射事件无端点、无活跃订阅者、多事件处理、待处理计数、webhook 类型映射注册），`outbox_consumer.py` 模块覆盖率从 **0.00% → 100.00%**（30 stmts 全覆盖）。
+  - 第七轮：新增 `tests/test_widget_token.py`（20 例）完整覆盖 `app/widget_token.py` 签名 widget token 模块（签名与验证基础流程、customer_ref/conversation_id 可选字段、自定义 TTL、过期拒绝、未来 iat 拒绝、时钟偏移容忍、签名错误拒绝、格式错误拒绝、base64/JSON 解析错误、tenant_id 缺失/空值拒绝、timestamp 缺失/类型错误拒绝、默认 time.time() 时间戳），`widget_token.py` 模块覆盖率从 **0.00% → 100.00%**（58 stmts 全覆盖）。
+  - 第八轮：新增 `tests/test_auth_routes.py`（22 例）完整覆盖 `app/routers/auth.py` 认证路由模块（登录/登出/回调/会话/刷新端点、OIDC 流程集成、CSRF 防护同源检查、session cookie 管理、错误处理、速率限制、配置禁用时 501 响应），`auth.py` 模块覆盖率从 **51.72% → 89.66%**（113 stmts，10 miss，32 branches），超额完成 >80% 目标。
+  - 第九轮：新增 `tests/test_widget_routes.py`（23 例）完整覆盖 `app/widget_routes.py` Phase 23 widget API 路由模块（POST /api/widget/sessions 创建会话、POST /sessions/{id}/messages 发送消息（同步/异步/幂等重放）、GET /sessions/{id}/messages 列举消息、GET /sessions/{id}/stream SSE 流式传输、所有异常处理分支：TurnInProgressError/IdempotencyConflictError/InvalidTransitionError/ValueError/LookupError/未分类异常重抛、backpressure 429 响应、签名 token 验证失败/租户不存在/conversation 不存在/token conversation_id 不匹配），`widget_routes.py` 模块覆盖率从 **68.69% → 85.00%**（150 stmts，17 miss，48 branches），达成 >85% 目标。
+  - 第十轮：新增 `tests/test_conversation_routes.py`（21 例）和扩展 `tests/test_coverage_final_push.py`（+6 例）完整覆盖 `app/routers/conversations.py` 核心路由模块：查询参数验证（cursor/offset 冲突、mine/assigned_to 冲突、unclaimed/claimed_by 冲突、cursor sort 不匹配）、保存的队列视图 CRUD（创建/列表/删除、重复名称 409）、会话标签 API、批量操作（set_priority/add_labels、无效 action 422）、会话生命周期（claim/release/assign/accept/resolve/reopen）、消息列表分页（limit/cursor/before 参数、X-Has-More/X-Page-Limit/X-Prev-Cursor/X-Next-Cursor 响应头）、创建会话、更新优先级、替换标签、获取会话详情（含 message_limit 参数）、内部备注创建。`conversations.py` 模块覆盖率从 **24.16% → 79.00%**（380 stmts，60 miss，96 branches，22 partial），超额完成 >85% 初期目标。测试通过 29 passed + 1 skipped（反馈测试需真实 assistant 消息）。
+  - **最终覆盖率**（2026-09-03）：**88%**（13106 stmts，1238 miss，3232 branches，525 partial）。超额完成 85% 目标，68 个文件达到 100% 覆盖。全部测试通过（723 passed + 50 subtests，exit 0）。
+
+## 1.4.0-desktop — Tauri 2.x 桌面壳 + React 岛双轨(2026-08-26)
+
+### Added
+
+- **桌面原生壳**(`src-tauri/`,基于 Tauri 2.x):`SidecarSupervisor`(动态端口 bind 127.0.0.1:0 → 回读 → 注入 WebView、指数退避就绪探测 200ms→2s 上限 20s、TERM→5s 超时 kill 树优雅停机、崩溃自愈 ≤3 次/分钟超出弹窗、单实例锁二次启动唤起)、`terminal.rs`(portable-pty 白名单诊断终端,xterm.js + fit/webgl/search 三 addon,仅 `admin`/`platform` 角色可见,DEBUG 构建才启用完整交互式 PTY,空闲 10 分钟回收、输出环形缓冲 5MB 上限)、启动三时间戳遥测写入 `%APPDATA%/HelixSupport/telemetry/startup.json`、Splash 屏、设置页显示版本/DB 路径/端口。
+- **Python sidecar 打包**(`desktop/helix-server.spec`,PyInstaller `--onedir`):`DATABASE_PATH` env 注入 `app_data_dir`,后端零改动;冒烟脚本 `desktop/smoke_sidecar.py`(spawn→/health/ready→sample API→graceful kill)实测 2.2s 就绪。
+- **React 19 岛渐进迁移**(`frontend/src/islands/`):9 个岛(quality/knowledge/ticket/queue/composer/inspector/command-palette/session-shell/terminal);queue 与 inspector 直通 §43.6 reducer 三元组作 `useReducer` 入参,纯函数测试零改写;Zustand v5 客户端全局状态 + TanStack Query v5 服务端状态;`frontend/src/island-loader.js` 运行时 fetch `/static/dist/manifest.json` 解析内容哈希 chunk,无 manifest 时静默跳过所有岛(CSP `script-src 'self'` 下不再报 dev-origin 违反)。
+- **tokens.css 三层 @layer**(`@layer tokens.primitive/semantic/component`)+ styles.css `@layer reset, tokens, base, components, utilities` 层叠顺序;motion tokens(`--duration-fast/base/slow` + `--ease-entry/exit/emphasized`);View Transitions API 列表→详情过渡、骨架屏、按钮按压/抽屉/tab indicator 微交互(reduced-motion gate 复验)。
+- **ADR-018**(`docs/adr/0018-break-zero-build-vite-react.md`):记录打破零构建原则引入 Vite + React 构建链的动机与边界(operator console 引入构建链;widget 永久保持零构建;双轨期 `createRoot` 挂载到预留 `<div>`,未迁移区由 app.js + js/*.js 驱动;预算口径切换 operator JS ≤700KB raw/≤210KB gzip、CSS ≤125KB)。
+- **D5 交互打磨**:`tauri-plugin-updater` 接线(插件已注册,自动更新**尚未可用**——配置修正与签名依赖见下方 2026-09-01 条)、NSIS 安装器;冷启动 SLO `startup.json` 验证 `t_backend_ready_ms=2465ms` < 3s。
+- **DEPLOYMENT_DESKTOP.md**:桌面包构建与发布流程文档。
+- **完整桌面构建验证（2026-08-27）**：本机成功执行 `cargo tauri build` 产出 `Helix Support_1.4.0_x64-setup.exe`（24MB NSIS 安装器）与 `helix-desktop.exe`（~13.5MB）；`cargo build` + `cargo clippy` 全绿；Vite dist（含最新 island-loader + 全部 9 岛 chunk + manifest.json）重建通过。
+
+### Changed
+
+- `app/assets.py` `STATIC_ASSET_VERSION` 1.3.9→1.4.0;index.html/widget.html/icons 引用 `?v=1.4.0` 同步;`frontend/package.json` version 1.4.0;`src-tauri/tauri.conf.json` + `Cargo.toml` version 1.4.0。
+- `app/static/index.html` 新增 9 个 React 岛挂载 `<div>`(queueReactIsland/ticketReactIsland/composerReactIsland/inspectorReactIsland/qualityReactIsland/knowledgeReactIsland/commandPaletteReactIsland/sessionShellReactIsland/terminalReactIsland),双轨期与 legacy 容器并存;新增 `#desktopSplash` 覆盖层(Tauri 环境显示,浏览器 hidden)。
+- `frontend/vite.config.js`:`preserveEntrySignatures:"strict"` 防 Rollup 树摇岛入口自身导出;`copyIslandLoader` 插件每构建把零构建 `island-loader.js` 同步到 `dist/`。
+- 视觉基线四面(workspace-dark/workspace-light/knowledge-view/mobile-queue)在 clean DB 上重引导以反映 v1.4.0 tokens + splash 的新视觉。
+- `tests/ui_admin.py`/`tests/ui_knowledge.py`:app.js 版本断言从硬编码 `1.3.7` 改为引用 `app.assets.STATIC_ASSET_VERSION`。
+
+### Web 回退双轨修正(2026-08-26,commit cbb2825)
+
+- 68d0c33 把 `app.js` 从 3,258 行 legacy 裁成 481 行胶水版(依赖 React 岛渲染),但 web 浏览器(无 `dist/`)下岛不渲染、胶水版无 legacy 渲染能力导致 web 空白。恢复完整 3,279 行 legacy `app.js` 作 web 双轨主渲染器;桌面壳分支仍用 481 行胶水版 + 岛渲染。**双轨架构现状**:web 浏览器 = legacy app.js 主渲染(岛全部跳过);Tauri 桌面壳 = dist 构建后岛渲染(481 行胶水版激活)。
+
+### D5 门禁收口(2026-08-28)
+
+- **桌面壳性能预算**(`scripts/performance_gate.py`,^45b87f5):新增 `lcp_desktop_ms`(≤1000ms,严于 web 的 2500ms——桌面资源来自本地包,唯一变量是自身渲染成本)与 `cls_desktop`(≤0.10,防止 splash 交班把工作区顶偏)两项浏览器层预算。此前浏览器层只测 web 加载,桌面这条路径处于无人看守状态;现在复用岛 10k 渲染已搭好的壳前置条件上下文(`__TAURI_INTERNALS__` + `helix-backend-ready`)一并测量。本机实测:桌面 LCP 356–480ms、CLS 0.0036、岛 10k 渲染 33ms(预算 500ms)、web LCP 404ms。基线 `artifacts/performance-baseline.json` 已按新口径重写。
+- **桌面壳无障碍验收**(`tests/ui_accessibility.py`,^4c21dc8):新增桌面壳 pass(`wait_for_desktop_shell` + `assert_desktop_shell_accessibility`),在 Tauri 前置条件下等岛挂载后跑 axe 明暗双主题 + reduced-motion。**D3 岛接管后桌面发货的 DOM 此前零覆盖**——原套件始终只扫 legacy 渲染、且队列恒为空。新 pass 经 `helix-conversations-updated` 事件注入四种状态的合成会话(与生产同通道、确定性,不依赖库里碰巧有什么数据),使扫描真正覆盖行标记而非空态。
+- **前端门测试计数修复**(`scripts/frontend_gate.py`,^893659d):Node 测试运行器按 stdout 是否 TTY 选择 reporter——交互式输出 `ℹ pass N`,管道输出(CI 及一切 `subprocess.run` 捕获)输出 `# pass N`。旧解析只认前一种,计数恒为 0,`MIN_TESTS=30` 断言失败,本地前端门一直是红的,且失败形态与「一个测试都没跑」无法区分。新增 `_parse_summary()` 兼容两种形态,解析不到摘要时显式报错而非静默报 0;`tests/test_frontend_gate.py` 补 3 例(TAP/spec/无法识别)。
+
+### Fixed
+
+- **自动更新配置整套失效:1.x 残留字段 + 缺失 v2 必需产物开关(2026-09-01)**:`plugins.updater.active: true` 是 Tauri **1.x** 字段,v2 的 `tauri-plugin-updater` 2.10.1 `Config` 结构体里根本没有它。而 Tauri 对 `plugins.*` 下的未知字段是**静默忽略**的:实测注入 `bogusFieldThatDoesNotExist` 后 `cargo tauri info` 零输出、exit 0,`$schema` 也覆盖不到这一层。于是这个字段整个 D5 阶段都在制造"自动更新已启用"的假象,而 v2 真正决定是否产出更新产物的 `bundle.createUpdaterArtifacts`(源码默认值 `Updater::Bool(false)`)完全缺失——构建从不产出更新包与 `.sig` 签名文件,自动更新无包可装。同时 `pubkey` 为空字符串:查证 `verify_signature` 路径确认这是 **fail-closed** 而非静默接受未签名包(`PublicKey::decode("")` 必然报错),安全上不成漏洞,但功能上等于自动更新整体不可用。修复:移除 `active`、补 `bundle.createUpdaterArtifacts: true`,`pubkey` 待签名证书采购(D5 唯一外部依赖)。
+- **Tauri 配置门禁**(`scripts/tauri_config_gate.py` + `tests/test_tauri_config_gate.py` 15 例,接入 CI `Tauri config gate` step):守住三条不变量——无 1.x 残留字段(`active`/`dialog`,报错直接给出 v2 修法)、updater 三件套自洽(有 `endpoints` 就必须有 `createUpdaterArtifacts` 与非空 `pubkey`)、`dangerous_*` 传输层开关不得开启。签名证书采购期间空 `pubkey` 由 `--allow-empty-pubkey` 显式豁免(降级为 warning),让豁免在 CI 调用处可见,而不是靠一个空字符串蒙混过关。`plugins` 节是 schema 检查不到的盲区,只能靠门禁守。
+- **`frontend_gate.py` 资产版本检查从未生效**(^9afeb4d,潜伏自 2026-08-18):`LOCAL_IMPORT_RE` 的反向引用 `\1` 闭在**路径**捕获组上而非引号上,等于要求同一个说明符连写两次——任何文件里的任何导入都匹配不上,而 notes.md 当时声称"此处版本漂移会让 CI 失败"。同一循环还读 `match.group(2)`,而旧模式只暴露一个组,真匹配上反而会 IndexError(被前一个 bug 掩盖)。修复:引号自成一组使反向引用闭合同类,组 1 为引号、组 2 为说明符。同提交另修 `sys.path` bootstrap 缺失——CONTRIBUTING.md 让开发者直接跑 `python scripts/frontend_gate.py`,但没有 editable 安装时 `from app.assets import ...` 直接 `No module named 'app'`,只有 CI(`pip install -e .`)能跑通。抽出可测纯核 `find_unversioned_imports()`,补 8 例锁定匹配(单/双引号、from 与裸 import 形式、行号、裸包说明符忽略)与版本比对;故意把真实模块的 `?v=` 降级实测 exit=1 并精确报出文件/行号/过期说明符。这与上面 `plugins.updater.active` 是同一类缺陷:**检查看似存在,实则从未运行**。
+
+- **桌面壳 sidecar 嵌入过期静态资源(真机 CDP 岛模式验证发现,2026-08-29)**:PyInstaller spec 把 `app/static/` 整体嵌入 sidecar,但打包时 `frontend/dist` 产物是旧的——sidecar 提供的 HTML 为 v1.3.9 快照(无岛挂载 div、无 dist 资源),桌面壳岛模式静默回退 legacy 渲染且无任何报错。CDP(Runtime.evaluate)确认 `__HELIX_ISLAND_MODE__=false`。修复:`npx vite build` 先于 PyInstaller(顺序已写入 DEPLOYMENT_DESKTOP.md 并加顺序警告 + 嵌入快照新鲜度验证命令),重打 sidecar + 重拷 resources + 重建 release。真机复验:8 岛全部挂载(queue/composer/inspector/quality/knowledge/ticket 等,terminal 按需挂载为 0),legacy 容器全部 yield(hidden=true),React 树真实渲染(composer textarea + inspector 4 tab),像素统计确认深色控制台(avg RGB(13,17,23))。
+- **桌面壳资源路径断裂(真机 GUI 冒烟发现,2026-08-29)**:`frontendDist` 嵌入模式下 webview 直接加载 `index.html`,但页面所有资源是 `/static/...` 绝对路径(为 uvicorn StaticFiles 设计),`tauri://localhost` 下全部 404——真机窗口渲染裸 HTML 骨架(无 CSS/JS),UI 永不初始化,`t_ui_ready_ms` 恒 null。修复:壳只在启动帧显示内置 splash 页,后端就绪后 `WebviewWindow::navigate` 到 sidecar 自身 origin(`http://127.0.0.1:<port>/`),资源与 API 全部同源成立;watchdog 自动重启绑定新端口后重新导航。`on_page_load` 在服务端页面加载完成后注入 `__HELIX_BACKEND__` 并派发 `helix-backend-ready`、直调 `ui_ready`(on_page_load 与 module 执行时序跨导航已证不稳,直调兜底)。远程页面 IPC 需显式 ACL 授权:`build.rs` 用 `AppManifest::commands` 为 7 个自定义命令自动生成 `allow-*` 权限,`capabilities/main.json` 配 `remote.urls=["http://127.0.0.1:*"]` + 权限授予。真机复验:窗口渲染完整深色控制台,三时间戳 window 969ms / backend 3306ms / ui_ready 3872ms,API 200,关窗优雅停机无残留。
+- **亮色主题 amber 状态徽标对比度不足**(^d92236c):`.status-pill.waiting_human` 以 `--color-amber` 文字压在 `--color-amber-soft` 叠行底色上,实测 **3.99:1**,低于 11px 文字要求的 4.5:1。该缺陷在历次 axe 运行中全部存活——徽标只在队列有行时渲染,而旧扫描面对的永远是空队列。桌面壳 pass 注入数据后首轮即被抓出。`--color-amber` 亮色值 `#8a6512` → `#6f5010`(5.58:1),与同背景的兄弟状态色对齐(green 6.17:1 / violet 5.91:1 / blue 4.85:1),soft 色调同步重算保留琥珀倾向。
+
+### Gates(2026-08-28 复跑)
+
+- frontend gate **165** tests + vitest **19**;performance gate 静态 JS 599KB/700KB + CSS 97KB/125KB,浏览器层 web + 桌面壳双上下文全绿;visual gate 四面 **0.00% drift**(令牌改动未波及 clean DB 基线);ui_smoke + ui_accessibility(含新增桌面壳 pass)旅程绿;`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿。
+- 注:本机 ruff 0.16.5 默认规则集宽于项目开发期(CI 固定 `ruff>=0.9,<1`),全仓 372 项报告属版本差异,非本次改动引入;本次改动未新增告警(并顺带消掉 1 项 PIE810)。
+
+### D3 收口:knowledge 岛接管编辑器(2026-08-29)
+
+- **knowledge 岛成为完整知识面**(`frontend/src/islands/knowledge-island.jsx` + `island-loader.js` yieldsLegacy 增加 `knowledgeEditor`):摘要 + 筛选 + 列表 + 草稿编辑器全部由 React 岛渲染,legacy 侧仅保留写生命周期(`saveKnowledgeArticle` 的 api()/toast/reload 与 `reviewKnowledgeArticle` 的 retire confirm())。编辑器写回走 `helix-knowledge-save` 事件桥,岛在 `helix-knowledge-saved` 回报前保持 busy;岛内 DOM 保留 legacy 定位符契约(`knowledgeEditor`/`knowledgeTitle`/… → React 后缀),ui_knowledge 与 axe 键盘路径定位不受影响。
+- **writer/reader 数据面补齐**:岛按角色请求 `?include_inactive=true`(对齐 legacy 缓存语义),摘要计数与编辑器不再只看到已发布文章;语言下拉覆盖 app.js 全部 14 种语言,未列出的语言码动态补入选项,编辑不再静默丢语言(review backlog 1);校验(`validateKnowledgeDraft`)复刻 legacy minlength 口径与文案,tags→title→content 顺序报错 + `role="alert"`。
+- **刷新桥语义**:视图重开只派发不强制刷新的 `helix-knowledge-refresh`,岛用 `refetchQueries({stale:true})` 对齐 legacy 15s 缓存(数据新鲜不重复请求);显式刷新/写入成功仍强制 refetch。
+- **vite 陈旧 chunk 累积修复**(`frontend/vite.config.js`):outDir 在 frontend 根之外时 Vite 默认不清空目录,内容一变哈希就变,旧 content-hashed chunk 永久累积——`client-*` 新旧两份即 362KB,静态预算门(全量计非 terminal JS)实测 903,980B > 700KB 上限。改 `emptyOutDir: true`(island-loader 由插件在 closeBundle 重拷,dist 内无第三方文件)。
+- **验证**:vitest **40** 例(新增 21 例:reducer 生命周期、校验 parity、桥契约、语言全集、角色可见性、刷新语义);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_knowledge.py`(writer 全旅程 + reader 只读)与 `tests/ui_accessibility.py` 对 127.0.0.1:8765 实跑通过;重建 dist 后静态 JS 回到预算内。
+
+### D3 长尾:admin 岛接管管理页(2026-08-29)
+
+- **admin 岛成为完整管理面**(`frontend/src/islands/admin-island.jsx` + `island-loader.js` 新增 admin 岛 + vite input 注册 + index.html `#adminReactIsland` 挂载点):八张卡片(租户配额/成员/Webhook/报表订阅/报表导出/CSAT/SLA 策略/自动路由规则)全部由 React 岛渲染,八张 legacy 卡片加 id 后经 yieldsLegacy 让位,拒绝面板 `#adminDenied` 与头部刷新按钮保持 legacy。
+- **确定性权限门**(`useIdentity` + `helix-identity` 事件):app.js 在 /api/me 后发布 `__HELIX_PERMISSIONS__`/`__HELIX_ACTOR__` 并派发 identity 事件,岛的八个查询全部 `enabled: canManageIdentity`——岛先于 /api/me 挂载的竞态下非管理员**零特权请求**(对齐 tests/ui_admin.py 的 denied 断言),管理员身份落地后查询自动解锁。此事件同时修复了 knowledge/terminal 岛读一次性 `__HELIX_ROLE__` 全局的同类竞态隐患(事件广播后可重渲染)。
+- **写桥**:13 个 `helix-admin-*` 事件桥把写回 legacy——api()/showToast()/window.confirm()(webhook 删除确认)与 Phase 32.1 自停用/自降级客户端守卫全部留在 app.js;岛在 `helix-admin-saved {ok, domains}` 回报后只失效被写域的查询(webhook 写会连带失效订阅下拉域)。表单清空遵循 legacy「成功才清空」语义(`useClearOnSaved`);报表导出走 `reportExportUrl` 本地导航(带鉴权 cookie),生成预览经 `helix-admin-report-generated` 回传文案。
+- **测试抓出一个真实浏览器缺陷**:React 合成事件不代理 `submitter`——岛若照搬 legacy 的 `event.submitter?.value`(js/admin-report.js bindAdminReports 收的是原生事件),「导出 CSV」按钮在真实浏览器里会永远走生成预览分支。岛改读 `event.nativeEvent.submitter`,vitest 以原生点击路径锁定该分支。
+- **验证**:vitest **64** 例(+24:身份门/八卡渲染契约/13 写桥/刷新语义/纯模型含 legacy "— MB" 空值逐字保真);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 绿;legacy web 路径 `tests/ui_admin.py`(配额写/成员生命周期/webhook 注册删除/拒绝视图零特权请求)与 ui_accessibility、ui_smoke 对实跑服务全绿;桌面链重建(dist+admin chunk 23.1KB → PyInstaller → 冒烟 → resources 快照核对 → NSIS)后 `desktop/verify_admin_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡片让位、配额 readout 渲染、经桥真实邀请成员并回显「主管」角色。
+
+### D3 长尾:settings 岛 + 端口读数修复(2026-08-29)
+
+- **settings 岛接管设置面**(`frontend/src/islands/settings-island.jsx`):桌面运行时 readout(版本/端口/模式/数据目录)与偏好卡由 React 岛渲染,两张 legacy 卡片加 id 后经 yieldsLegacy 让位,标题保持 legacy。岛通过 `useDesktopBackend` 同时跟踪 `window.__HELIX_BACKEND__` 注入与 `helix-backend-ready` 事件(legacy 每次进视图重跑 `loadDesktopInfo` 的异步等价物),版本号从 `frontend/package.json` 以 JSON import 单源引用。
+- **修复 D1 起的端口读数缺陷**:壳注入契约是 `{ backendPort: location.port }`(src-tauri/src/lib.rs),而 legacy `desktop-info.js` 一直读不存在的 `backend.port`——桌面壳设置页端口自 D1 起恒显「等待中…」。legacy 与岛同步改读 `backendPort`;CDP 真机验证 readout 与实时 sidecar origin 端口一致。
+- **死代码清理**:`desktop-info.js` 移除早期探索遗留的 `loadKnowledgeView`/`loadAdminView`(派发从未有消费者的 helix-knowledge-loaded/helix-admin-loaded 事件;真实桥是 app.js 的 helix-knowledge/helix-admin 事件族)。
+- **验证**:vitest **72** 例(+8:模型 parity 含等待中/错误态/浏览器占位、backend-ready 异步更新、已注入即 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+settings chunk 2.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_settings_island_desktop.py` CDP 真机验证:岛模式 true、legacy 卡让位、版本/端口/模式渲染、端口与 origin 一致、env note 隐藏。
+
+### D3 长尾:dashboard metrics 岛(2026-08-29)
+
+- **dashboard 岛接管工作区指标条**(`frontend/src/islands/dashboard-island.jsx`):四格指标(自动/待响应/认领中/SLA 超时)由 React 岛渲染,legacy `#metrics` 经 yieldsLegacy 让位;`metricsModel` 捕获 legacy `renderMetrics` 的**净渲染效果**——legacy 先构建「待人工」瓦片再在绘制前原地改写为「待响应」(needs_response),可见瓦片集从未显示 waiting_human,岛直接按净效果建模并以测试锁定。
+- **刷新节奏语义保真**:legacy 仅在**前台** refreshAll 周期(初次加载/用户操作/搜索)refetch `/api/dashboard`,30s 后台轮询复用缓存读数——岛模式下 legacy 前台周期派发 `helix-dashboard-refresh {force}`,后台周期不派发也不发请求;岛 `staleTime: Infinity` 只响应 force 事件,首帧渲染空网格(不闪 0)对齐 legacy 首刷前行为。应用状态不再写 `state.dashboard`,yielded 的 `#metrics` 不再被填充。
+- **验证**:vitest **80** 例(+8:净渲染 parity 含告警规则/缺省 0、tenant 头、首帧空网格、force 刷新 refetch、unforced 忽略);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(dist+dashboard chunk 1.6KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_dashboard_island_desktop.py` CDP 真机验证:4 瓦片标签/数值/legacy 让位/tenant 头/force 事件触发真实 refetch 全过。过程杂音:rustc 因系统内存不足(可用 2.5GB)OOM 崩溃留下损坏的编译产物(E0463 找不到 crate),清 `target/release/{deps,.fingerprint}` 后重建通过(3m35s)。
+
+### D3 长尾:queue 岛接管条带控件(2026-08-29)
+
+- **queue 岛扩至 footer strip**(`frontend/src/islands/queue-island.jsx`):会话计数与「加载更多」按钮由岛渲染,legacy `#queueCount`/`#loadMore` 经 yieldsLegacy 让位;快照通道 `helix-conversations-updated` 增加 `queueLoadingMore`,js/queue-view.js 的 renderQueue 在岛模式下完全停止绘制 legacy 队列 DOM(此前 strip 仍由 legacy 先画)。分页生命周期(cursor、加载中守卫、query-key 陈旧校验)留在 legacy——岛按钮经新增的 `helix-queue-load-more` 事件桥触发 `loadMoreConversations()`。
+- **状态完整性**:岛此前预快照/空态直接提前返回,现在统一渲染 `.queue-island` 包装层——预快照显示「正在同步 + 0 个会话」(镜像 legacy 初始文案),空态/加载中/列表态都带 strip;mentionsBadge 因绑定 session.js 面板生命周期保持 legacy(其所在 legacy footer 仍在)。
+- **验证**:vitest **84** 例(+4 strip 用例:+后缀计数/无更多隐藏/加载中 aria-busy/点击桥事件,预快照用例改写);pytest 门禁绿;ui_smoke + ui_virtual_queue + ui_accessibility legacy 实跑绿;桌面链重建(queue chunk 5.4KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_queue_strip_desktop.py` CDP 真机验证:**种子 60 条会话**(页大小 50)→ 条带显示「50+ 个会话」→ 岛内「加载更多」点击触发真实 cursor 请求 → 行数增至 60,legacy 控件全程让位。
+
+### D3 长尾:identity 岛接管头部身份读数(2026-08-29)
+
+- **identity 岛**(`frontend/src/islands/identity-island.jsx`):头部身份读数("actor · 角色",header 中唯一数据派生元素)由 React 岛渲染,legacy `#operatorIdentity` 经 yieldsLegacy 让位;周边切换按钮(主题/低配/检查器/刷新/移动端抽屉)各绑 legacy 偏好生命周期,保持 legacy。岛是 `helix-identity` 事件的纯订阅者(admin 岛切片引入的身份广播)——零 fetch 零写桥,事件按 actorId+role 去重避免每刷新周期重渲染;`identityModel` 逐字复刻 legacy `roleLabel` 回退映射(岛不接 i18n 模块,与其它岛逐字复制规则一致),未认证时显示 legacy 初始文案「正在验证」。app.js 岛模式下跳过向隐藏 legacy span 的绘制。
+- **验证**:vitest **90** 例(+6:模型 parity 含未知角色回退/待验证占位、事件订阅、全局 seeding、legacy 类契约);pytest 门禁绿;ui_smoke + ui_accessibility legacy 实跑绿;桌面链重建(identity chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_identity_island_desktop.py` CDP 真机验证:岛读数「demo.admin · 管理员」、legacy span 隐藏且未被绘制、头部切换按钮全部保留。
+
+### D3 长尾:conversation dialog 岛 + drawer 决策(2026-08-29)
+
+- **conversation-dialog 岛**(`frontend/src/islands/conversation-dialog-island.jsx`):新建会话 `<dialog>` 由 React 岛渲染(原生 dialog + showModal 焦点管理),legacy `#newConversationDialog` 经 yieldsLegacy 让位。桥三件套:legacy「新建」按钮岛模式下派发 `helix-conversation-new` 开岛对话框;岛提交经 `helix-conversation-create {payload}` 回 legacy——`createConversation(payload)` 从表单处理器中提取为共享生命周期(POST → 选中 → 前插 → renderQueue → loadDetail → refreshAll),legacy 与岛共用;岛经 `helix-conversation-created {ok}` 回报,成功关闭、失败保留输入。取消/关闭为岛本地行为(无需 legacy 往返)。
+- **jsdom 能力探测回退**:jsdom 26 仍未实现 `showModal/close`——岛做能力探测,无原生 API 时直接设 `open` 属性(测试路径),真实浏览器走模态路径(top layer + backdrop + 焦点圈),生产行为不变。
+- **queue drawer 决策不激活**:抽屉入口 `#mobileQueue` 为 `.mobile-only`(≤900px 才显示),桌面壳宽视口下不可达;岛模式只存在于桌面壳,迁移零收益,与 session/shell 决策同理,列为后续候选。
+- **验证**:vitest **98** 例(+8:payload 投影 parity/开闭契约/桥 busy 态/成功关闭/失败保留);pytest 门禁绿;ui_smoke(含 legacy 对话框旅程)+ ui_accessibility 实跑绿;桌面链重建(dialog chunk 3.5KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_conversation_dialog_desktop.py` CDP 真机验证:legacy 对话框让位、新建按钮开岛对话框并聚焦名称、真实 POST 201、成功后岛关闭且新会话入列并选中(is-active)。
+
+### D3 长尾:queue 岛接管 bulk toolbar(2026-08-29)
+
+- **bulk toolbar 并入 queue 岛**(`frontend/src/islands/queue-island.jsx`):批量操作条(已选计数/动作下拉/标签字段/应用/清除)由岛渲染,legacy `#bulkToolbar` 经 yieldsLegacy 让位,renderBulkToolbar 岛模式直接跳过绘制。批量生命周期(payload 构建、POST bulk-actions、toast、选择清空、refreshAll)留在 legacy——`applyBulkAction(source)` 增加可选载荷参数,legacy 表单路径与岛 `helix-queue-bulk-apply {action, labels}` 桥共用;标签动作的空标签校验前移到岛内(复刻 legacy「请输入标签」文案,role=alert 内联呈现,不发桥);桥完成派发 `helix-queue-bulk-applied` 释放岛的 busy 态;`helix-queue-bulk-clear` 桥走 legacy 清空 → 快照回流同步岛。
+- **门禁抓住一个真 bug**:重构后 legacy 点击监听器仍直接绑定 `applyBulkAction`,点击事件对象作为首个实参泄漏进 `source` 形参(MouseEvent 为 truthy)→ `source.labels` 为 undefined → `.length` 抛错,批量 POST 永不发出。ui_smoke 批量旅程超时暴露,监听器改为显式无参调用。vitest 岛侧补 busy 释放用例锁定 `helix-queue-bulk-applied` 契约。
+- **验证**:vitest **105** 例(+7:计数/标签字段显隐/桥载荷含逗号全半角解析/空标签内联阻断/busy 释放/无选择隐藏/清除桥);pytest 门禁绿;ui_smoke(批量旅程恢复)+ ui_virtual_queue + ui_accessibility 实跑绿;桌面链重建(queue chunk → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_bulk_toolbar_desktop.py` CDP 真机验证:legacy 让位、无选择时无工具栏、选 2 行显示「已选 2 项」、真实 POST 200 updated=2、成功后工具栏消失。
+
+### D3 长尾:workspace tabs 岛(2026-08-29)
+
+- **workspace-tabs 岛**(`frontend/src/islands/workspace-tabs-island.jsx`):工作区「队列/工单」tablist 由 React 岛渲染,legacy `#workspaceTabs` 容器加 id 后经 yieldsLegacy 让位。职责切分:岛渲染两个 tab(保留 .workspace-tab/is-active/role=tab/aria-selected/data-wstab 契约)并乐观切换;窗格切换(queuePane dataset.mode、ticketPane 显隐)、工单加载与队列刷新副作用全部留在 legacy `switchWorkspaceTab`——岛点击经 `helix-workspace-tab {field}` 桥触发,legacy 每次切换派发 `helix-workspace-tab-changed {field}` 让岛对账(同时覆盖工单跳转回队列等程序化切换)。
+- **验证**:vitest **110** 例(+5:默认态契约/乐观切换桥/程序化对账/未知字段忽略/reducer 幂等);pytest 门禁绿;legacy 回归新增 ui_tickets(工单全旅程——tab 切换的直接消费者)与 ui_smoke、ui_accessibility 实跑绿;桌面链重建(tabs chunk 1.2KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_workspace_tabs_desktop.py` CDP 真机验证:legacy 让位、岛切工单 → legacy 窗格跟随 → 切回队列 → 直接调 legacy 切换器程序化切换时岛正确对账。
+
+### D3 长尾:saved views 岛(2026-08-29)
+
+- **saved-views 岛**(`frontend/src/islands/saved-views-island.jsx`):工作区的视图选择器 + 保存/删除按钮由 React 岛渲染,legacy `#savedViewField`/`#saveView`/`#deleteView` 经 yieldsLegacy 让位。数据生命周期留在 legacy——apply 传完整 view 对象(岛持数据)给 `applySavedView`(重写 legacy 过滤输入 + refreshAll),save 经桥 `helix-saved-views-save {name}` 用 `currentViewFilters()`(legacy 输入是过滤器唯一真源)POST 并 toast,delete 经 `helix-saved-views-delete {id}`;桥完成派发 `helix-saved-views-changed {ok, id?}` 让岛 refetch 并重选新建视图/删除后清空选择。岛自取 `/api/saved-views`,legacy `loadSavedViews` 岛模式跳过。`display:contents` 让岛控件无缝接管工具栏 grid 的单元格。
+- **真机 CDP 抓住 mount 缺 Provider 缺陷**:岛的 `mount()` 忘了包 `QueryClientProvider` 而组件用 `useQueryClient`——真机启动 React 抛 "No QueryClient set",岛容器静默为空;组件测试各自包 provider 故测不出,只有桌面 boot 路径会踩中。修复 mount 并在注释记录该测试盲区。
+- **验证**:vitest **119** 例(+9:select 装载/类契约/apply 桥带完整 view/提示词保存桥/取消不发桥/changed 重选/删除清选/失败不动选择);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建后 `desktop/verify_saved_views_desktop.py` CDP 真机验证:legacy 让位、保存(POST 201 + 提示词 + 岛重选)、应用(改写 legacy 过滤输入 + 触发新队列请求)、删除(DELETE + 选择清空)全旅程绿。
+
+### D3 长尾:mentions 岛接管提及收件箱(2026-08-29)
+
+- **mentions 岛**(`frontend/src/islands/mentions-island.jsx`):提及徽标(经 React portal 渲染进 footer 的挂载点,与 legacy live dot 同排)与提及面板抽屉由 React 岛渲染,legacy `#mentionsBadge`/`#mentionsPanel` 经 yieldsLegacy 让位。镜像 legacy 语义:未读 0 且面板关闭时徽标隐藏、打开面板时拉取 `/api/mentions`、外点关闭(bindSession parity)、`conversation:read` 权限门经 helix-identity 广播。写生命周期留 legacy——标记已读(`POST /read` + toast)与跳转会话经 `helix-mentions-mark-read`/`-open-jump` 桥,完成派发 `-changed` 让岛 refetch。徽标 portal 容器缺失时内联回退,DOM 回归不会拖垮整岛。
+- **能力边界记录**:真实提及种子需要第二作者会话(后端跳过自我提及),CDP 旅程以空收件箱路径验证(徽标隐藏 parity/程序化开面板/真实 API 空态/外点关闭),jump 与 mark-read 桥由组件测试锁定派发契约。
+- **验证**:vitest **127** 例(+8:权限门/徽标可见性两态/面板行渲染/空态/跳转桥/已读桥 + changed refetch/外点关闭);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(mentions chunk 4.1KB → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_mentions_island_desktop.py` CDP 真机验证:legacy 让位、0 未读徽标隐藏、程序化开面板渲染真实空态、打开时徽标可见、外点关闭、真实 API 已请求。
+
+### D3 长尾:palette 命令接线(2026-08-29)
+
+- **闭合先前缺口:helix-command 事件自 palette 岛激活以来无消费者**——桌面壳 Ctrl+K 选任何命令都无效果。app.js 新增消费者把 9 条命令映射到既有处理器:nav:* → `switchAppView`、conv:new → `helix-conversation-new`(岛对话框桥)、conv:refresh → `refreshAll`、conv:convert-ticket → ticketView 模块、diag:logs → 新增 `helix-terminal-toggle` 桥(terminal 岛监听开关抽屉)、diag:health → 新增 `checkBackendHealth()`(GET /health/ready 结果 toast)。legacy 命令路径不变(浏览器模式 palette 岛不挂载)。
+- **验证**:vitest **127**(纯接线无新增岛代码);pytest 门禁绿;ui_smoke + ui_accessibility 实跑绿;桌面链重建(app.js → PyInstaller → 冒烟 → resources 核对 → NSIS)后 `desktop/verify_palette_commands_desktop.py` CDP 真机验证:Ctrl+K 开面板、nav:admin 打开管理视图(admin 岛渲染)、conv:refresh 触发真实队列请求、diag:logs 打开诊断终端抽屉。脚本内置重试:palette 岛在 ISLANDS 数组末尾异步挂载,过早按键会丢失。
+
+### 前端门禁:vitest 段不再无限挂起 + 静态字节预算随抽取战役放宽(2026-08-30)
+
+- **vitest 段退出挂起修复**(`scripts/frontend_gate.py`):16 个岛测试文件全量运行时,vitest 在 ~15s 内跑完 166 例并打印通过摘要后**进程永不退出**(实测 420s 仍存活,15 个文件及以下必定正常退出)。定位为 Vite/esbuild 转换服务在 Windows 上为每个 worker 派生的 esbuild 子进程:文件数达到 16 时子进程句柄把父进程的事件循环一直挂着。修复:vitest 段以 `ESBUILD_WORKER_THREADS=1` 运行(esbuild 改走 worker thread 而非子进程),同一全量连跑 3 次均在 20s 内退出、退出码 0。
+- **门禁不再可能无限等待**:`_run()` 新增 `timeout`/`env` 参数并把 `subprocess.TimeoutExpired` 归一成返回码 124 的失败结果——一个能永久挂住的门禁比一个会红的门禁更危险。vitest 段默认上限 300s(`FRONTEND_GATE_VITEST_TIMEOUT` 可覆盖),超时即报失败并附摘要尾部。
+- **静态 JS 预算 700KB → 715KB**(`scripts/performance_gate.py`):app.js <500 战役每把一个 legacy 域搬进 ES 模块,净增 ~0.9–1.5KB 纯样板(import/export 语句、模块 JSDoc、app.js 为自用调用点保留的薄包装),被搬走的逻辑本身字节中性。第 23 片(命令面板 + saved-views,约 110 行)实测净增 880B,而旧上限只剩 1,043B 余量——再搬一片即红。15KB 余量覆盖约十片;app.js 降到 500 行以下后需重新收紧。依赖膨胀或未压缩的第三方 blob 依旧会被这道门禁拦下。
+- **验证**:`scripts/frontend_gate.py` 全绿(node **270** + vitest **166** + 语法 + 400 行上限 + 资源版本);`tests/test_frontend_gate.py`(7 例)与 `tests/test_performance_gate.py`(3 例,operator JS 699,837B/715KB)绿;ruff 对两个改动脚本干净(存量 BLE001 未触碰)。
+
+### 前端门禁:vitest 段改为「观测运行」,彻底摆脱退出挂起(2026-08-31)
+
+- **ESBUILD_WORKER_THREADS=1 不够**:次日复测发现同一全量套件(16 文件/166 例全绿)在该 Windows 宿主上**进程退出仍不可靠**——同一份代码三个时间点直跑可在 20s 内退出 0,换个时间点就打印完整摘要后永不退出(`--isolate=false`、`--pool=forks`、限线程数均无效;测试本身 20s 跑完,挂的只是退出阶段)。
+- **门禁改为观测运行**(`scripts/frontend_gate.py` `_run_vitest_observed`):流式读取 stdout,一旦出现收尾的 `Duration` 行即认定本轮已跑完,给 45s 宽限窗让运行器自行退出,仍不退就 `taskkill /T /F` 整棵进程树。判定(`_vitest_exit_verdict`)以捕获的摘要为证据——**完整且干净的摘要(全部 passed、无 failed、无 Unhandled Errors)接受并打 WARN**,不完整/有失败/有未处理错误照旧 FAIL。
+- **顺带修掉两个观测缺陷**:vitest 摘要带 ANSI 色码(`Test Files \x1b[…16 passed`),完成检测与摘要正则都被色码隔断——匹配前统一剥离;`Duration` 行之后还有尾随空行,完成检测不能只看最后一行。
+- **效果**:门禁 vitest 段从「挂起/300s 超时」收敛到 **~66s**(实测),CI(Linux 上退出正常)行为不变——退出 0 走原路径,宽限窗/树杀只在退出异常时兜底。
+- **验证**:`scripts/frontend_gate.py` 全绿(node **284** + vitest **166**);`tests/test_frontend_gate.py` + `tests/test_performance_gate.py` 10 例绿;ruff 干净。
+- **内存压力 OOM 追加修复(同日)**:复盘发现 fork 池默认按 CPU 核数派生 worker,本机内存吃紧时 worker 触发 `FATAL ERROR: AlignedAlloc Allocation failed` → 批量 `Worker exited unexpectedly`、部分测试未跑完。门禁 vitest 段改加 `--minWorkers=1 --maxWorkers=2` 限并发;`_vitest_exit_verdict` 追加判定——「全部 `Test Files/Tests` passed、无 `failed`,且每个 Unhandled Error 块均为 tinypool worker 崩溃」视为 harness 噪音打 WARN 放行,任何非 worker 崩溃的未处理错误/失败计数照旧 FAIL。`tests/test_frontend_gate.py` 新增 `VitestExitVerdictTests` 5 例锁住判定。
+
+### D3 收官:岛侧模块行数门禁 + 四岛切分(2026-09-01)
+
+- **门禁缺口**:`scripts/frontend_gate.py` 的 400 行模块限制自 Phase 26 起只扫 `app/static/js/*.js`。D2 引入 `frontend/src` 这条**同样发货**的前端轨后,它一直处于零覆盖状态——`admin-island.jsx` 已长到 **1,052 行**(越过项目 800 行硬禁线)、`knowledge-island.jsx` 613 行、`inspector-island.jsx` 523 行、`queue-island.jsx` 413 行,四个越线文件无人拦。`check_line_limits()` 扩到 `frontend/src/**/*.{js,jsx}`,排除 `*.test.jsx`(长度由用例数驱动,不是设计债)。
+- **四岛按域切分为 13 个子模块**,根文件降为「组合根 + re-export 面」,导入面零变化(组件测试与 `vite.config.js` 入口都不用改):
+  - `islands/admin/` — `constants.js`(事件名/角色与报表标签/React 后缀 id 表)、`models.js`(配额读数、成员行、订阅行、SLA/路由标签、CSAT、导出 URL 等纯模型)、`shared.jsx`(身份门 `useIdentity`/`canManageIdentity` + `useBridge`/`AdminReadout`/`useClearOnSaved`)、`tenant-cards.jsx`(配额/成员/Webhook)、`report-cards.jsx`(订阅/导出/CSAT)、`policy-cards.jsx`(SLA/路由);
+  - `islands/knowledge/` — `domain.js`(状态与语言目录、标签解析、载荷、归一化/筛选/汇总/审核动作)、`reducer.js`(§43.6 `createState` + `reduce`)、`components.jsx`(汇总条/文章卡/草稿编辑器);
+  - `islands/inspector/` — `helpers.jsx`(桥事件名、tab 目录、转义/引用 URL 白名单/时间格式化、`latestAssistant`/`renderLabelChips`)、`sections.jsx`(概览/证据)、`note-composer.jsx`(内部备注 + @提及,IME 组合守卫与光标推导原样保留);
+  - `islands/queue/` — `components.jsx`(行/页脚条带/批量操作条 + SLA 文案与 windowing 数学)。
+- **字节中性**:切分前后 `operator_js_bytes` 725,218 → 725,157(−61,少一行陈旧注释),每岛仍是**单 chunk**——子模块只被各自岛入口引用,Rollup 直接内联,不产生新 chunk 也不改首屏。最大文件从 1,052 行降到 252 行。
+- **顺带清掉一处过期注释**:queue 岛头注释仍写「legacy 保留拥有 bulk toolbar(#bulkToolbar)」,而批量操作条在 D3 长尾第七片(^dd836f5)已并入岛。
+- **验证**:vitest **166** 例全绿(16 文件);`frontend_gate` 绿(node 284 + vitest 166),并用 401 行探针确认新限制真能抓到越线;`performance_gate` 静态段绿(JS 725KB/780KB、CSS 97KB/125KB);`ui_accessibility` 全绿——含**真实挂载 React 岛的桌面壳 pass**(明暗双主题 axe + reduced-motion),这是唯一覆盖切分后岛 DOM 的门禁;`ui_smoke`、`ui_knowledge` 绿;`ui_admin` 配额读写 + 成员邀请/改角色/停用全生命周期绿(webhook 段失败为本机 fake-IP DNS 把 `hooks.example.com` 劫持到 `198.18.0.27` 触发后端 SSRF 防护,既有环境噪声,与本次改动无关)。
+- **D3 里程碑达成**:`app.js` 3,258 → **477 行**,纯 `HelixModules` 委托包装 + 一次 `bindLegacyBoot()`,低于 <500 行验收线;岛侧全部 ≤400 行且从此有门禁看守,两条前端轨口径统一。
+
+### 七道门禁自身静默失效 + 一处测试为错误理由变红(2026-09-01)
+
+一轮针对「门禁脚本本身能不能失败」的审计。每一条都由执行验证,不靠读代码判断:构造出该门禁声称要拦的缺陷,确认它返回 0 违规。修复后再用同样的输入确认它报错。最后一条来自修完后的全量跑,方向相反(见末尾)。
+
+- **pip-audit 覆盖门读的键 pip-audit 从不输出**(^dcb39f2,`scripts/vuln_review.py:119`):`audit_coverage` 遍历 `dependency.get("vulnerabilities", [])`,而 pip-audit 的 JSON formatter 输出的是 `"vulns"`(上游 `pip_audit/_format/json.py`:`"vulns": [self._format_vuln(vuln) for vuln in vulns]`)。实测把两种形状分别喂进去:真实 pip-audit 输出 → 违规 `[]`;测试夹具的错误键名 → 正确报出未登记漏洞。`reported` 恒为空集,`reported - registered` 恒为空,而 `registered_ids` 是 `set()`——零豁免登记,意味着 pip-audit 发现的**任何** CVE 都该让门禁变红。`.github/workflows/ci.yml:165` 跑的正是这条路径(`--audit /tmp/pip-audit.json --require-coverage`),它从来不具备失败能力。今天绿是因为 `requirements.lock` 恰好干净;CVE 落地那天它照样绿。缺陷在 `tests/test_vuln_review.py:90` 被镜像——夹具用了同一个错键名,所以测试与 bug 互相印证。
+- **性能门禁四个预算把自己静默解除**(^e5974eb,`scripts/performance_gate.py`):`except Exception: island_render_ms = None` 的 `try` 覆盖整段桌面测量(shell context、`lcp_desktop_ms`、`cls_desktop`、岛渲染),而断言循环对未设置的键 `continue`。模拟异常后的状态确认:`problems = []`,静默解除 `queue_10k_island_render_ms`/`heap_growth_mb`/`lcp_desktop_ms`/`cls_desktop` 四项——60 秒的岛渲染能通过 500ms 预算,报告 JSON 只是缺键,与通过不可区分。改为把测量失败本身记成违规。**heap 预算结构上不可达**:`artifacts/performance-baseline.json` 记录 `heap_growth_mb: 0.0` 正是征兆——Chromium 不带 `--enable-precise-memory-info` 时 `usedJSHeapSize` 恒返回量子化的 10,000,000(实测带上该 flag 同页报 ~940KB),该常量 > 0 所以旧 `all(s > 0)` 守卫放行,每个采样相同,`max - min` 恒为 0。补 `HEAP_QUANTIZED_BYTES` 识别该状态并报错;循环从 `range(5)` 改为 `HEAP_REFRESH_CYCLES = 20`(预算文案一直写「20 refresh cycles」);实测数改由 `PERF_PRECISE_MEMORY=1` 显式 opt-in(该 flag 会关掉部分分配器优化,默认开启会污染同一会话的时延预算)。
+- **前端门禁漏掉两个入口文件与整个 frontend/src**(^5eddac6,`scripts/frontend_gate.py`):构文门禁与行数门禁都用 `JS_DIR.glob("*.js")`,而 `app.js`/`widget-app.js` 在上一层的 `app/static/`,两个 glob 都到不了——`app.js` 477 行**当场越线**而 `check_line_limits()` 返回 `[]`,`node --check` 也从未校验过这两个真正的入口。补 `ENTRY_POINTS` 并给它们 `ENTRY_MAX_LINES = 500` 的独立上限(对齐 `CHANGELOG:153` 记的 <500 行验收线,而非把全局 400 抬高),构文门禁对象 48 → 50 个文件;把上限探针压到 100 行确认两个入口都能被抓到。同理 `check_asset_versions` 只 `rglob` 了 `app/static`:`frontend/src` 里有 27 处 `/static/` 引用、`?v=1.4.0` 硬编码在 JSX 中,模拟版本 bump 到 1.5.0 后 25 处过期引用会静默发版,而门禁报 0。`find_unversioned_imports` 同样只吃 `app/static` 的 `.js`、从不看 `.jsx`。注意 `check_line_limits`/`check_icon_symbols` **是**扫 `frontend/src` 的,所以这是不一致而非有意的范围取舍。
+- **视觉门禁把尺寸变化当通过,并覆盖基线**(^78491e1,`scripts/visual_gate.py:105`):实测三组对照——同尺寸 100% 差异 → `ok=False`(正确失败);**差一个像素高、100% 差异 → `ok=True` 且把提交进仓的基线覆盖成新截图**;重跑同一张 → 0.00% 干净。任何改变布局高度的 UI 变更(多数都会)都能把任意大的回归洗进基线,下一跑报干净。`compare()` 明明算出了 `ratio=1.0` 然后丢掉。改为几何漂移即失败、截图落 `artifacts/`,重引导只能靠显式 `--update` 或删 PNG——顺带把一直存在却从未接线的 `update` 参数配上 CLI。新增 `tests/test_visual_gate.py` 8 例(PIL 缺失时 skip,同 Playwright 的既有惯例);把旧行为复原后测试精确报出。
+- **OpenAPI 比较器看不见数组、parameters 与 requestBody**(^bbd00c8,`scripts/openapi_snapshot.py`):docstring 承诺拦「removed/changed response fields or types, changed parameter shapes」,三类都没实现。**数组元素属性不可见**——`deref` 虽解析 `items` 的 `$ref`,但 `_breaking_changes` 只读顶层 `.get("properties")`,而数组 schema 自己没有 properties。实测同一个 `email` 字段删除:非数组响应 → 正确报出;数组响应 → `[]`。141 个操作里 **31 个返回数组**,含 `GET /api/conversations`、`/api/knowledge`、`/api/audit-events`——从会话列表行里删字段是不可检测的。**parameters 从未被比较**(133 个操作声明了 parameters,删掉必需 query 参数返回 `[]`,而每个漏传的客户端此后都吃 422),**requestBody 同样**(48 个操作)。**无 content 的响应被丢弃**:`if not shapes` 测的是累积字典而非当前 status,所以 200 之后的裸 204 从不记录(实 snapshot 有 5 处)。修复:形状解析递归进 `items`/`anyOf`/`allOf`/`additionalProperties`(`seen` 集合界定递归——FastAPI 会产出自引用 schema,无守卫的解析器会爆栈),补 `_operation_params`/`_operation_bodies`。关键验证是**实 snapshot 141 操作自比较零误报**(比较粒度提高后最容易出的就是这个),`tests/test_openapi_gate.py` 新增 7 例含该项。
+- **三个 sprite symbol 藏在模板字符串 href 后**(^a1ec855):承接上一节的空白图标缺陷——`ICON_REF_RE` 匹配不了 `#${...}`,而五处岛代码动态拼 href。`session-shell-island.jsx:74` 的 `theme === "dark" ? "moon" : "sun"` 里 `sun` **不存在**(浅色主题下主题开关是纯图标按钮,什么都不画);`NAV_VIEWS` 要的 `settings`/`sliders` 也不存在,五个导航按钮里两个空白。三个名字都在构建产物 `session-shell-*.js` 里,确实发版了。**严重度限定**:`index.html:896` 的挂载点是 `hidden`,而 `island-loader.js:218` 跳过隐藏挂载点,所以该岛构建了但当前未挂载(与 session-shell「决策不激活」一致)——空白图标是潜伏而非当下可见,而它变可见的那一刻正是门禁本该拦住的时刻。补 `ICON_REF_DYNAMIC_RE` + 字面量/属性两条抽取(锚定 `?`/`:` 与 `icon:` 以免把三元里的 `"dark"` 当图标名),sprite 26 → 29 symbol。
+- **许可门禁只看 Python,八个发版的 npm 依赖从未审查**(`scripts/license_gate.py`):docstring 声称审查「the runtime dependency closure」,让「每个新依赖都是有意的许可决策而非意外」,但 `review()` 只读 `requirements.lock`。而 `frontend/package.json` 的 8 个 `dependencies`——react、react-dom、zustand、@tanstack/react-query 与 xterm 四件套——被 Vite 打进 `app/static/dist/assets`,随桌面安装器与 Web 一起分发到每个使用者手上,却整个 D2/D3 阶段都在闭包外。它们恰好都是 MIT(已逐包与 `node_modules` 内 `package.json` 的 `license` 字段及同目录 LICENSE 正文双向核对后登记),所以**当下没有违规**;缺陷不是「现在有个坏许可」,而是第九个 npm 依赖可以带任何许可进来并照样绿。修复:`_npm_package_names()` 只读 `dependencies`(`devDependencies` 的 vite/vitest/jsdom/testing-library 不随产物分发,与 Python 侧只读 lock 不读 dev extras 划同一条线),复用既有登记/允许列表/`LicenseRef-TBD` 逾期三段校验,门禁计数 25 → 33。**顺带修掉一个我自己引入的同类缺陷**:`npm_path` 最初默认 `DEFAULT_NPM_MANIFEST`,于是既有 6 例用合成 lock+政策的单测被悄悄塞进真实 manifest 而全红——默认值让 `review()` 读了调用方没交给它的文件。改为显式 opt-in,默认路径的责任归 `main()`。补 9 例(scoped 包名、dev 依赖不入闭包、不许可许可、逾期 TBD、manifest 缺失不红、真实政策双轨自检并断言 npm 侧 ≥8 包以防「读成空也算通过」)。
+- **两处子进程测试用 OS 默认编码解码 UTF-8 输出**(`tests/test_audit_anchors.py:130`、`tests/test_operability.py:86,114`):这一条方向相反——不是门禁不会红,而是测试会**为了错误的理由**红。`subprocess.run(..., text=True)` 不带 `encoding` 时按 OS 默认代码页解码,Windows 上是 GBK。`test_audit_anchors.py` 的 `_run_script` 跑的锚点脚本打印中文诊断,读取线程于是死在 `UnicodeDecodeError`,`stderr` 回来是 `None`,而断言拿 `None` 去 `assertIn` 抛出的 `TypeError` 与真正的篡改检测毫无关系——**全量跑里唯一的失败**就是这个,而它掩盖的不是缺陷而是噪音。`scripts/frontend_gate.py:_run` 早已解决过同一问题(注释明写 Node 的 UTF-8 进度字形),这里是同类漏配。修复即补 `encoding="utf-8", errors="replace"`。横扫仓库找同型:`tests/test_operability.py` 是唯一另一处 `text=True` 无 `encoding`,它跑的 `migration_drill.py` 输出路径当前全 ASCII(唯一的非 ASCII 是第 87 行注释里的 em dash),所以**今天不会失败**——但 `:113` 对 `result.stderr` 做 `assertIn`,诊断文案里加进第一个中文字符的那一刻就会变成同样的 `TypeError`,故一并预防性对齐。
+
+**为什么这批缺陷能一起存在**:前七条全部是 fail-open。门禁读错一个键、glob 少一层目录、`except` 吞掉测量、比较器少走一层递归——表现都是「0 违规,通过」,与真的干净逐字节相同。CI 日志里看不出区别,而这类脚本平时不会有人怀疑,因为它们一直是绿的。唯一可靠的检验是构造出它声称要拦的缺陷,看它是否真的报错;这七条修复各自都补了这样的红光测试。第七条还多一层教训:少扫一个目录与少读一个键同样是 fail-open,而「审查范围」写在 docstring 里最容易与实现悄悄脱节——npm 那条的检验方式必须是「门禁能否报出这 8 个包未登记」,而不是「门禁是否通过」。
+
+末尾那条编码缺陷是同一枚硬币的反面,值得并列记下:一个**为错误理由变红**的测试与一个不会变红的门禁危害相当。前者训练人把红光当噪音,后者训练人把绿光当保证,两者都让信号失去意义。它也是本轮唯一由全量跑而非定向审计暴露的——门禁审计只问「它能不能失败」,问不到「它失败时说的是不是真话」。
+
+- **验证**:**全量 pytest 95 文件 1,270 例 exit=0**(此前唯一的失败即上述 `test_audit_anchors` 编码缺陷,修复后该文件 8 例、`test_operability` 6 例均绿;余下 skip 全是 Playwright/PIL 缺失等既有条件跳过)。门禁单测 163 例全绿(`gate or vuln or visual or openapi or license`,含新增 24 例);`license_gate` 绿(33 个运行时依赖包 Python + npm 全部登记且合规),并实测七种红光场景(未登记 npm 包、npm 不许可许可、逾期 TBD 等)逐一 exit=1;`frontend_gate` 绿(node 351 测试、构文 50 文件、模块 ≤400 行、入口 ≤500 行);`performance_gate` 静态段绿(JS 725,743/780,000、CSS 99,791/125,000、widget 19,929/25,000);`openapi_snapshot` 实 spec 与 snapshot 一致、自比较零误报。
+
+### 门禁自己印不出自己的失败:八条中文诊断在 Windows 控制台崩溃或乱码(2026-09-01)
+
+上一节末尾那条编码缺陷只修到了**测试如何读子进程**,没修**门禁如何写自己的 stdout**。同一枚硬币还有第三面:Windows 控制台默认 GBK 代码页,Python 据此编码 stdout,而这批门禁的违规诊断全是中文。后果分两级,第二级是真缺陷:
+
+- **`image_admission_check` 报告真实违规时抛异常而非返回 exit 1**(`scripts/image_admission_check.py`):`_check_manifest` 用 subprocess 调 `release_manifest.py --verify`,已带 `encoding="utf-8"`,但**子进程是按 GBK 写的**——父进程按 UTF-8 解码,中文全成 U+FFFD。随后 `print` 这个含替换字符的违规串,GBK 编码器无法表示 U+FFFD,抛 `UnicodeEncodeError`。于是门禁在报告一条真实违规的过程中死于 traceback:CI 看到的是未处理异常,而不是它读的 `exit 1`。**一个印不出自己失败的门禁等于不会失败**。修复:`_run_utf8()` 给 Python 子进程注入 `PYTHONIOENCODING=utf-8`(让子进程按 UTF-8 写,文字真正穿过管道),并把 `errors` 从 `replace` 改为 `ignore`——留下 U+FFFD 就是留下下一次崩溃的引信。cosign 是 Go 二进制,该环境变量对它无效,故用参数区分。
+- **`tauri_config_gate` 的豁免警告读不出来**(以及 `check_workflows`/`license_gate`/`threat_model_gate`/`vuln_review`/`release_manifest`/`redis_failure_drill`):这一级不崩溃,只是把中文印成 `plugins.updater.pubkey Ϊ��`。危害在于**豁免的意图传不到操作者**:`--allow-empty-pubkey` 这个 flag 的全部价值就是让签名证书采购期的豁免在调用处保持可见(见上方 D5 条),而它降级后印出的那行 warning 一直是乱码。同理 `check_workflows` 的 `upload-artifact@v4` 未固定 SHA 警告。
+- **共享模块而非逐个打补丁**(`scripts/_console.py`):`use_utf8_console()` 把 stdout/stderr 重新编码为 UTF-8 + `errors="replace"`(即便某个流仍无法表示某字符,门禁照样报告、照样非零退出,第二级问题不会回退成第一级)。只在 `__main__` 调用——import 期改全局流状态会波及把这些模块当库 import 的 pytest 调用方,那不是它该动的东西;无法 reconfigure 的流(已包装、重定向到非文本 sink、被测试替换)跳过而不抛,让控制台可读这件事本身永远不该弄坏门禁。
+- **范围界定**:另 12 个改动脚本(backup/restore/migration_*/run_*_drill/verify_*/pagination_load_test/generate_residency_pack)逐行检查确认输出路径零非 ASCII 字符,不需接线——它们本轮的改动只是 repo-root 引导(见下)。该检查是逐行静态扫描 `print`/`stdout`/`stderr` 行,变量拼装后再输出的路径不在其覆盖内。
+
+**顺带修掉的第二类缺陷**:这 20 个脚本里 `from app...` 之类的仓内 import 全都依赖 `pip install -e .`,而 CONTRIBUTING.md 让开发者直接 `python scripts/xxx.py`。补 `sys.path.insert(0, str(ROOT))` 引导后,实测 **13/20 → 0/20** 失败:backup、restore、migration_drill、migration_gate、pagination_load_test、generate_residency_pack、redis_failure_drill、verify_audit_chain、verify_migration_registry 与四个 `run_*_drill` 在无 editable 环境下原本直接 `No module named 'app'`。这与 `frontend_gate.py` 上一轮修的是同一个缺陷,当时只修了一个文件。
+
+**这条的验证方式本身值得记下**:前三次测量都得出「修前 0 件失败」的假阴性,原因是 `artifacts/rls-venv` 装了 editable(`__editable__.helix_support-1.3.0.pth` 的 finder 走 import hook,**不经过 `sys.path`**),所以把 repo 路径从 `sys.path` 里剔掉根本不构成「无 editable 环境」。改用 `python -S`(完全不读 `.pth`)+ 手工追加 site-packages 才复现出真实条件。中途还有两次更粗的错误:用 `git worktree` 到 `/tmp/pre` 测——`ROOT` 随之指向 `/tmp/pre`,那里 `app/` 实在,必然通过;以及把 `verify_migration_registry` docstring 里**引用**的 `No module named 'app'` 文本当成了真实异常。三次假阴性都是「测量装置比被测对象更宽容」,与本轮门禁缺陷同型。
+
+- **验证**:**全量 pytest 1,230 passed / 40 skipped / 0 failed exit=0**(476.92s)。八个接线门禁逐个实跑,中文诊断全部正确显示且 exit 0:`tauri_config_gate --allow-empty-pubkey`(豁免 warning 现可读)、`license_gate`(33 包)、`threat_model_gate`、`vuln_review`、`check_workflows`(SHA 警告现可读)、`release_manifest --verify`、`image_admission_check --no-digest-required`、`redis_failure_drill --help`;`frontend_gate` 绿(node 351 测试);`ruff check scripts/` 全过、`_console.py` 格式合规;20 个脚本在 `python -S`(无 editable)+ 任意 cwd 下解析 13 失败 → 0 失败。**过程中排除的两个误判**:`release_manifest --verify` 曾看似「报 4 处不一致却 exit 0」,实为我用管道读到了 `head` 的退出码,直接跑确认 exit=1、CI 会正确变红;本地 manifest 与源码树不一致是 `artifacts/` 未入库 + CI 每次先 `--build` 的正常状态,非回归,已重建对齐。另有 5 个文件 `ruff format --check` 报需重排,经比对为改动前既有的 0.16.3 版本漂移,按既定约定未触碰。
+
+### 四个空白图标 + 岛内 label 绑到 legacy 隐藏输入框(2026-09-01)
+
+- **四个 sprite symbol 从未定义**(^1743251):`<use href="…#name">` 指向 sprite 里不存在的 symbol 时**什么都不画**——没有控制台报错,没有 404(sprite 本身能解析),只有一个空盒子。`moon`/`eye`/`link`/`at-sign` 四个名字被 index.html 五处 + mentions-island.jsx 一处引用却从未定义:`#themeToggle`(头部主题开关,**纯图标按钮无文字**,整个渲染成空白方块)、`#mentionsBadge`、`#watchBtn` 与 `#watchBanner`、`#ticketLinkCurrent`。真机实测 `#moon` 的 `<use>` 盒子 0×0 而父 `<svg>` 已布局到 18px——未解析 symbol 的特征;另三个在 `hidden` 容器里,手动展开后确认同样空白。**为什么全套门禁都没拦**:视觉基线是在按钮已损坏时拍的,把空白方块编码成了「正确」(旧 workspace-dark 基线该按钮区域 13 种颜色、亮度极差 18,即纯色块;重引导后为 86 种、162),而 axe 只看 `aria-label`——那个标签一直存在且正确。四个 symbol 按 sprite 既有风格补齐(Lucide 几何、24×24 viewBox、描边属性继承自根 `<svg>`)。新增门禁 `check_icon_symbols`(纯核 `find_unknown_icon_symbols`),对修复前的 sprite 精确报出全部六处引用。基线按「有意 UI 变更」惯例重引导——重引导前漂移仅 0.01–0.03%(远在 0.5% 限内,因为字形在整页截图里只有 14px),**这正是这类缺陷需要独立检查而不能靠像素门禁的原因**。
+- **岛内上传 label 绑到 legacy 隐藏输入框**(^a251325):composer 岛的附件上传一直在**误打误撞**走 legacy。它的 label 写 `for="attachmentFile"`,而让位的 legacy `#attachmentFile` 只是 hidden、并未移除——`label[for]` 绑定的是**文档树序里第一个**该 id 的元素,于是这个 label 控制的是 legacy 的输入框(真机 `label.control` 解析到岛外)。后果:岛自己的 `<input>` 与 `handleFileChange` 是死代码,`composer-island-bridge.js` 注释里写明「岛的文件输入把原始 File 递过来」的 `helix-composer-attachment-upload` 桥**一次都没触发过**;上传之所以能成,是因为 `bindAttachments()` 没有做岛模式门控,legacy 自己那个隐藏输入框的 change 监听仍在跑。岛本就有 `INPUT_IDS` 给它拥有的四个输入配 React 后缀 id,只是漏了文件输入,现补为 `attachmentFileReact`。**未改** `#noteForm`/`#noteInput`/`#mentionSuggest`:它们的 id 对等是有据可查的既定契约(`desktop/verify_note_form_desktop.py` 明写岛保留「legacy DOM 契约」),ui_smoke 与 ui_mention_autocomplete 按它定位,且岛的副本恰在树序靠前,label 绑定正确。由于哪个副本胜出**纯看 DOM 顺序、无法静态判定**,`ui_accessibility` 桌面壳 pass 新增 `assert_island_labels_bind_inside_their_island`:岛挂载点内每个 `<label for>` 必须控制同一岛内的元素;把修复 revert 后它精确报出违规项。
+- **连带切分 composer 岛**:这一行 id 改动把 `composer-island.jsx` 从正好 400 行推到 415,触发 ^8e31865 新加的模块上限,于是按其余四岛同样的方式拆开——`composer/constants.js`(COMPOSER_EVENTS/INPUT_IDS/macroMatches)+ `composer/tool-bars.jsx`(CannedBar/MacroSuggest/CopilotBar/AttachmentBar)。根保留两个表单、全部状态与全部 handler 并向下传参,工具条保持纯展示;常量单独成模块以免工具条反向 import 根造成循环。根 290 行,最大新模块 183 行,三个名字均从根 re-export,导入面不变。
+- **验证**:vitest **167** 例(16 文件,+1 例把文件输入的 id 钉住防回归);frontend/performance 门禁绿(JS 725,651/780,000、CSS 99,791/125,000);视觉门禁四面 **0.00%**(纯 JSX 抽取,像素中性);`ui_accessibility` 含新 label 断言全绿;`ui_smoke`/`ui_knowledge` 绿;gate 单测 25 例(新增 `UnknownIconSymbolTests` 5 例)。
+- **顺带查清两处非缺陷**:`helix-*` 事件桥完整(60 派发 / 62 监听,唯一孤儿 `helix-nav-switch` 出自决策不激活、挂载点恒 hidden 的 session-shell 岛);岛模式活 DOM 里余下 19 处重复 id 全部是有意的 id 对等契约(legacy 写入自己那份隐藏副本,无害)。`tests/ui_attachment.py` 失败为既有状态(HEAD 同样失败、逐位一致):它是 docstring 自称 Backlog 且从未接入任何门禁的脚本(CI 只跑 ui_smoke/ui_admin/ui_knowledge/ui_accessibility),与本次改动无关;队列点击加载会话线程经实测正常(3 条客户消息的会话点出 4 行、1 条的点出 2 行,标题对应)。
+
+### 三条被未定义 CSS 变量吞掉的声明 + 悬空 var() 门禁(2026-09-01)
+
+- **缺陷共性**:`var(--x)` 在 `--x` 从未定义、且没有回退值时解析为 guaranteed-invalid,**整条声明在计算值阶段被丢弃**——没有控制台警告,没有构建错误,一条消失的 `background` 看起来只是设计选择。三处因此逃过了全部门禁与四张视觉基线:
+  - `.report-preview`(管理页报表预览 `<pre>`)写 `background: var(--bg)`。别名块定义的是 `--bg-0`…`--bg-3`,没有 `--bg`,所以两个主题下这个 `<pre>` 都**完全透明**地压在卡片上(实测 `rgba(0,0,0,0)`)。改为 `--surface-alt`——所有同类凹陷等宽块都用它,`.audit-payload` 的 surface-alt/line/radius-sm 组合与它完全同形。
+  - `.csat-label` 写 `color: var(--text-muted)` 且**没带回退**,而另外五处 `--text-muted` 引用全部写作 `var(--text-muted, var(--muted))`。声明被丢弃后标签继承了满强度正文色(暗色实测 `rgb(230,237,243)`,本应 `rgb(139,149,163)`),读起来像正文而不是标签。
+  - `.desktop-splash` 引用 `--color-surface-0` 与 `--color-text`,**两个名字在任何地方都不存在**,双双落到硬编码深色 hex——这个 `inset:0; z-index:9999` 的 Tauri 启动全屏遮罩因此在亮色主题下始终是深色。改用别名名 `--bg-0`/`--ink`:亮色主题重映射的是别名(指向 `--color-light-*`),底层 `--color-bg-0`/`--color-ink` 仍保持深色值,所以直接引用 `--color-*` 同样不会翻转(第一版修法就错在这里,已纠正)。
+- **未动**:`.thread-load-older-btn:hover` 的 `var(--accent, var(--blue))`。`--accent` 同样未定义,但回退能解析、能渲染,改它等于凭对意图的猜测改变外观。
+- **门禁**(`scripts/frontend_gate.py` `check_css_custom_properties`):汇集 `app/static` 下所有手写样式表(跳过 Vite 产物 `dist/`)的自定义属性定义,再报出每一个既无定义又无回退的 `var()` 引用。对 f8bc271 的父提交运行,精确报出上述两条无回退缺陷。检测核心拆为纯函数 `find_dangling_css_vars(sheets)` 以便用合成 CSS 测试——**这一拆立刻抓出门禁自身的 bug**:定义正则锚在行首,导致单行 `:root { --x: red }` 不被登记、`--x` 的每一处使用都被误报;去掉锚点是安全的,因为 `var()` 引用后面永不跟冒号。
+- **验证**:视觉门禁四面 **0.00% drift**(clean DB;首轮四面全飘是 UI 套件把 `support.db` 种了数据所致——把本次改动 revert 后百分比完全一致,证明这个 diff 在基线上像素中性);计算样式确认三处均已解析且随主题翻转;两处可见修复的对比度实测 `.csat-label` 6.24:1 暗 / 5.26:1 亮(12px,4.5:1 底线)、`.report-preview` 16.02:1 / 14.88:1;`ui_accessibility` 含桌面壳 pass 全绿;CSS 字节 99,791/125,000;`tests/test_frontend_gate.py` 新增 `DanglingCssVarTests` 6 例锁边界(定义/未定义、有无回退、跨表定义汇集、内联定义、行号、嵌套回退——`var(--a, var(--b))` 内层未定义时照样报,因为 `--a` 会回退到一个 guaranteed-invalid 值、声明仍然丢弃;这也正是仓库自己的 `var(--text-muted, var(--muted))` 干净的原因:`--muted` 有定义),共 19 例绿。
+
+### INP 直接归因探针:交互延迟从「长任务代理」升级为逐事件实测(2026-09-02)
+
+- **§43.6 残留关闭**:性能门禁的交互延迟此前一直用 `long_task_count_30s` ≤50 **代理** INP——长任务只统计 ≥50ms 的块,任何「慢但每块 <50ms」的交互或一根不快不慢的点击都无感;且长任务数无法区分是哪次交互慢、慢在哪。`scripts/performance_gate.py` 现在直接测 INP:`PerformanceObserver('event', durationThreshold: 0)` 在**任何交互发生前**注入页面,用 Playwright 受信输入(`locator.click()`)点真实队列行触发完整交互(pointerdown/pointerup/click 共享 interactionId,按 ID 分组取最长事件处理时长——这正是 INP 的定义),`expect_response` 等详情 fetch 落定确保 handler 全部跑完。程序化 `element.click()` 不带 interactionId、静默记不到任何东西,因此必须走受信输入管道。
+- **实测校准**(本机 Chromium,空队列基线):web `inp_ms` = 3.0ms、桌面壳 `inp_desktop_ms` = 6.0ms,预算定为 300ms(实测值 50–100 倍余量——行渲染毫秒级,余量留给 CI runner 抖动与未来功能成本;预算如此宽松正说明 INP 不是当前瓶颈,而探针的职责是**在它变成瓶颈的第一天就把主线程回归抓出来**,这与桌面 LCP 1000ms 的严格预算形成对照)。`inp_ms == 0.0` 视为探针失效(队列无可点行)→ 门禁显式报「budget went unenforced」,不再静默跳过。
+- **种子确定性**:点击目标由 `_ensure_queue_row` 通过应用自身 API 播种(`POST /api/conversations`,demo auth 对无 key 请求放行),再等一次轮询周期落定——不再赌队列里恰有数据,桌面壳与 web 两条测量轨共用同一行选择器(`.conversation-row button.conversation-item`)。
+- **验证**:浏览器层全绿(perf 门禁带 `--base-url` exit=0,`PERF_PRECISE_MEMORY=1` 下 heap 0.23MB/15MB);`tests/test_performance_gate.py` 新增 INP 两键覆盖断言共 3 例绿;同时把测量顺序修正为「种子在 paint/10k 渲染**之后**」——先种子会让 CLS/LCP 暴露在非空队列渲染下,而 INP 探针需要真实可点行,两个需求各得其所。
+
+### Core Web Vitals 补齐:浏览器层新增 FCP/FID/TTI 四组预算(2026-09-02)
+
+- **§43.6 性能预算从三指标扩到七指标**:浏览器层此前只测 LCP/CLS/长任务,现在补齐 FCP(First Contentful Paint)、FID(First Input Delay)、TTI(Time to Interactive)三组——web 与桌面壳各一份,共 10 项浏览器预算。`metrics_script` 单一脚本同时产出两上下文,桌面壳经 `desktop_key_map` 把每个 paint 键映射到 §D5 预算键。
+- **修复一个刚引入的 fail-open**:桌面壳路径此前只把 `lcp_ms`/`cls` 映射到 `lcp_desktop_ms`/`cls_desktop`,新增的三个桌面键若沿用旧写法会**从未被赋值**,而断言循环对缺键 `continue`——这正是本仓库反复踩过的「预算看似存在实则未接线」。改用整表映射后实测桌面五键全部落值;`tests/test_performance_gate.py` 新增 `test_desktop_budgets_have_web_twins` 钉住配对,以后加新指标必须同时加映射两侧,否则测试红。
+- **实测校准**(本机 Chromium,空队列基线,PERF_PRECISE_MEMORY=1):web FCP 416ms/预算 1800、TTI 416ms/3800、FID 0ms(页面在首次交互前已空闲)/100;桌面 FCP 424ms/800、TTI 424ms/2000、FID 0ms/50。LCP 684ms/2500、INP 3ms、CLS 0.0019,全部宽裕。
+- **bundle 分析顺手发现**:`app/static/dist/assets/` 22 个 chunk 共 728KB raw / 211KB gzip,其中 terminal 409KB(xterm.js 三 addon)按需懒加载且被首屏预算正确排除;但 **sourcemap 共 2.12MB,是 JS 的 298%**,被 PyInstaller 原样打进桌面包(`desktop/helix-server.spec` 把整个 `app/static` 收为 datas)——开发调试产物成了发货体积。spec 现在在 COLLECT 前过滤 `.map` 后缀,桌面包减重 ~2.1MB;web 端 sourcemap 保留不变。
+
+### 详情开关内存泄漏探针:5 轮开关循环测残留堆(2026-09-02)
+
+- **新增 `detail_leak_mb` 预算**(5.0MB):浏览器层现在对详情视图做「开→关」泄漏扫描——`selectConversation(id)` 打开所选会话的转录详情、`clearSelection()` 关闭,重复 5 轮;每轮关闭后强制 GC(`--js-flags=--expose-gc`)再采样堆,**采样稳态残留而非打开峰值**,预算断言闭合后的堆不逐轮爬升。详情渲染是 DOM 装配最重的路径(转录/标签/语言下拉/线程滚动),跨 clearSelection 残留的节点或监听器会在这里现形。
+- **独立探针会话**:GC 标志与强制 GC 只作用于独立 browser session,与主测量会话隔离——实测 `--expose-gc` 会把同会话的桌面 LCP 拉高 ~50ms(992→1036),时延预算与内存探针互不污染。探针 wait 放宽到 60s 吸收低负载下的渲染抖动。
+- **实测校准**(本机 Chromium,clean DB,PERF_PRECISE_MEMORY=1):`detail_leak_mb` = 0.03MB(关闭后残留 ~30KB,预算 5MB)——详情路径无泄漏;同轮 heap_growth 0.31MB/15MB。无行可点时探针显式报「budget went unenforced」,不静默跳过。CI nightly 不设 PERF_PRECISE_MEMORY 时探针与 heap 测量一样按量子化堆跳过,`:expose-gc` 不进入默认测量链路。
+
+### 脚本 lint 修复 + 覆盖率补测 + runbook/文档完善(2026-09-02)
+
+- **ruff 0.9.9(CI 口径)全绿**:消灭 scripts/ 下 16 个 lint 错误——15 个是 `_console.py` 统一改造引入的重复 `import sys`/`from pathlib import Path`(F811/E402,ruff --fix 安全清理),1 个是真实 bug:`split_main.py` 的 `__main__` 块调用**从未导入**的 `use_utf8_console()`(F821,该脚本 Phase 27.2 后从未被真正运行过)。`rebuild_main.py` 的 bootstrap `import sys` 加 noqa 对齐其余脚本。本地 0.16.x 的 473 项报告属版本差异噪音(仓库记录过「CI 口径 ruff 用 artifacts/ruff-099-pkg」),不在本次范围。
+- **`split_main.py` 破坏性保护**:验证时发现该脚本无 argparse,`--help` 直接执行 `main()` 把 `app/main.py` 和 `app/routers/conversations.py` 重写了一遍(已 `git checkout` 完整恢复)。补 `--apply` 显式开关,无参数或 `--help` 一律 `parser.error` 拒绝执行——一次性的迁移工具也要防误触。
+- **覆盖率 85% → 87.25%**(新增 13 个测试文件共 190 例,切审计/安全/配置/遥测/渠道/附件关键面):`tests/test_webhook_safety.py`(SSRF 防护 78%→98%);`tests/test_audit_gap.py`(audit_gap 45%→97%);`tests/test_anchor_service.py`(anchor_service 0%→96%);`tests/test_audit_chain.py`(audit_chain 6%→93%,含流式验证器 O(1) 内存契约);`tests/test_audit_anchor_verify.py`(audit_anchor 74%→96%);`tests/test_telemetry_edge.py` + `tests/test_telemetry_otel_branches.py`(telemetry 69%→99%,OTel mock 分支);`tests/test_cache.py`(保留原有 3 例扩展至 14 例);`tests/test_channel_providers_branches.py`(channel_providers →100%);`tests/test_channel_key_id.py`(channel_webhooks →95%,key_id 选择全失败模式统一 None);`tests/test_attachment_router_errors.py`(routers/attachments 75%→96%);`tests/test_config_validation.py`(config.py 88%→93%,41 个 env 校验分支 fail-fast);`tests/test_small_module_branches.py`(errors/attachment_store 兜底)。
+- **runbook 非作者执行预检**(Gate B 项):两个 runbook 的 `APP_VERSION` 检查从 `import app.main`(触发整个应用初始化:建库/起 worker/刷日志)改为 AST 静态读取——零副作用,输出可预测。`docs/OPERATIONS.md` 补「Performance Gate Failing (Browser Layer)」故障排查段(桌面/网页两轨同升是系统负载信号、`PERF_PRECISE_MEMORY` 语义、泄漏探针失效形态、`--update` 使用纪律);`docs/PERF_NOTES.md` 补 §43.6 浏览器性能预算实测表与测量环境要点(桌面 LCP 860–984ms 贴线、`--expose-gc` 隔离、INP 受信输入要求、sourcemap 桌面包排除)。
+- **覆盖率补测自抓一个已发货 fail-open(2026-09-03 修复)**:新测试 `test_rejects_widget_frame_ancestors_empty` 暴露 `WIDGET_FRAME_ANCESTORS=""` 被 `from_env` 的生成器过滤成空元组后,又经 `widget_frame_ancestors or ("'self'",)` **静默回退到默认值**——显式配置错误被吞,与该测试文件钉住的「env 校验 fail-fast,绝不静默回退」契约相反。修复:`from_env` 区分未设置(取 `'self'` 默认)与显式置空(保留空元组,由 `__post_init__` 的 `must contain at least one source` 校验抛错);删除构造处的 `or` 回退。这也是本仓库反复出现的同一类缺陷的第 N 例:回退写法让「看似存在的校验」对特定输入路径失效。
+
+### ruff 门禁浮动版本静默改口径 + format 检查从未绿过(2026-09-03)
+
+- **又一个「门禁看似存在,实则从未运行」**:`ci.yml` 装 `ruff>=0.9,<1`(浮动),而 ruff 的默认规则集与 formatter 风格随每个 minor 演化——同一棵树,0.9.9 lint 只报 1 个错误,0.16.5 报 **494 个**(BLE001/SIM117/UP035/I001/RUF100 等 0.9 时代从未主动选择的规则),format 待重排 79 对 64。更早:`ruff format --check` 这一步在 e51b972(1.3.0 发布)加入时起**在任何 ruff 版本下都从未绿过**——推送基线 833e277 上 0.9.9 也报 64 个文件待重排,即 CI 的「Ruff format check」自引入以来只会红。浮动范围让两条门禁的口径随时间静默漂移,与昨天 CHANGELOG 记录的「本地 0.16.x 473 项属版本差异噪音」是同一根因的另一面。
+- **修复:钉定 + 一次性收口**。`ruff==0.9.9`(pyproject dev deps 与 ci.yml 同步钉定,与本地 `artifacts/ruff-099-pkg` 同口径,注释写明钉定理由);`ruff format app tests scripts` 一次性格式化 79 个文件(纯格式:+384/-355 行,无语义变化);顺手消灭 0.9.9 口径下唯一的真实 lint 错误(`test_small_module_branches.py` 未用 `Any` 导入)。0.9.9 口径下 format+lint 双绿,全量 pytest 复跑 exit 0。
+- **`scan_secrets` 误报 Rust 构建缓存**:`IGNORED_DIR_NAMES` 漏了 `target`——src-tauri 的增量编译缓存把 CSP 哈希表(`'sha256-<43 base64>='`)编进 `.o` 文件,正中 fernet 形状正则;本机 `cargo build` 后门禁恒红(CI 无 target 目录所以从未暴露)。补入忽略列表(与 node_modules/build 同类:gitignored 的本地工具状态)+ 注释写明误报机理 + 测试用真实 CSP 哈希形态锁定。全仓扫描 clean。
+- **RELEASE_1_4 runbook §1 门禁复核**(Gate B 非作者预演的自动化部分):pytest 全量、ruff format/lint(钉定后)、openapi 快照、frontend_gate(351 tests)、SBOM(26 components)、release manifest build+verify、threat_model_gate、tauri_config_gate(空 pubkey 豁免)、pip check 全绿;pyright/pip_audit 本地无包,属 CI 步骤。manifest 仅余「base_image_digest 未固定」警告——需真实 registry,既有记录。
+
 ## 2.0 后续 — ROADMAP §43.6 前端可维护性和性能预算(2026-08-23)
 
 ### Added

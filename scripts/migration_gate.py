@@ -22,12 +22,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/migration_gate.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from app.migrations import (
     all_migrations,
     check_migration_phases,
     verify_migration_chain,
 )
+from scripts._console import use_utf8_console
 
 
 def main() -> int:
@@ -66,4 +75,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

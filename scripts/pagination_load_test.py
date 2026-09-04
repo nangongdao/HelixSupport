@@ -31,15 +31,24 @@ from __future__ import annotations
 import argparse
 import gc
 import os
+import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import quantiles
-from typing import Any, Callable
+from typing import Any
+
+# Same bootstrap as the other repo-root importers (frontend_gate, visual_gate,
+# readme_screenshots, …). Without it a direct `python scripts/pagination_load_test.py` — the
+# invocation the docs and runbooks document — dies on `No module named 'app'`
+# unless the package happens to be installed editable, which only CI does.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from app.database import Database, utc_now
-
+from scripts._console import use_utf8_console
 
 # Search probes used by the ROADMAP 18.5 gate.  The selective marker is
 # deliberately absent from every conversation id/name/ref and appears only in
@@ -449,4 +458,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

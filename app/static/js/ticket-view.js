@@ -61,6 +61,11 @@ export function switchWorkspaceTab(field) {
   if (!ctx.els.wsTabQueue || !ctx.els.wsTabTickets) return;
   const isTickets = field === "tickets";
   if (ctx.els.queuePane) ctx.els.queuePane.dataset.mode = isTickets ? "tickets" : "queue";
+  // Island mode: the workspace tabs island owns the tablist; report the new
+  // active tab so the island reconciles (also covers programmatic switches).
+  window.dispatchEvent(
+    new CustomEvent("helix-workspace-tab-changed", { detail: { field } }),
+  );
   if (ctx.els.wsTabQueue) {
     ctx.els.wsTabQueue.classList.toggle("is-active", !isTickets);
     ctx.els.wsTabQueue.setAttribute("aria-selected", String(!isTickets));
@@ -94,6 +99,11 @@ export function closeTicketDetail() {
 }
 
 export async function loadTickets() {
+  // D3 take-over: in the desktop shell the React ticket island owns the list
+  // (#ticketList is yielded and hidden by the island loader). Rendering into a
+  // hidden container would still duplicate .ticket-row nodes in the DOM and
+  // fire a redundant fetch, so yield here instead.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) return;
   const status = ctx.els.ticketStatusFilter?.value || "";
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   try {

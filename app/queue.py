@@ -167,8 +167,12 @@ class SQLiteTaskQueue:
         retryable: bool = True,
     ) -> dict[str, Any] | None:
         return self.database.fail_turn_job(
-            job_id, worker_id, error_code, retry_base_seconds,
-            retryable=retryable, lease_seconds=lease_seconds,
+            job_id,
+            worker_id,
+            error_code,
+            retry_base_seconds,
+            retryable=retryable,
+            lease_seconds=lease_seconds,
         )
 
     def recover(self, lease_seconds: int) -> dict[str, int]:
@@ -217,7 +221,7 @@ return nil
 
 
 def _iso_to_epoch(value: str) -> int:
-    return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    return int(datetime.fromisoformat(value).timestamp())
 
 
 class RedisTaskQueue:
@@ -372,8 +376,12 @@ class RedisTaskQueue:
         retryable: bool = True,
     ) -> dict[str, Any] | None:
         result = self.database.fail_turn_job(
-            job_id, worker_id, error_code, retry_base_seconds,
-            retryable=retryable, lease_seconds=lease_seconds,
+            job_id,
+            worker_id,
+            error_code,
+            retry_base_seconds,
+            retryable=retryable,
+            lease_seconds=lease_seconds,
         )
         try:
             self._cleanup_claim(job_id)
@@ -483,7 +491,7 @@ def create_task_queue(database: Any, settings: Any) -> TaskQueue:
     backend = getattr(settings, "queue_backend", "sqlite")
     if backend == "redis":
         try:
-            import redis
+            import redis  # type: ignore[reportMissingImports]
 
             client = redis.from_url(settings.redis_url, decode_responses=True)
         except ImportError:

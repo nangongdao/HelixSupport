@@ -76,3 +76,64 @@ test("safeCitationUrl allows root-relative and https targets only", () => {
   assert.equal(safeCitationUrl(""), "#");
   assert.equal(safeCitationUrl(undefined), "#");
 });
+
+// ── submitNote core (D3 long tail slice 16) ──
+
+import { configure as configureInspector, submitNote } from "../../app/static/js/inspector.js";
+
+function configureForNotes({ api, showToast, loadDetail, refreshAll }) {
+  configureInspector({
+    state: { selectedId: "conv-1" },
+    api,
+    showToast: showToast || (async () => {}),
+    loadDetail: loadDetail || (async () => {}),
+    refreshAll: refreshAll || (async () => {}),
+  });
+}
+
+test("submitNote posts the trimmed note, toasts and refreshes the detail", async () => {
+  const calls = [];
+  configureForNotes({
+    api: async (url, options) => {
+      calls.push({ url, options });
+      return {};
+    },
+    showToast: async (message) => calls.push({ toast: message }),
+    loadDetail: async (id) => calls.push({ loadDetail: id }),
+    refreshAll: async (options) => calls.push({ refreshAll: options }),
+  });
+  const ok = await submitNote({ content: "  核对完毕  " });
+  assert.equal(ok, true);
+  const post = calls.find((call) => call.url);
+  assert.match(post.url, /\/api\/conversations\/conv-1\/notes$/);
+  assert.deepEqual(JSON.parse(post.options.body), { content: "核对完毕" });
+  assert.ok(calls.some((call) => call.toast === "内部备注已添加"));
+  assert.ok(calls.some((call) => call.loadDetail === "conv-1"));
+  assert.ok(calls.some((call) => call.refreshAll && call.refreshAll.silent === true));
+});
+
+test("submitNote rejects empty content without posting", async () => {
+  const calls = [];
+  configureForNotes({
+    api: async (url) => {
+      calls.push({ url });
+      return {};
+    },
+  });
+  const ok = await submitNote({ content: "   " });
+  assert.equal(ok, false);
+  assert.equal(calls.length, 0);
+});
+
+test("submitNote reports failures without throwing", async () => {
+  const calls = [];
+  configureForNotes({
+    api: async () => {
+      throw new Error("boom");
+    },
+    showToast: async (message) => calls.push({ toast: message }),
+  });
+  const ok = await submitNote({ content: "内容" });
+  assert.equal(ok, false);
+  assert.ok(calls.some((call) => call.toast === "boom"));
+});

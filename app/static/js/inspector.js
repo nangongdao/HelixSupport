@@ -24,6 +24,7 @@ let ctx = null;
 /** Inject the legacy app.js singletons (state/els/api/helpers). */
 export function configure(deps) {
   ctx = deps;
+  bindIslandBridge();
 }
 
 /** Tab mount points in display order. */
@@ -117,13 +118,10 @@ export async function updateLabels(event) {
   }
 }
 
-export async function updatePriority(button) {
-  if (!ctx.state.selectedId || button.getAttribute("aria-pressed") === "true") return;
-  const conversationId = ctx.state.selectedId;
-  const priority = button.dataset.priority;
-  ctx.els.inspectorOverview.querySelectorAll(".priority-option").forEach((option) => {
-    option.disabled = true;
-  });
+/** Set a conversation's priority via API (legacy form button and the React
+ *  island bridge share this; the island never touches legacy panel DOM). */
+export async function setConversationPriority(conversationId, priority) {
+  if (!conversationId || !priority) return;
   try {
     await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}`, {
       method: "PATCH",
@@ -136,6 +134,16 @@ export async function updatePriority(button) {
     ctx.showToast(error.message, true);
     if (ctx.state.selectedId === conversationId) await ctx.loadDetail(conversationId);
   }
+}
+
+export async function updatePriority(button) {
+  if (!ctx.state.selectedId || button.getAttribute("aria-pressed") === "true") return;
+  const conversationId = ctx.state.selectedId;
+  const priority = button.dataset.priority;
+  ctx.els.inspectorOverview.querySelectorAll(".priority-option").forEach((option) => {
+    option.disabled = true;
+  });
+  await setConversationPriority(conversationId, priority);
 }
 
 export function renderOverview(detail) {
@@ -167,12 +175,12 @@ export function renderOverview(detail) {
       </dl>
       ${ctx.canOperate() ? `<form id="conversationLabelsForm" class="label-editor">
         <label class="label-editor-field">
-          <svg class="icon"><use href="/static/icons.svg?v=1.3.9#tag" /></svg>
+          <svg class="icon"><use href="/static/icons.svg?v=1.4.0#tag" /></svg>
           <span class="sr-only">会话标签</span>
           <input name="labels" type="text" maxlength="240" value="${ctx.escapeHtml(labels.join(", "))}" placeholder="VIP, 退款风险" />
         </label>
         <button type="submit" title="保存标签" aria-label="保存标签">
-          <svg class="icon"><use href="/static/icons.svg?v=1.3.9#check" /></svg>
+          <svg class="icon"><use href="/static/icons.svg?v=1.4.0#check" /></svg>
         </button>
       </form>` : ""}
     </section>
@@ -267,8 +275,95 @@ export function renderInspector(detail) {
     ctx.els.inspectorAudit.innerHTML = "";
     return;
   }
+  // D3 island mode: the React inspector island owns the tab + panel DOM.
+  // Publish the detail snapshot it mirrors and stop painting the legacy
+  // panels (kept hidden by the loader) — the tab state stays in legacy.
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    publishInspectorState();
+    return;
+  }
   ensureInspectorTab(ctx.state.activeTab, detail);
   switchInspectorTab(ctx.state.activeTab);
+}
+
+/** Publish the current inspector state for the React island mirror. */
+export function publishInspectorState() {
+  const roleLabels = ctx.roleLabels || {};
+  window.dispatchEvent(
+    new CustomEvent("helix-inspector-state", {
+      detail: {
+        detail: ctx.state.detail,
+        collapsed: ctx.state.inspectorCollapsed,
+        activeTab: ctx.state.activeTab,
+        canOperate: ctx.canOperate(),
+        actorId: ctx.state.me ? ctx.state.me.actor_id : "",
+        collaborators: (ctx.state.collaborators || []).map((c) => ({
+          actor_id: c.actor_id,
+          roleLabel: roleLabels[c.role] || c.role,
+        })),
+      },
+    }),
+  );
+}
+
+/** Shared internal-note write (legacy form submit + island bridge). Returns
+ * whether the note landed; callers own their DOM state. */
+export async function submitNote({ content } = {}) {
+  const text = String(content || "").trim();
+  if (!ctx.state.selectedId || !text) return false;
+  try {
+    await ctx.api(`/api/conversations/${encodeURIComponent(ctx.state.selectedId)}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ content: text }),
+    });
+    ctx.showToast("内部备注已添加");
+    await ctx.loadDetail(ctx.state.selectedId);
+    void ctx.refreshAll?.({ silent: true, refreshDetail: false });
+    return true;
+  } catch (error) {
+    ctx.showToast(error.message || "内部备注提交失败", true);
+    return false;
+  }
+}
+
+// D3 bridge: the React inspector island dispatches tab switches, priority
+// changes and label saves (the legacy tabs/panels are yielded + hidden in
+// the desktop shell). Route them back to this module's handlers.
+function bindIslandBridge() {
+  if (typeof window === "undefined") return;
+  window.addEventListener("helix-inspector-sync", () => publishInspectorState());
+  window.addEventListener("helix-inspector-tab", (event) => {
+    const { tab } = event.detail || {};
+    if (!tab || !INSPECTOR_TABS.includes(tab)) return;
+    ctx.state.activeTab = tab;
+    publishInspectorState();
+    if (tab === "quality") ctx.loadQualityPanel?.();
+  });
+  window.addEventListener("helix-inspector-priority", (event) => {
+    const { priority } = event.detail || {};
+    if (!priority || !ctx.state.selectedId) return;
+    void setConversationPriority(ctx.state.selectedId, priority);
+  });
+  window.addEventListener("helix-inspector-labels", (event) => {
+    const { labels } = event.detail || {};
+    if (!Array.isArray(labels)) return;
+    const form = {
+      preventDefault: () => {},
+      elements: { labels: { value: labels.join(", ") } },
+    };
+    void updateLabels(form);
+  });
+  // Note composer: the island owns the form DOM; the write + completion
+  // feedback stay here.
+  window.addEventListener("helix-inspector-note-submit", (event) => {
+    const { content } = event.detail || {};
+    void (async () => {
+      const ok = await submitNote({ content });
+      window.dispatchEvent(
+        new CustomEvent("helix-inspector-note-submitted", { detail: { ok } }),
+      );
+    })();
+  });
 }
 
 export function switchInspectorTab(tab) {
@@ -291,18 +386,8 @@ export function switchInspectorTab(tab) {
 }
 
 export default {
-  INSPECTOR_TABS,
-  createInspectorState,
-  reduceInspector,
-  safeCitationUrl,
-  configure,
-  updateLabels,
-  updatePriority,
-  renderOverview,
-  renderEvidence,
-  renderAudit,
-  resetInspectorRenderFlags,
-  ensureInspectorTab,
-  renderInspector,
-  switchInspectorTab,
+  INSPECTOR_TABS, createInspectorState, reduceInspector, safeCitationUrl,
+  configure, updateLabels, updatePriority, setConversationPriority, submitNote,
+  renderOverview, renderEvidence, renderAudit, resetInspectorRenderFlags,
+  ensureInspectorTab, renderInspector, switchInspectorTab, publishInspectorState,
 };

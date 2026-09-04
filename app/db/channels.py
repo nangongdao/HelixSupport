@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false
-
 from typing import Any
 from uuid import uuid4
 

@@ -11,6 +11,12 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+import sys
+
+sys.path.insert(0, str(ROOT))
+from scripts._console import use_utf8_console
+
 MAIN_BAK = ROOT / "app" / "main.py.bak"
 ROUTER = ROOT / "app" / "routers" / "conversations.py"
 
@@ -22,7 +28,7 @@ def generate_router() -> str:
     lines = MAIN_BAK.read_text(encoding="utf-8").splitlines()
     block = "\n".join(lines[START:END])
     # Rewrite decorators
-    block = re.sub(r"^    @app\.", "    @router.", block, flags=re.M)
+    block = re.sub(r"^    @app\.", "    @router.", block, flags=re.MULTILINE)
     header = '''"""Conversations, saved views, canned responses, audit, and knowledge routes (27.2)."""
 
 from __future__ import annotations
@@ -35,6 +41,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from typing_extensions import Annotated as TAnnotated  # noqa: F401
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import use_utf8_console  # noqa: E402
 
 from app.main import (
     IDEMPOTENCY_KEY_PATTERN,
@@ -135,4 +146,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
+    # Safety: this script destructively rewrites app/main.py and
+    # app/routers/conversations.py. Never run it with bare --help or by
+    # accident; require an explicit flag. `--apply` performs the rewrite.
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="actually rewrite the files")
+    args = parser.parse_args()
+    if not args.apply:
+        parser.error("refusing to rewrite files without --apply")
     main()

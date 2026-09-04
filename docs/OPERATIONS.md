@@ -318,6 +318,46 @@ Order or CRM `unavailable` must escalate to a human without inventing “not fou
 
 Inspect `GET /api/webhooks/deliveries` for `pending` / `sending` / `dead`. A growing `dead` count usually means the consumer is returning 4xx or remaining 5xx past `max_attempts`. Confirm the consumer verifies `X-Helix-Signature` over `timestamp.body` and deduplicates on `event_id`. A row stuck in `sending` is reclaimed after the sending lease (60s); do not delete it. Transient failures return to `pending` with `next_attempt_at` backoff — do not restart the worker just to flush retries. After fixing the consumer, emit a new event or wait for the next `WEBHOOK_DELIVERY_INTERVAL_SECONDS` tick.
 
+### Performance Gate Failing (Browser Layer)
+
+`python scripts/performance_gate.py --base-url URL` reports `FAIL: <key>:
+<value> exceeds budget <limit>` when a Core Web Vitals budget breaches. Follow the
+metric-to-cause table in `docs/PERF_NOTES.md` §43.6 before changing any budget —
+budgets are the contract; a documented measurement override needs an explicit
+changelog entry.
+
+- **`lcp_desktop_ms` / `cls_desktop` breaching**: first check web-side twins
+  (`lcp_ms` / `cls`). Web and desktop rising together is a system-load signal
+  (background browser processes, memory pressure), not an app regression —
+  re-run on a clean DB and an idle machine before touching anything. Only a
+  single-track rise (desktop-only, web flat) points at the Tauri shell path:
+  splash hand-off, island mount, or sidecar asset staleness.
+- **`heap_growth_mb` / `detail_leak_mb` unmeasurable**: the gate reports this
+  when `PERF_PRECISE_MEMORY` is off (Chromium quantizes `performance.memory`
+  to a fixed 10 MB) or when the launch flag is missing. CI does not set the
+  variable by design; a local run needs `PERF_PRECISE_MEMORY=1`.
+- **`detail_leak_mb` climbing**: a leak probe failure means detail
+  open/close retains heap across cycles. Before debugging the renderer,
+  confirm the probe itself worked: it needs a clickable queue row (the INP
+  seed) and runs in a separate browser session with `--expose-gc`. A row-less
+  page reports "budget went unenforced", not a number.
+- **`inp_ms` / `inp_desktop_ms` = 0.0**: the probe found no interaction
+  events — the click target (`.conversation-row button.conversation-item`)
+  was missing or the seed failed. Seed the queue (the gate does this via
+  `POST /api/conversations`) and re-run; the gate refuses to read 0 as a
+  pass.
+- **Desktop LCP persistently near 1000 ms**: re-run with `PERF_PRECISE_MEMORY=1`
+  and the machine idle. Historical local spread is 860–984 ms against a
+  1000 ms budget; values past ~1.1 s on a clean DB warrant a thread-island
+  inspection rather than a budget raise.
+
+The static byte layer (`operator_js_bytes` / `operator_css_bytes` /
+`widget_js_bytes`, no browser needed) fails on bundle growth: check that the
+Vite `dist/` was rebuilt (`npx vite build`, `emptyOutDir` clears stale chunks)
+and that no unminified vendor blob was added. `--update` rewrites
+`artifacts/performance-baseline.json` — only after approving a real budget
+change, never to silence a failing gate.
+
 ## Deployment Topology And Recovery (Phase 42)
 
 ### Process Roles (42.1)

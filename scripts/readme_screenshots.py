@@ -1,9 +1,14 @@
-"""Capture the six README screenshots against the v1.3.9 professional SaaS skin.
+"""Capture the README screenshots against the v1.4.0 professional SaaS skin.
 
 Mirrors the interaction paths in tests/ui_smoke.py (conversation + handoff)
 and scripts/visual_gate.py (knowledge view, mobile queue, widget), but pins
 each capture to docs/assets/screenshots/ at a stable viewport so the README
-images reflect the current design rather than the retired Art Deco palette.
+images reflect the current design (3-tier @layer tokens + motion + desktop
+splash overlay) rather than the retired Art Deco palette.
+
+Six captures drive the web console. The seventh boots the page with the
+Tauri preconditions so the React islands mount, which is what the desktop
+app actually ships — the web captures above show the legacy renderers.
 
 Usage: HELIX_BASE_URL=http://127.0.0.1:8766 python scripts/readme_screenshots.py
 """
@@ -20,6 +25,8 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+from scripts._console import use_utf8_console
 
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8766").rstrip("/")
 WIDGET_SECRET = os.getenv("WIDGET_SECRET", "helix-widget-dev-secret")
@@ -58,6 +65,33 @@ def send_customer_message(page: Page, message: str) -> None:
         lambda r: "/api/conversations/" in r.url and r.url.endswith("/messages")
     ):
         page.get_by_role("button", name="发送客户消息").click()
+
+
+def capture_desktop_shell(context, name_hint: str) -> None:
+    """Capture the console as the Tauri desktop shell renders it.
+
+    Setting ``__TAURI_INTERNALS__`` before any page script and firing
+    ``helix-backend-ready`` makes the island loader mount the React islands,
+    which then take over the queue, composer, ticket and inspector panes from
+    the legacy renderers (D3 take-over). Desktop users only ever see this
+    DOM, so it needs its own capture rather than being represented by the
+    web screenshots above.
+
+    The conversations created earlier are server state, so the islands load
+    real rows through the normal API — nothing is seeded client-side here.
+    """
+    page = context.new_page()
+    page.add_init_script("window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };")
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
+    page.wait_for_selector("#queueReactIsland:not(:empty)", timeout=30000)
+    # Islands fetch their own data; wait for a real row, not the empty state,
+    # so the capture shows a populated queue.
+    expect(page.locator("#queueReactIsland")).to_contain_text(name_hint)
+    page.wait_for_timeout(800)
+    page.screenshot(path=OUT / "desktop-shell.png", full_page=False)
+    print("captured desktop-shell.png")
+    page.close()
 
 
 def widget_url() -> str:
@@ -115,7 +149,9 @@ def main() -> int:
         # 3) quality-dashboard — supervisor quality view with trend chart.
         page.get_by_role("button", name="关闭低配模式")
         page.locator('.nav-item[data-view="quality"]').click()
-        page.wait_for_selector("#qualityView[aria-busy='false'], #qualityViewBuckets", timeout=15000)
+        page.wait_for_selector(
+            "#qualityView[aria-busy='false'], #qualityViewBuckets", timeout=15000
+        )
         page.wait_for_timeout(600)
         page.screenshot(path=OUT / "quality-dashboard.png", full_page=False)
         print("captured quality-dashboard.png")
@@ -143,10 +179,15 @@ def main() -> int:
         mobile.screenshot(path=OUT / "web-chat-mobile.png", full_page=False)
         print("captured web-chat-mobile.png")
 
+        # 7) desktop-shell — the same console rendered by the React islands
+        # under the Tauri shell, i.e. what the desktop app ships.
+        capture_desktop_shell(context, run_id)
+
         browser.close()
     print("all README screenshots captured")
     return 0
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     sys.exit(main())

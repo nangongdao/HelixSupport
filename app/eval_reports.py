@@ -199,9 +199,9 @@ def _iso_now() -> str:
 
 
 __all__ = [
-    "EvalReportStore",
     "PROMOTION_KIND",
     "REPORT_KIND",
+    "EvalReportStore",
     "WormUnavailableError",
     "decide_promotion",
     "generate_report_object_id",

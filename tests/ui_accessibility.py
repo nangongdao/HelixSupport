@@ -1,4 +1,14 @@
-"""ROADMAP section 17.4 accessibility acceptance for operator and widget UIs."""
+"""ROADMAP section 17.4 accessibility acceptance for operator and widget UIs.
+
+Two operator passes run against a live server:
+
+* the desktop shell pass boots the page with the Tauri preconditions so the
+  React islands mount (D3 take-over) — this is the DOM desktop users get;
+* the web pass drives the legacy-rendered console, with the keyboard,
+  focus-trap and widget journeys that only make sense there.
+
+Both scan axe in dark and light themes and assert reduced-motion compliance.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +21,6 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, Playwright, expect, sync_playwright
 
 from app.widget_token import sign_token
-
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
@@ -32,6 +41,115 @@ def wait_for_operator(page: Page) -> None:
     expect(page.locator("#operatorIdentity")).to_contain_text("demo.admin")
     expect(page.locator("#conversationList")).to_have_attribute("aria-busy", "false")
     page.wait_for_function("() => typeof window.HelixModules?.toggleTheme === 'function'")
+
+
+def wait_for_desktop_shell(page: Page) -> None:
+    """Load the operator console the way the Tauri shell does.
+
+    The shell sets ``__TAURI_INTERNALS__`` before any page script runs and
+    fires ``helix-backend-ready`` once the sidecar answers /health/ready.
+    With both preconditions in place the island loader mounts the React
+    islands, which then take over from the legacy renderers (D3 take-over)
+    — that is the DOM desktop users actually see, so it needs its own
+    accessibility pass rather than relying on the web scan below.
+    """
+    response = page.goto(BASE_URL, wait_until="domcontentloaded")
+    # The island loader only mounts React surfaces when __HELIX_ISLAND_MODE__
+    # is set (main.js sets it inside the real shell); the init script must be
+    # registered *before* goto so it runs ahead of every page script.
+    page.add_init_script("() => { window.__HELIX_ISLAND_MODE__ = true; }")
+    response = page.goto(BASE_URL, wait_until="domcontentloaded")
+    assert response is not None and response.ok
+    page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
+    # Islands render asynchronously; any React content proves the mount.
+    page.wait_for_selector("#queueReactIsland:not(:empty)", timeout=30000)
+    page.wait_for_function("() => typeof window.HelixModules?.toggleTheme === 'function'")
+
+
+def seed_shell_conversations(page: Page) -> None:
+    """Push synthetic conversations through the island event bridge.
+
+    The shell scan would otherwise axe an empty-state queue, which says
+    nothing about the row markup desktop users actually read. Seeding keeps
+    the scan deterministic — it does not depend on whatever the live
+    database happens to hold — and uses the same event the queue island
+    listens on in production. One row per status so every status-pill
+    colour pairing is scanned, not just the default.
+    """
+    page.evaluate(
+        """() => {
+          const now = new Date().toISOString();
+          const statuses = ['open', 'waiting_human', 'human_active', 'resolved'];
+          const conversations = statuses.map((status, index) => ({
+            id: `a11y_${index}`,
+            customer_name: `验收客户 ${index}`,
+            status,
+            channel: 'web',
+            preview: '无障碍验收合成会话。',
+            labels: [],
+            updated_at: now,
+            version: 1,
+            sla_due_at: null,
+          }));
+          window.dispatchEvent(new CustomEvent('helix-conversations-updated', {
+            detail: {
+              conversations,
+              selectedId: conversations[0].id,
+              bulkSelected: [],
+              canOperate: true,
+              compact: false,
+            },
+          }));
+        }"""
+    )
+    expect(page.locator("#queueReactIsland")).to_contain_text("验收客户 1")
+
+
+def assert_island_labels_bind_inside_their_island(page: Page) -> None:
+    """Every ``<label for>`` in an island must control that island's own input.
+
+    The dual track leaves legacy elements in the DOM (hidden, not removed), and
+    several islands deliberately re-render legacy ids so locators keep
+    resolving. ``label[for]`` binds to the *first* element in tree order with
+    that id, so whether a label reaches the island's input or legacy's dead one
+    depends purely on DOM order — it cannot be checked statically.
+
+    The composer's attachment upload shipped broken this way: its label carried
+    ``for="attachmentFile"`` while legacy's hidden copy came first, so the
+    island's own input and its helix-composer-attachment-upload bridge were
+    unreachable and every upload went through legacy's listener instead.
+    """
+    offenders = page.evaluate(
+        """() => {
+            const bad = [];
+            for (const mount of document.querySelectorAll('[id$="ReactIsland"]')) {
+                for (const label of mount.querySelectorAll('label[for]')) {
+                    const control = label.control;
+                    if (!control) {
+                        bad.push({island: mount.id, for: label.getAttribute('for'),
+                                  reason: 'no control'});
+                    } else if (!mount.contains(control)) {
+                        bad.push({island: mount.id, for: label.getAttribute('for'),
+                                  reason: 'binds outside the island'});
+                    }
+                }
+            }
+            return bad;
+        }"""
+    )
+    assert not offenders, f"island labels not bound to their own inputs: {offenders}"
+
+
+def assert_desktop_shell_accessibility(page: Page) -> None:
+    wait_for_desktop_shell(page)
+    seed_shell_conversations(page)
+    assert_island_labels_bind_inside_their_island(page)
+    for theme in ("dark", "light"):
+        page.evaluate(f"() => window.HelixModules.applyTheme({theme!r})")
+        # Scan settled tokens, not the transient colours mid-transition.
+        page.wait_for_timeout(300)
+        assert_no_serious_axe_violations(page, f"desktop shell {theme} theme")
+    assert_reduced_motion(page, "desktop shell")
 
 
 def install_axe(page: Page) -> None:
@@ -216,12 +334,26 @@ def widget_url() -> str:
 def main() -> None:
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
+
+        # Desktop shell pass first: it mounts the React islands, which is the
+        # DOM shipped to desktop users and the one no other scan covers.
+        shell_context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        shell_page = shell_context.new_page()
+        shell_page.add_init_script(
+            "window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };"
+        )
+        assert_desktop_shell_accessibility(shell_page)
+        shell_context.close()
+
         desktop_context = browser.new_context(viewport={"width": 1440, "height": 1000})
         page = desktop_context.new_page()
         wait_for_operator(page)
 
         assert_desktop_focus_order(page)
         page.evaluate("() => window.HelixModules.applyTheme('dark')")
+        # Scan settled theme tokens, not the transient colors during the CSS
+        # transition (same settle window as the light scan below).
+        page.wait_for_timeout(300)
         assert_no_serious_axe_violations(page, "operator dark theme")
         theme_toggle = page.locator("#themeToggle")
         theme_toggle.focus()

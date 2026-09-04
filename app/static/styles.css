@@ -1,11 +1,18 @@
-/* Helix Support — Control Room v1.3.9
+/* Helix Support — Control Room v1.4.0
    Professional SaaS aesthetic: neutral slate-dark surfaces, a single
    restrained indigo accent, solid panels and soft corners. All
    functional selectors preserved. Design tokens are single-sourced in
-   css/tokens.css (v1.3.9 reskin); this sheet imports them and keeps the
+   css/tokens.css (v1.4.0 reskin); this sheet imports them and keeps the
    legacy --bg-* / --teal-* aliases mapped. */
 
-@import url("/static/css/tokens.css?v=1.3.9");
+@import url("/static/css/tokens.css?v=1.4.0");
+
+/* D2 (DESKTOP_TAURI_PLAN.md §5.1): CSS @layer cascade order —
+   reset / tokens / base / components / utilities. Establishing this
+   order roots out the layering debt without changing any rule bodies:
+   unlayered styles (the bulk of this file) still win over layered ones,
+   so the visual gates stay green during the migration. */
+@layer reset, tokens, base, components, utilities;
 
 * {
   box-sizing: border-box;
@@ -123,6 +130,177 @@ button .icon {
 .icon-xl {
   width: 34px;
   height: 34px;
+}
+
+/* ------------------------------------------------------------------ desktop splash (D1) */
+
+.desktop-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* --color-surface-0 / --color-text do not exist, so both fell through to
+     the dark hex fallbacks and this full-viewport overlay stayed dark in the
+     light theme. Use the alias names: the light theme remaps --bg-0/--ink
+     (to --color-light-*) and leaves the underlying --color-bg-0/--color-ink
+     at their dark values, so referencing those directly would not flip. */
+  background: var(--bg-0);
+  color: var(--ink);
+}
+
+.desktop-splash-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+.desktop-splash-mark .icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  opacity: 0.85;
+  animation: desktop-splash-pulse 1.6s ease-in-out infinite;
+}
+
+.desktop-splash-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.desktop-splash-sub {
+  font-size: 0.875rem;
+  opacity: 0.65;
+}
+
+.desktop-splash-progress {
+  width: 16rem;
+  height: 0.25rem;
+  background: var(--bg-2);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.desktop-splash-progress-bar {
+  width: 40%;
+  height: 100%;
+  background: var(--teal, #3b82f6);
+  border-radius: 999px;
+  animation: desktop-splash-progress 2s ease-in-out infinite;
+}
+
+@keyframes desktop-splash-progress {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(250%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes desktop-splash-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-splash-mark .icon { animation: none; }
+  .desktop-splash-progress-bar { animation: none; width: 100%; }
+}
+
+/* ------------------------------------------------------------------ D5 motion (§5.2) */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--duration-slow, 280ms);
+  animation-timing-function: var(--ease-emphasized, cubic-bezier(0.3, 0, 0, 1));
+}
+
+::view-transition-old(root) { animation-name: vt-fade-out; }
+::view-transition-new(root) { animation-name: vt-fade-in; }
+
+@keyframes vt-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; transform: scale(0.98); }
+}
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: scale(1.02); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Skeleton screens (§5.2 — replace spinners) */
+.qc-skeleton,
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+}
+
+.skeleton-bar,
+.qc-skeleton-bar {
+  height: 0.75rem;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--skeleton-bg, var(--color-bg-2, #161b22));
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  background: linear-gradient(
+    90deg,
+    var(--skeleton-bg, var(--color-bg-2, #161b22)) 25%,
+    var(--skeleton-shimmer, var(--color-bg-3, #1e242e)) 50%,
+    var(--skeleton-bg, var(--color-bg-2, #161b22)) 75%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Microinteractions (§5.2 — respect reduced-motion) */
+button:active:not(:disabled) {
+  transform: scale(0.98);
+  transition: transform var(--duration-fast, 120ms) var(--ease-emphasized);
+}
+
+.toast-enter {
+  animation: toast-slide-in var(--duration-base, 180ms) var(--ease-entry);
+}
+
+.toast-exit {
+  animation: toast-slide-out var(--duration-base, 180ms) var(--ease-exit);
+}
+
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-slide-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(100%); }
+}
+
+/* SLA breathing warning (transform/opacity only). The opacity floor stays
+   high (0.9) so the blended text color keeps ≥4.5:1 on both themes —
+   at 0.7 the light-theme --red dropped to 3.39:1 under axe sampling. */
+@keyframes sla-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.02); }
+}
+
+.item-sla.is-breached {
+  animation: sla-breathe 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none; }
+  .skeleton-bar, .qc-skeleton-bar { animation: none; }
+  button:active:not(:disabled) { transform: none; }
+  .toast-enter, .toast-exit { animation: none; }
+  .item-sla.is-breached { animation: none; }
 }
 
 .app-shell {
@@ -809,6 +987,19 @@ a.knowledge-source:hover {
   border-bottom: 1px solid var(--line);
 }
 
+/* Inline validation notice from the knowledge island's editor (role="alert").
+   --red on --red-soft is the same pairing the status pills use, which axe
+   samples at ≥4.5:1 on both themes. */
+.knowledge-editor-error {
+  margin: 0;
+  padding: 7px 10px;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid rgba(255, 107, 122, 0.4);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
 .knowledge-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -901,6 +1092,19 @@ a.knowledge-source:hover {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
   max-width: 1100px;
+}
+
+/* D3: the React admin island mount spans the whole card grid — the island
+   renders its own .admin-cards inside. In browser mode the mount is an
+   empty grid child, and without the span auto-fit would squeeze it into a
+   single ~350px track. Same for the settings island's mount. */
+.admin-react-island,
+.settings-react-island {
+  grid-column: 1 / -1;
+}
+.admin-react-island .admin-cards,
+.settings-react-island .admin-cards {
+  max-width: none;
 }
 
 .admin-card {
@@ -1043,7 +1247,12 @@ a.knowledge-source:hover {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  /* --bg has never been defined (the alias block defines --bg-0..--bg-3), and
+     with no fallback the whole declaration was invalid at computed-value
+     time, so this <pre> rendered transparent over the admin card. --surface-alt
+     is what every sibling recessed mono block uses (.audit-payload has the
+     identical surface-alt/line/radius-sm shape). */
+  background: var(--surface-alt);
   font-family: var(--font-mono);
   font-size: 11px;
   white-space: pre-wrap;
@@ -1278,14 +1487,19 @@ a.knowledge-source:hover {
   border-color: var(--line-strong);
 }
 
+/* The background is --ink (the theme's strongest foreground), so the label
+   must use the opposing surface token rather than a hardcoded white: --ink
+   flips per theme (#e6edf3 dark / #1a2027 light), and white-on-light gave a
+   1.24:1 contrast in the dark theme. --bg-0 flips the other way, keeping the
+   pair well above 4.5:1 on both themes. */
 .button-dark {
-  color: #ffffff;
+  color: var(--bg-0);
   background: var(--ink);
   border-color: var(--ink);
 }
 
 .button-dark:hover:not(:disabled) {
-  color: #ffffff;
+  color: var(--bg-0);
   background: var(--ink-soft);
   border-color: var(--ink-soft);
 }
@@ -1346,6 +1560,15 @@ a.knowledge-source:hover {
   gap: 6px;
   align-items: center;
   margin: -4px 0 10px;
+}
+
+/* D3: the React saved-views island mount dissolves into the tools grid —
+   its children take the grid cells of the legacy controls while those are
+   yielded (hidden → display:none drops them from the grid) in island
+   mode. Same trick for the mentions badge mount inside the footer flex. */
+.saved-views-react-island,
+.mentions-badge-react-island {
+  display: contents;
 }
 
 .perf-hint {
@@ -1579,6 +1802,36 @@ body.is-low-perf #perfHint {
 /* -------------------------------------------------------------- queue list */
 
 .conversation-list {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* D3 queue island: same sizing contract as the legacy list it mirrors.
+   `:empty` keeps the unmounted mount point (plain browser tab) at zero
+   footprint — it only takes flex space once React paints into it. */
+.queue-react-island {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-react-island:empty {
+  display: none;
+}
+
+.queue-react-island > .queue-island {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-react-island .conversation-list {
   min-height: 0;
   flex: 1;
   overflow-x: hidden;
@@ -2369,7 +2622,10 @@ body.is-inspector-collapsed .inspector-surface {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-muted);
+  /* --text-muted is undefined; the five other references all carry the
+     var(--text-muted, var(--muted)) fallback, this one did not — so the
+     declaration was dropped and the label inherited its parent's colour. */
+  color: var(--text-muted, var(--muted));
   white-space: nowrap;
 }
 
@@ -2411,6 +2667,22 @@ body.is-inspector-collapsed .inspector-surface {
   padding: 11px 13px;
   background: var(--bg-1);
   border-top: 1px solid var(--line);
+}
+
+/* D3 composer island: the mirrored forms stack in place of the yielded
+   legacy forms, keeping the same fill-the-thread-bottom contract. */
+.composer-island {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
+
+.composer-island .composer {
+  flex: 0 0 auto;
+}
+
+.composer-react-island:empty {
+  display: none;
 }
 
 .operator-composer {
@@ -2883,7 +3155,8 @@ body.is-inspector-collapsed .inspector-surface {
 .queue-pane[data-mode="tickets"] .queue-controls,
 .queue-pane[data-mode="tickets"] #bulkToolbar,
 .queue-pane[data-mode="tickets"] #conversationList,
-.queue-pane[data-mode="tickets"] .queue-footer {
+.queue-pane[data-mode="tickets"] .queue-footer,
+.queue-pane[data-mode="tickets"] .queue-react-island {
   display: none;
 }
 

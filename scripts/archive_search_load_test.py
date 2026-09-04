@@ -40,8 +40,9 @@ import tracemalloc
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from scripts.pagination_load_test import (  # noqa: E402
+from app.database import Database, utc_now
+from scripts._console import use_utf8_console
+from scripts.pagination_load_test import (
     DENSE_MESSAGE_SEARCH_TERM,
     SELECTIVE_MESSAGE_SEARCH_TERM,
     BenchStats,
@@ -50,7 +51,6 @@ from scripts.pagination_load_test import (  # noqa: E402
     measure,
     seed_dataset,
 )
-from app.database import Database, utc_now  # noqa: E402
 
 # 42.3 REL-002: fixed cold-data tiers. The tier names are relative to the
 # §18.5 hot baseline (2k conversations / 20k messages): the archive tier is
@@ -69,9 +69,7 @@ _ARCHIVE_TABLES = (
 )
 
 
-def measure_with_memory(
-    name: str, fn, rounds: int
-) -> tuple[BenchStats, dict[str, float]]:
+def measure_with_memory(name: str, fn, rounds: int) -> tuple[BenchStats, dict[str, float]]:
     """Measure latency (existing harness) plus peak allocated memory."""
     stats = BenchStats(name=name)
     tracemalloc.start()
@@ -92,7 +90,7 @@ def archive_table_bytes(database: Database) -> dict[str, int]:
         with database.connect() as connection:
             row = connection.execute(
                 f"""SELECT SUM(pgsize) AS total FROM dbstat
-                WHERE name IN ({','.join('?' for _ in _ARCHIVE_TABLES)})""",
+                WHERE name IN ({",".join("?" for _ in _ARCHIVE_TABLES)})""",
                 _ARCHIVE_TABLES,
             ).fetchone()
         total = int(row["total"]) if row and row["total"] else 0
@@ -384,4 +382,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_console()
     raise SystemExit(main())

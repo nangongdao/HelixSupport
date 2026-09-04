@@ -1,0 +1,32 @@
+[package]
+name = "helix-desktop"
+version = "1.4.0"
+description = "Helix Support desktop shell"
+authors = ["nangongdao"]
+edition = "2021"
+
+[lib]
+name = "helix_desktop_lib"
+# cdylib causes "export ordinal too large" on mingw with heavy deps.
+# rlib + staticlib suffice for the Tauri build on Windows.
+crate-type = ["staticlib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+portable-pty = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 16
+lto = false
+opt-level = "s"
+panic = "abort"
+strip = true

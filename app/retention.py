@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from app.database import Database, utc_now
@@ -370,9 +370,7 @@ class RetentionService:
             raise RuntimeError("audit archive object digest bookkeeping mismatch")
         streamed = [
             str(event["id"])
-            for event in validate_audit_archive_stream(
-                meta, store.iter_lines(tenant_id, object_id)
-            )
+            for event in validate_audit_archive_stream(meta, store.iter_lines(tenant_id, object_id))
         ]
         if streamed != event_ids:
             raise RuntimeError("audit archive source event verification failed")

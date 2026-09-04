@@ -1,4 +1,4 @@
-/* Helix Support — Design Tokens (v1.3.9 professional SaaS reskin)
+/* Helix Support — Design Tokens (v1.4.0 professional SaaS reskin)
    Color / spacing / type / radius / shadow / motion tokens.
    Theme switching is driven by the `data-theme` attribute on <html>:
      - default (no attribute) and `data-theme="dark"` use the neutral
@@ -6,9 +6,51 @@
      - `data-theme="light"` overrides the color tokens with a paper
        daylight palette (same accent family, deep ink text).
    Structural tokens (spacing, type scale, radii, shadows, motion) are
-   theme-independent and live in :root. */
+   theme-independent and live in :root.
 
-:root {
+   D2 (DESKTOP_TAURI_PLAN.md §5.1): upgraded to standard 3-tier layering —
+   `primitive` (raw palette/type values) → `semantic` (--color-surface
+   etc, existing) → `component` (--button-bg, --input-border-focus etc).
+   The @layer order (reset / tokens / base / components / utilities) is
+   declared in styles.css; this file owns the tokens + component layers. */
+
+@layer tokens.primitive {
+  :root {
+    /* ---- primitive: raw palette values (no semantic meaning) ---- */
+    --palette-slate-950: #0a0d12;
+    --palette-slate-900: #0f1319;
+    --palette-slate-850: #12161d;
+    --palette-slate-800: #161b22;
+    --palette-slate-700: #1e242e;
+    --palette-slate-600: #2d343f;
+    --palette-slate-500: #3d4754;
+    --palette-slate-400: #5d6675;
+    --palette-slate-300: #8b95a3;
+    --palette-slate-200: #aeb6c2;
+    --palette-slate-100: #e6edf3;
+    --palette-indigo-700: #2d54c7;
+    --palette-indigo-600: #3b6bf0;
+    --palette-indigo-500: #5b86f4;
+    --palette-indigo-400: #7da3ff;
+    --palette-amber-500: #e0a83a;
+    --palette-red-500: #e5736b;
+    --palette-green-500: #7fb981;
+    --palette-violet-500: #b49af5;
+    --palette-blue-400: #6cb6ff;
+
+    /* ---- primitive: type scale raw values ---- */
+    --raw-text-11: 11px;
+    --raw-text-12: 12px;
+    --raw-text-14: 14px;
+    --raw-text-16: 16px;
+    --raw-text-20: 20px;
+  }
+}
+
+@layer tokens.semantic, tokens.component;
+
+@layer tokens.semantic {
+  :root {
   /* ---- color: neutral slate-dark palette (default) ----
      Lower-luminance near-black backgrounds (no warm grey wash), solid
      surfaces instead of translucent wash, a single restrained indigo
@@ -86,6 +128,14 @@
   --font-mono: "SFMono-Regular", "Cascadia Mono", Consolas, "Courier New", monospace;
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
+
+  /* ---- D2 motion tokens (§5.2) — all respect reduced-motion ---- */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --ease-entry: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
 }
 
 /* Map the legacy names used by styles.css onto the token layer so the
@@ -150,8 +200,14 @@ html[data-theme="light"] {
   --color-accent-glow: rgba(35, 71, 196, 0.16);
   --color-blue: #1e5fa8;
   --color-blue-soft: rgba(30, 95, 168, 0.1);
-  --color-amber: #8a6512;
-  --color-amber-soft: rgba(138, 101, 18, 0.1);
+  /* §D5: darkened from #8a6512. Status pills put --color-amber text on a
+     --color-amber-soft fill over the row surface, and that combination
+     measured 3.99:1 against the 4.5:1 floor — the pill only renders once
+     the queue has rows, which is why the pre-island axe scans (always run
+     against an empty queue) never caught it. #6f5010 measures ~5.6:1, in
+     line with the sibling --color-green (6.2:1) and --color-violet (5.9:1). */
+  --color-amber: #6f5010;
+  --color-amber-soft: rgba(111, 80, 16, 0.1);
   --color-red: #a34036;
   --color-red-soft: rgba(163, 64, 54, 0.1);
   --color-green: #3d5628;
@@ -159,4 +215,53 @@ html[data-theme="light"] {
   --color-violet: #5d3f9e;
   --color-violet-soft: rgba(93, 63, 158, 0.1);
   color-scheme: light;
+}
+
+/* ---- D2 component layer (§5.1) — semantic → component mappings ----
+   The magic values scattered across styles.css 4,111 lines are gradually
+   migrated here. This block only adds mappings; it does not override any
+   existing rule, so the axe/visual gates stay green. */
+@layer tokens.component {
+  :root {
+    --button-bg: var(--color-accent);
+    --button-bg-hover: var(--color-accent-dark);
+    --button-bg-active: var(--color-accent-dark);
+    --button-text: #ffffff;
+    --button-border: transparent;
+    --button-radius: var(--radius-md);
+
+    --button-secondary-bg: transparent;
+    --button-secondary-bg-hover: var(--color-bg-3);
+    --button-secondary-text: var(--color-ink);
+    --button-secondary-border: var(--color-line);
+
+    --input-bg: var(--color-surface-alt);
+    --input-border: var(--color-line);
+    --input-border-focus: var(--color-accent);
+    --input-text: var(--color-ink);
+
+    --card-bg: var(--color-surface);
+    --card-border: var(--color-line);
+    --card-radius: var(--radius-lg);
+    --card-shadow: var(--shadow-panel);
+
+    --drawer-bg: var(--color-surface);
+    --drawer-border: var(--color-line-strong);
+
+    --badge-bg: var(--color-bg-3);
+    --badge-text: var(--color-ink-soft);
+    --badge-radius: var(--radius-full);
+
+    --skeleton-bg: var(--color-bg-2);
+    --skeleton-shimmer: var(--color-bg-3);
+  }
+
+  html[data-theme="light"] {
+    --button-text: #ffffff;
+    --input-bg: #ffffff;
+    --card-bg: #ffffff;
+    --drawer-bg: #ffffff;
+    --skeleton-bg: var(--color-light-bg-2);
+    --skeleton-shimmer: var(--color-light-bg-3);
+  }
 }

@@ -16,6 +16,7 @@ from uuid import uuid4
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect, sync_playwright
 
+from app.assets import STATIC_ASSET_VERSION
 
 BASE_URL = os.getenv("HELIX_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts"
@@ -87,7 +88,9 @@ def main() -> None:
         attach_failure_recorders(page, console_errors, page_errors, http_errors, failed_requests)
         page.goto(BASE_URL, wait_until="domcontentloaded")
         expect(page.locator("#operatorIdentity")).to_contain_text("demo.admin")
-        expect(page.locator('script[src="/static/app.js?v=1.3.7"]')).to_have_count(1)
+        expect(
+            page.locator(f'script[src="/static/app.js?v={STATIC_ASSET_VERSION}"]')
+        ).to_have_count(1)
         open_admin(page)
 
         # Form semantics mirror the backend contract and do not expose the
