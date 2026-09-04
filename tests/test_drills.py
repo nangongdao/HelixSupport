@@ -97,6 +97,12 @@ class BackupConsistencyTests(unittest.TestCase):
             db = Database(source)
             db.initialize()
             conv_id = self._seed_db(db)
+            # Seed at least one message *before* the backup starts: the
+            # concurrent writer may not have committed anything by the time the
+            # (fast) backup snapshot completes on a slow/covered runner, which
+            # would make the "backup captured no messages" assertion below a
+            # false negative.
+            db.add_message("drill-tenant", conv_id, "customer", "Customer", "seed-0")
 
             stop = threading.Event()
             writer = threading.Thread(
