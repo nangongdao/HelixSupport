@@ -68,8 +68,13 @@ def _build_control_plane(tmp: str) -> tuple[TenantControlPlane, DataPlaneConfig]
 
 
 class TestCheckRegionHealth(unittest.IsolatedAsyncioTestCase):
-    async def test_healthy_cell(self) -> None:
+    async def _cell(self) -> CellSpec:
         cell = _build_registry().get_cell("cell-default")
+        assert cell is not None
+        return cell
+
+    async def test_healthy_cell(self) -> None:
+        cell = await self._cell()
         mock_response = AsyncMock()
         mock_response.status_code = 200
 
@@ -79,14 +84,14 @@ class TestCheckRegionHealth(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(reason)
 
     async def test_unhealthy_cell(self) -> None:
-        cell = _build_registry().get_cell("cell-default")
+        cell = await self._cell()
         with patch("app.region_failover.check_cell_health", return_value=(False, "timeout")):
             is_healthy, reason = await check_region_health(cell)
         self.assertFalse(is_healthy)
         self.assertEqual(reason, "timeout")
 
     async def test_probe_never_raises(self) -> None:
-        cell = _build_registry().get_cell("cell-default")
+        cell = await self._cell()
         # The thin proxy must catch every failure from the underlying probe.
         with patch(
             "app.region_failover.check_cell_health",
@@ -106,7 +111,7 @@ class TestFindHealthyCellInRegion(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.region_failover.check_cell_health", side_effect=_probe):
             cell = await find_healthy_cell_in_region(registry, "us-west-2")
-        self.assertIsNotNone(cell)
+        assert cell is not None
         self.assertEqual(cell.cell_id, "cell-premium")
 
     async def test_none_when_no_healthy_cell(self) -> None:

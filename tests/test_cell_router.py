@@ -40,7 +40,7 @@ class TestCellRegistry(unittest.TestCase):
 
     def test_get_cell(self) -> None:
         cell = self.registry.get_cell("cell-default")
-        self.assertIsNotNone(cell)
+        assert cell is not None
         self.assertEqual(cell.cell_id, "cell-default")
         self.assertEqual(cell.region, "us-east-1")
 
@@ -70,7 +70,7 @@ class TestCellRegistry(unittest.TestCase):
             "cell-default", is_healthy=False, failure_reason="connect_error"
         )
         health = self.registry.get_health("cell-default")
-        self.assertIsNotNone(health)
+        assert health is not None
         self.assertFalse(health.is_healthy)
         self.assertEqual(health.failure_reason, "connect_error")
 
@@ -199,7 +199,8 @@ class TestCheckCellHealth(unittest.IsolatedAsyncioTestCase):
         with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("connection refused")):
             is_healthy, reason = await check_cell_health(cell)
             self.assertFalse(is_healthy)
-            self.assertIn("connect_error", reason)
+            assert reason is not None
+            self.assertTrue(reason.startswith("connect_error"))
 
 
 class TestForwardRequestToCell(unittest.IsolatedAsyncioTestCase):

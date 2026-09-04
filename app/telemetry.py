@@ -35,8 +35,8 @@ try:
     )
     from opentelemetry.sdk.resources import Resource  # type: ignore[reportMissingImports]
     from opentelemetry.sdk.trace import TracerProvider  # type: ignore[reportMissingImports]
-    from opentelemetry.sdk.trace.export import (
-        BatchSpanProcessor,  # type: ignore[reportMissingImports]
+    from opentelemetry.sdk.trace.export import (  # type: ignore[reportMissingImports]
+        BatchSpanProcessor,
     )
 
     _otel_available = True
