@@ -297,6 +297,37 @@ class ResilientKnowledgeConnector:
         self.config = config or registry.config
         self.connector_name = connector_name
 
+    def draft_article(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        tags: list[str],
+        category: str,
+        source_url: str,
+        language: str | None,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        """Governed write through the breaker: degradation must FAIL LOUDLY.
+
+        Unlike ``search`` (which degrades to an empty hit list so the agent
+        can fall back), a mutating call that silently "succeeded" without
+        writing would corrupt the audit trail — a CircuitBreakerOpen raises.
+        """
+        breaker = self.registry.get(tenant_id, self.connector_name)
+        breaker.before_call()
+        return self.inner.draft_article(
+            tenant_id,
+            title=title,
+            content=content,
+            tags=tags,
+            category=category,
+            source_url=source_url,
+            language=language,
+            actor_id=actor_id,
+        )
+
     def search(self, tenant_id: str, query: str, *, limit: int = 3) -> list[KnowledgeHit]:
         return _resilient_call(
             lambda: self.inner.search(tenant_id, query, limit=limit),

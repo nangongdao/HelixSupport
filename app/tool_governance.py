@@ -174,6 +174,22 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> lis
                 and not isinstance(value, wanted)
             ):
                 problems.append(f"argument {name!r} must be {spec.get('type')}")
+                continue
+            # Length bounds: part of the schema, therefore part of the digest
+            # a capability token pins — tightening a bound invalidates every
+            # outstanding token for the tool.
+            if isinstance(value, str):
+                min_length, max_length = spec.get("minLength"), spec.get("maxLength")
+                if min_length is not None and len(value) < int(min_length):
+                    problems.append(f"argument {name!r} is shorter than {min_length} characters")
+                if max_length is not None and len(value) > int(max_length):
+                    problems.append(f"argument {name!r} is longer than {max_length} characters")
+            if isinstance(value, list):
+                min_items, max_items = spec.get("minItems"), spec.get("maxItems")
+                if min_items is not None and len(value) < int(min_items):
+                    problems.append(f"argument {name!r} needs at least {min_items} items")
+                if max_items is not None and len(value) > int(max_items):
+                    problems.append(f"argument {name!r} allows at most {max_items} items")
     return problems
 
 

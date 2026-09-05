@@ -273,6 +273,28 @@ class CapabilityTokenTests(unittest.TestCase):
         self.assertTrue(any("order_id" in p for p in problems), problems)
         self.assertTrue(any("count" in p for p in problems), problems)
 
+    def test_validate_arguments_length_bounds(self) -> None:
+        """minLength/maxLength/minItems/maxItems: 2.5.0 additions.
+
+        The bounds are part of the schema, so they join the digest a
+        capability token pins — tightening one invalidates outstanding
+        tokens for the tool.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "minLength": 2, "maxLength": 5},
+                "tags": {"type": "array", "minItems": 1, "maxItems": 2},
+            },
+        }
+        self.assertEqual(validate_arguments(schema, {"title": "政策", "tags": ["a"]}), [])
+        problems = validate_arguments(schema, {"title": "太", "tags": []})
+        self.assertTrue(any("shorter than 2" in p for p in problems), problems)
+        self.assertTrue(any("at least 1" in p for p in problems), problems)
+        problems = validate_arguments(schema, {"title": "太长太长太长", "tags": ["a", "b", "c"]})
+        self.assertTrue(any("longer than 5" in p for p in problems), problems)
+        self.assertTrue(any("at most 2" in p for p in problems), problems)
+
 
 class GatewayGovernanceTests(unittest.TestCase):
     """ToolGateway.enforce_governance refuses without running connectors."""

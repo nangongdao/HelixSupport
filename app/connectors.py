@@ -88,9 +88,26 @@ class OrderConnector(Protocol):
 
 @runtime_checkable
 class KnowledgeConnector(Protocol):
-    """Retrieves grounded knowledge for an operator-facing query."""
+    """Retrieves grounded knowledge for an operator-facing query.
+
+    ``draft_article`` is the ROADMAP 2.5.0 governed write: implementations
+    create a ``draft``-status article that only human review can publish.
+    """
 
     def search(self, tenant_id: str, query: str, *, limit: int = 3) -> list[KnowledgeHit]: ...
+
+    def draft_article(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        tags: list[str],
+        category: str,
+        source_url: str,
+        language: str | None,
+        actor_id: str,
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable
@@ -129,6 +146,35 @@ class SandboxKnowledgeConnector:
 
     def __init__(self, database: Any) -> None:
         self.database = database
+
+    def draft_article(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        tags: list[str],
+        category: str,
+        source_url: str,
+        language: str | None,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        """Create a ``pending_review`` draft (ROADMAP 2.5.0 mutating tool).
+
+        The tool's whole point is a governed write; the sandbox writes
+        through the same store the knowledge admin API uses, so the draft
+        follows the identical review path before it can ever be retrieved.
+        """
+        return self.database.create_knowledge_draft(
+            tenant_id,
+            title,
+            content,
+            tags,
+            category,
+            source_url,
+            actor_id=actor_id,
+            language=language,
+        )
 
     def search(self, tenant_id: str, query: str, *, limit: int = 3) -> list[KnowledgeHit]:
         rows = self.database.search_knowledge(tenant_id, query, limit=limit)

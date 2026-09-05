@@ -64,6 +64,8 @@ class ConversationOrchestrator(ConversationLifecycleMixin):
         queue: TaskQueue | None = None,
         webhook_service: WebhookService | None = None,
         cost_attribution: Any | None = None,
+        capability_secret: str = "",
+        governance_service: Any | None = None,
     ) -> None:
         self.database = database
         self.settings = settings
@@ -81,11 +83,16 @@ class ConversationOrchestrator(ConversationLifecycleMixin):
             SandboxKnowledgeConnector(database), self.breaker_registry
         )
         crm_connector = ResilientCRMConnector(SandboxCRMConnector(database), self.breaker_registry)
+        # ROADMAP 2.5.0: the governance plane reaches the gateway here —
+        # capability tokens verify against CAPABILITY_SECRET and high-risk
+        # tools consult the AI governance registry through governance_service.
         self.tools = ToolGateway(
             database,
             order_connector=order_connector,
             knowledge_connector=knowledge_connector,
             crm_connector=crm_connector,
+            capability_secret=capability_secret,
+            governance_service=governance_service,
         )
         self.policy = PolicyAgent()
         self.triage = TriageAgent(model_provider, cost_attribution=cost_attribution)
