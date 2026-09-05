@@ -30,6 +30,17 @@ export const REPORT_TYPE_LABELS = { quality: "质量报表", usage: "使用量�
 export const SCHEDULE_LABELS = { daily: "每日", weekly: "每周" };
 export const PRIORITY_LABELS = { normal: "普通", high: "高优" };
 
+/** inference_costs.agent 值 → 运营可读标签(2.3.0 接线时的 agent 命名)。 */
+export const COST_AGENT_LABELS = Object.freeze({
+  triage: "语义路由",
+  language_detect: "语言检测",
+  language_translate: "语言翻译",
+  copilot_suggest: "回复建议",
+  copilot_rewrite: "语气润色",
+  summary: "会话摘要",
+  unknown: "未归因",
+});
+
 export const ADMIN_EVENTS = Object.freeze({
   IDENTITY: "helix-identity",
   REFRESH: "helix-admin-refresh",
@@ -77,6 +88,10 @@ export const CARD_IDS = Object.freeze({
   reportPreview: "reportPreviewReact",
   csatReadout: "csatReadoutReact",
   csatTrend: "csatTrendReact",
+  costReadout: "costReadoutReact",
+  costAnomalyReadout: "costAnomalyReadoutReact",
+  costAgentList: "costAgentListReact",
+  costPromptList: "costPromptListReact",
   slaPolicyList: "slaPolicyListReact",
   slaPolicyForm: "slaPolicyFormReact",
   slaPriority: "slaPriorityReact",

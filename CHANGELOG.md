@@ -22,6 +22,7 @@ Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation vali
   - `app/config.py`: `DRIFT_MAX_STALE_CITATION_RATE`（默认 0.2；校验 (0,1]；`None`/未设置停用）。
 - **接线**: `app/main.py` 把 `cost_attribution_service` 注入 `DriftMonitor`，housekeeping 小时 sweep 自动获得两个新信号；`ai.drift_canary_stopped` 审计 payload 的 `signals` 数组携带 `cost_factor`/`stale_citation_rate`。
 - **测试**: `tests/test_ai_governance.py` 新增 `DriftCostCitationSignalTests` 8 例（成本越限停 canary + 审计断言/低于阈值与零基线静默/信号停用；引用退役越限停 canary/新引用静默/部分越限与恰好阈值不触发/样本下限静默/信号停用），`tests/test_config_validation.py` 新增 2 例负向校验（factor ≤1 拒绝、rate 越界拒绝）。
+- **成本仪表盘管理卡（岛原生，补 2.3.0 API 的 UI 面）**: admin 岛第 9 张卡 `frontend/src/islands/admin/cost-card.jsx`——4 个只读 GET（`/api/analytics/costs/{daily,by_agent,by_prompt,anomaly}`）经 `["admin"]` 前缀 react-query 接入既有身份门控与 `helix-admin-refresh/saved` 生命周期，零新写桥；读数含累计调用/tokens/成本（`formatUsd`：亚美分保留 6 位、可读金额 2 位）、今日 vs 基线异常读数（与 2.4.0 drift 同一评估语义，`无定价推理` 空态渲染 — 而非 $0.00，沿用 CSAT 卡 W2 约定）、按功能（agent 值 → 中文标签映射）与按提示版本拆分（成本降序）；`cost-status` 状态徽标用对比度修正过的 `--amber` 令牌，行样式与 CSAT 卡同形。模型/卡/常量按域拆分进 `admin/`（模块均 ≤400 行），vitest 新增 5 例（模型纯函数 4 + 渲染契约 1，九卡断言更新），真实浏览器岛模式 + 种子数据全旅程验证（含双主题），全套前端/性能门禁绿（vitest 172）。
 
 ### Changed
 

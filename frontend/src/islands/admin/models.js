@@ -9,6 +9,7 @@
  */
 
 import {
+  COST_AGENT_LABELS,
   PRIORITY_LABELS,
   REPORT_TYPE_LABELS,
   ROLE_LABELS,
@@ -116,4 +117,74 @@ export function reportExportUrl(reportType, windowDays, now = new Date()) {
     `/api/admin/reports/${encodeURIComponent(reportType)}/export` +
     `?from=${fmt(from)}&to=${fmt(now)}`
   );
+}
+
+/* ── cost dashboard (2.3.0 analytics API; island-native, no legacy twin) ── */
+
+/**
+ * USD formatting for the cost readout: spend is stored at 6-decimal
+ * precision and single inference rows are typically fractions of a cent,
+ * so sub-cent values keep 6 decimals while readable amounts collapse to 2.
+ */
+export function formatUsd(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "$0.00";
+  return `$${(Math.abs(amount) > 0 && Math.abs(amount) < 0.01 ? amount.toFixed(6) : amount.toFixed(2))}`;
+}
+
+/** Agent/prompt-version dimension rows → readout list items, cost-desc order preserved. */
+export function costBreakdownItems(rows, key) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map((row) => {
+    const raw = String(row[key] ?? "unknown");
+    const label = key === "agent" ? COST_AGENT_LABELS[raw] || raw : raw;
+    return {
+      id: raw,
+      label,
+      meta: `${Number(row.turn_count || 0).toLocaleString("en-US")} 次 · ${formatUsd(row.cost_usd)}`,
+    };
+  });
+}
+
+/** GET /api/analytics/costs/daily → cumulative readout rows. */
+export function costSummaryRows(daily) {
+  const data = daily || {};
+  const tokens =
+    Number(data.prompt_tokens || 0) + Number(data.completion_tokens || 0);
+  return [
+    ["累计推理调用", Number(data.turn_count || 0).toLocaleString("en-US")],
+    ["累计 tokens", tokens.toLocaleString("en-US")],
+    ["累计成本", formatUsd(data.cost_usd)],
+  ];
+}
+
+/**
+ * GET /api/analytics/costs/anomaly → anomaly readout rows. No priced
+ * inference yet (baseline and today both 0) renders dashes — the operator
+ * cannot distinguish "cheap" from "nothing priced", mirroring the csatModel
+ * W2 empty-state convention.
+ */
+export function costAnomalyModel(anomaly) {
+  const data = anomaly || {};
+  const today = Number(data.today_cost_usd || 0);
+  const baseline = Number(data.baseline_cost_usd || 0);
+  if (today <= 0 && baseline <= 0) {
+    return {
+      status: "无定价推理",
+      rows: [
+        ["今日成本", "—"],
+        ["基线日均", "—"],
+        ["异常倍数", "—"],
+      ],
+    };
+  }
+  const factor = Number(data.factor || 0);
+  return {
+    status: data.anomaly ? "成本异常" : "正常",
+    rows: [
+      ["今日成本", formatUsd(today)],
+      ["基线日均", formatUsd(baseline)],
+      ["异常倍数", `${factor.toFixed(2)}×`],
+    ],
+  };
 }

@@ -3,9 +3,11 @@
  *
  * Owns the whole #adminContent card grid in the desktop shell: tenant
  * quota, members, webhooks, report subscriptions/export, CSAT summary,
- * SLA policies and automatic routing rules. Mounts into #adminReactIsland;
- * the eight legacy .admin-card sections are yielded (hidden) while the
- * mount exists.
+ * cost dashboard, SLA policies and automatic routing rules. Mounts into
+ * #adminReactIsland; the eight legacy .admin-card sections are yielded
+ * (hidden) while the mount exists. The cost dashboard card is
+ * island-native (2.3.0 shipped the analytics API without a legacy
+ * section), so the grid renders nine cards.
  *
  * Reads go through react-query (one query per card domain, all disabled
  * until helix-identity reports admin:manage — a non-admin island must
@@ -49,14 +51,19 @@ import {
   AdminReportExportCard,
   AdminSubscriptionsCard,
 } from "./admin/report-cards.jsx";
+import { AdminCostCard } from "./admin/cost-card.jsx";
 import { AdminRoutingCard, AdminSlaCard } from "./admin/policy-cards.jsx";
 
 export { ADMIN_EVENTS, CARD_IDS } from "./admin/constants.js";
 export { canManageIdentity, useIdentity } from "./admin/shared.jsx";
 export {
   activeWebhookOptions,
+  costAnomalyModel,
+  costBreakdownItems,
+  costSummaryRows,
   csatModel,
   formatTime,
+  formatUsd,
   memberRowModel,
   quotaReadoutRows,
   reportExportUrl,
@@ -79,6 +86,10 @@ const QUERY_DEFS = [
   { key: ["admin", "groups"], domain: "groups", path: () => "/api/admin/agent-groups" },
   { key: ["admin", "rules"], domain: "rules", path: () => "/api/admin/routing-rules" },
   { key: ["admin", "csat"], domain: "csat", path: () => "/api/admin/csat-summary" },
+  { key: ["admin", "cost-daily"], domain: "cost-daily", path: () => "/api/analytics/costs/daily" },
+  { key: ["admin", "cost-agents"], domain: "cost-agents", path: () => "/api/analytics/costs/by_agent" },
+  { key: ["admin", "cost-prompts"], domain: "cost-prompts", path: () => "/api/analytics/costs/by_prompt" },
+  { key: ["admin", "cost-anomaly"], domain: "cost-anomaly", path: () => "/api/analytics/costs/anomaly" },
 ];
 
 /** Legacy api() contract: tenant header from the host document. */
@@ -156,6 +167,12 @@ export function AdminIsland() {
       <AdminSubscriptionsCard subscriptions={data.subscriptions} webhooks={data.webhooks} />
       <AdminReportExportCard />
       <AdminCsatCard csat={data.csat} />
+      <AdminCostCard
+        daily={data["cost-daily"]}
+        agents={data["cost-agents"]}
+        prompts={data["cost-prompts"]}
+        anomaly={data["cost-anomaly"]}
+      />
       <AdminSlaCard policies={data.sla} />
       <AdminRoutingCard rules={data.rules} groups={data.groups} />
     </div>
