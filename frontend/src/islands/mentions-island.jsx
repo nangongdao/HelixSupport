@@ -58,19 +58,27 @@ async function fetchMentions() {
   return res.json();
 }
 
-function useCanRead() {
-  const [canRead, setCanRead] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      Array.isArray(window.__HELIX_PERMISSIONS__) &&
-      window.__HELIX_PERMISSIONS__.includes("conversation:read"),
+/** Globals snapshot for the conversation:read gate (shared by state init + catch-up). */
+function canReadSnapshot() {
+  return (
+    typeof window !== "undefined" &&
+    Array.isArray(window.__HELIX_PERMISSIONS__) &&
+    window.__HELIX_PERMISSIONS__.includes("conversation:read")
   );
+}
+
+function useCanRead() {
+  const [canRead, setCanRead] = useState(canReadSnapshot);
   useEffect(() => {
     const sync = (event) => {
       const perms = event.detail?.permissions;
       setCanRead(Array.isArray(perms) && perms.includes("conversation:read"));
     };
     window.addEventListener(MENTION_EVENTS.IDENTITY, sync);
+    // Catch-up: the identity dispatch can land between the first render
+    // (stale globals snapshot) and this subscription on a warm server —
+    // re-read the snapshot so the gate never sticks closed.
+    setCanRead(canReadSnapshot());
     return () => window.removeEventListener(MENTION_EVENTS.IDENTITY, sync);
   }, []);
   return canRead;

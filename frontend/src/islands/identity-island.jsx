@@ -69,6 +69,10 @@ export function useIdentity() {
       );
     };
     window.addEventListener(IDENTITY_EVENTS.UPDATED, sync);
+    // Catch-up: the dispatch can land between the first render (stale
+    // globals snapshot) and this subscription on a warm server — re-read
+    // the snapshot so the readout never sticks on the pending text.
+    setIdentity(currentIdentity());
     return () => window.removeEventListener(IDENTITY_EVENTS.UPDATED, sync);
   }, []);
   return identity;

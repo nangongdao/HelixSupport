@@ -400,6 +400,45 @@ describe("pure card models", () => {
   });
 });
 
+describe("identity gate race", () => {
+  it("recovers when helix-identity fires between render and effect subscription", async () => {
+    // Production createRoot commits effects asynchronously: legacy can
+    // dispatch helix-identity AFTER the island's first render (stale
+    // globals snapshot) but BEFORE its effect subscription — observed live
+    // as an admin island stuck on "guest" forever on a warm server. A
+    // sibling that dispatches during the render pass reproduces that exact
+    // window deterministically: function bodies run in tree order (island
+    // first, dispatch second) while effects only run after both, so the
+    // event has no subscriber yet. The post-subscribe catch-up sync must
+    // recover the gate from the globals snapshot.
+    stubBackend(FULL_ROUTES);
+    document.documentElement.dataset.tenantId = "demo";
+    function DispatchDuringRender() {
+      window.__HELIX_ROLE__ = "admin";
+      window.__HELIX_PERMISSIONS__ = ["admin:manage"];
+      window.__HELIX_ACTOR__ = "demo.admin";
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_EVENTS.IDENTITY, {
+          detail: { role: "admin", permissions: ["admin:manage"], actorId: "demo.admin", tenantId: "demo" },
+        }),
+      );
+      return null;
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <AdminIsland />
+        <DispatchDuringRender />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(document.getElementById(CARD_IDS.quotaReadout).textContent).toContain("演示租户"),
+    );
+  });
+});
+
 describe("cards render legacy contracts", () => {
   it("renders all eight cards with quota readout values", async () => {
     await renderIsland();
