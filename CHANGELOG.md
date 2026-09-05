@@ -36,15 +36,6 @@ Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation vali
 
 - **`check_anomaly` 在 PostgreSQL 上不可用（2.3.0 方言缺陷，本版本审计发现）**: 基线查询用了 SQLite 专有的两参 `date(?, '-N days')` 修饰符（PG 无此函数且 pg_compat 垫片刻意未提供）和 `MAX(1, COUNT(*))`（PG 的 `COUNT(*)` 返回 bigint，不匹配 int/int `max()` 垫片）——成本异常端点在真实 PostgreSQL 上直接报 `UndefinedFunction`，2.4.0 的 drift 成本信号也会因 fail-safe 静默失效。本机 PG 18 现场复现后修复：窗口边界改在 Python 计算（ISO 日期串比较，双方言中立），除零守卫改用 `NULLIF(COUNT(*), 0)`，SUM/COUNT(*) 的 NULL 稀释语义与原实现逐位一致（SQLite/PG 双端数字核对相同）。回归守卫：`tests/test_cost_attribution.py` 源码方言扫描（AST 字符串常量级，含守卫自证断言）+ PG 集成套件新增运行时用例 `test_cost_anomaly_uses_portable_sql`（真实 PG 上锁定稀释语义与 2× 异常边界）。
 
-## Unreleased
-
-### Added
-
-- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
-- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
-- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
-- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
-
 ## 2.3.0 — AI Cost Attribution: 完整推理成本追踪与异常检测 (2026-09-04)
 
 Version 2.3.0 实现了 AI 成本归因系统，为每次模型推理调用记录真实 token 用量和 USD 成本，并提供按租户/agent/prompt 维度的聚合报表与成本异常检测。本版本配合 Provider 定价元数据实现了精确的成本计算（误差 <1%）和基于基线的自动告警。
@@ -69,6 +60,13 @@ Version 2.3.0 实现了 AI 成本归因系统，为每次模型推理调用记�
   - 测试：`tests/test_cost_attribution.py` 9 例（记录成本/汇总查询/维度分组/异常检测基线/超标/正常/**turn 路径接线**/无模型跳过）、`tests/test_cost_analytics_api.py` 6 例（daily 汇总/by_agent/by_prompt/anomaly 端点/viewer 权限拒绝），所有测试修复 Windows 清理顺序（database.close() 先于 client.close() 和 _tmp.cleanup()）。
   - OpenAPI 快照：`api/openapi.json` 重生成（+326 行 = 4 个新端点 schema）。
   - 迁移上界同步：`tests/test_phase38.py`、`tests/test_streaming.py`、`tests/test_migration_registry.py` 三处断言更新为 44（从 43）。
+
+### Added（2.2.x 列车补完，随 2.3.0 发布合入）
+
+- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
+- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
+- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
+- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
 
 ### Changed
 
