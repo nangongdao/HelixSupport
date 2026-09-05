@@ -91,17 +91,23 @@ export function safeCitationUrl(value) {
   return "#";
 }
 
-export async function updateLabels(event) {
+export function updateLabels(event) {
   event.preventDefault();
   if (!ctx.state.selectedId) return;
-  const form = event.currentTarget;
-  const input = form.elements.labels;
-  const labels = input.value
+  const input = event.currentTarget.elements.labels;
+  void saveLabels(input.value);
+}
+
+/** Shared core for the legacy labels form and the React island bridge: the
+ * island's synthetic submit carries no currentTarget, so the bridge passes
+ * the raw input value instead of a fake form object. */
+export async function saveLabels(rawValue) {
+  if (!ctx.state.selectedId) return;
+  const labels = String(rawValue || "")
     .split(/[,，]/)
     .map((label) => label.trim())
     .filter(Boolean);
   const conversationId = ctx.state.selectedId;
-  ctx.setFormBusy(form, true);
   try {
     await ctx.api(`/api/conversations/${encodeURIComponent(conversationId)}/labels`, {
       method: "PUT",
@@ -113,8 +119,6 @@ export async function updateLabels(event) {
     await ctx.refreshAll({ silent: true, refreshDetail: false });
   } catch (error) {
     ctx.showToast(error.message, true);
-  } finally {
-    ctx.setFormBusy(form, false);
   }
 }
 
@@ -347,11 +351,7 @@ function bindIslandBridge() {
   window.addEventListener("helix-inspector-labels", (event) => {
     const { labels } = event.detail || {};
     if (!Array.isArray(labels)) return;
-    const form = {
-      preventDefault: () => {},
-      elements: { labels: { value: labels.join(", ") } },
-    };
-    void updateLabels(form);
+    void saveLabels(labels.join(", "));
   });
   // Note composer: the island owns the form DOM; the write + completion
   // feedback stay here.
