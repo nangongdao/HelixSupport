@@ -848,6 +848,29 @@ def build_router(deps: RouteDeps) -> APIRouter:
                 )
             except Exception:
                 logger.exception("failed to update quality aggregate for feedback")
+        # ROADMAP 2.6.0: a negative rating flip auto-stages the exchange into
+        # the AI governance registry (redacted at ingest, pending human
+        # review) so the eval dataset pipeline sees live drift material.
+        # Exactly-once per flip, mirroring the quality aggregate; best-effort
+        # — the rating write already succeeded and must never be blocked.
+        if services.ai_governance is not None and payload.rating == -1 and previous_rating != -1:
+            try:
+                rated_message = database.get_message(
+                    principal.tenant_id, conversation_id, payload.message_id
+                )
+                services.ai_governance.ingest_online_feedback(
+                    tenant_id=principal.tenant_id,
+                    conversation_id=conversation_id,
+                    source="negative_rating",
+                    payload={
+                        "message_id": payload.message_id,
+                        "rating": payload.rating,
+                        "reason": payload.reason or "",
+                        "rated_content": (rated_message or {}).get("content", ""),
+                    },
+                )
+            except Exception:
+                logger.exception("failed to stage governance online feedback")
         return FeedbackOut(**feedback)
 
     @router.get("/api/collaborators", response_model=list[CollaboratorOut])

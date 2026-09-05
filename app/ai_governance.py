@@ -389,6 +389,39 @@ class AiGovernanceService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_feedback(
+        self,
+        tenant_id: str,
+        *,
+        status: str = "pending_review",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List staged online feedback for the review queue, newest first."""
+        limit = max(1, min(int(limit), 100))
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if status != "all":
+            clauses.append("review_status = ?")
+            values.append(status)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM ai_online_feedback WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_datasets(self, tenant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """List eval dataset registry rows for a tenant, newest version first."""
+        limit = max(1, min(int(limit), 100))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM ai_eval_datasets WHERE tenant_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (tenant_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def review_feedback(
         self,
         feedback_id: str,
