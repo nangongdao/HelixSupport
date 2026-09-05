@@ -460,6 +460,59 @@ harmless when unenforced. The live drill evidence lands in
 `supplychain/rls-drills.json` and is governed by `threat_model_gate.py
 --check-today` (`automated_rls`). See ADR-015.
 
+## AI Cost Attribution And Drift Monitoring
+
+Every model inference (triage, language, copilot, summaries) records prompt/
+completion tokens and USD cost into `inference_costs` (migration v44) with a
+daily `tenant_cost_daily` rollup. Four admin endpoints (`admin:manage`)
+expose it:
+
+- `GET /api/analytics/costs/daily?start_date=&end_date=` — cumulative summary
+- `GET /api/analytics/costs/by_agent?date=` and `/by_prompt?date=` — breakdowns
+- `GET /api/analytics/costs/anomaly` — current day vs the 7-day baseline
+  (`anomaly` fires at 2x by default; rows without vendor pricing carry
+  `cost_usd = NULL` and count toward tokens only)
+
+The admin island's cost dashboard card renders all four; the anomaly readout
+is the same evaluation the drift monitor applies.
+
+**Drift monitoring** (default off; `DRIFT_ENABLED=1` to enable) runs an hourly
+sweep comparing per-tenant signals against thresholds and, on any breach,
+clears that tenant's canary prompt versions back to draft and audits
+`ai.drift_canary_stopped` (active versions are never touched — rolling back
+a retired version stays an operator decision):
+
+| Signal | Threshold | Source |
+| --- | --- | --- |
+| escalation / negative-feedback rate | `DRIFT_MAX_ESCALATION_RATE` / `DRIFT_MAX_NEGATIVE_RATE` | quality buckets |
+| model / tool denials | `DRIFT_MAX_MODEL_DENIALS` / `DRIFT_MAX_TOOL_DENIALS` | audit events |
+| cost factor (today vs baseline) | `DRIFT_MAX_COST_FACTOR` (default 2.0) | `tenant_cost_daily` |
+| stale-citation share | `DRIFT_MAX_STALE_CITATION_RATE` (default 0.2) | messages + knowledge articles |
+
+Small samples stay silent (`DRIFT_MIN_TURNS`); each signal can be disabled
+individually by unsetting it. Operator response to a breach: inspect the
+audit payload's `signals` array, decide whether the canary candidate stays
+retired, and re-run the eval gate before re-entering canary routing.
+
+## Shadow Traffic And Multi-Cell Operations
+
+**Shadow traffic** (default off; `SHADOW_TRAFFIC_ENABLED=1`,
+`SHADOW_TRAFFIC_SAMPLE_RATE` to tune) replays sampled v1 read requests to the
+v2 endpoint configured by `SHADOW_TRAFFIC_BASE_URL`, storing field-level
+comparisons in `shadow_traffic_comparisons`. The hourly health monitor
+evaluates a rolling 24-hour window and logs an alert when mismatch rate or
+latency regression breaches its thresholds — investigate the comparison rows
+before promoting v2.
+
+**Multi-cell** (`CELL_REGISTRY_JSON`): when a registry is configured, the
+process starts per-peer replication workers (internal-authenticated
+`POST /api/internal/replication/apply`) and periodic cell health checks as
+background tasks. **Regional failover** is an operator runbook, not an
+automatic behavior: `python scripts/run_region_failover.py --target-region
+<r> [--dry-run]` verifies target-cell health, enforces data residency, and
+publishes a signed new control-plane snapshot; `--dry-run` validates without
+publishing. See `ROADMAP_2_X.md` §42-43 for the gate evidence.
+
 ## Routine Work
 
 - Daily: review SLA breaches, tool failures, negative feedback, and escalations.

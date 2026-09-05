@@ -247,6 +247,16 @@ class Settings:
     # turn.budget_exceeded / tool.denied); None disables that counter.
     drift_max_model_denials: int | None = 50
     drift_max_tool_denials: int | None = 50
+    # ROADMAP 2.4.0 (closes the §43.5 deferral): cost drift signal. Fires when
+    # the current day's attributed cost reaches this multiple of the tenant's
+    # baseline daily average (CostAttributionService.check_anomaly, 7-day
+    # window ending yesterday). Baseline 0 (no priced inference yet) never
+    # fires; None disables the signal.
+    drift_max_cost_factor: float | None = 2.0
+    # ROADMAP 2.4.0: citation-validity drift signal. Share of window assistant
+    # messages whose citations no longer resolve to a served knowledge article
+    # (retired/deleted/unpublished); a breach stops the canary. None disables.
+    drift_max_stale_citation_rate: float | None = 0.2
     # ROADMAP 2.2.1: multi-cell deployment configuration. When non-None, loads
     # the cell registry from this JSON structure; each cell specifies its
     # database URL, Redis URL, health check endpoint, region, and capacity tier.
@@ -411,6 +421,16 @@ class Settings:
                 if os.getenv("DRIFT_MAX_TOOL_DENIALS")
                 else None
             ),
+            drift_max_cost_factor=(
+                float(os.environ["DRIFT_MAX_COST_FACTOR"])
+                if os.getenv("DRIFT_MAX_COST_FACTOR")
+                else None
+            ),
+            drift_max_stale_citation_rate=(
+                float(os.environ["DRIFT_MAX_STALE_CITATION_RATE"])
+                if os.getenv("DRIFT_MAX_STALE_CITATION_RATE")
+                else None
+            ),
             shadow_traffic_enabled=_env_bool("SHADOW_TRAFFIC_ENABLED", False),
             shadow_traffic_sample_rate=float(os.getenv("SHADOW_TRAFFIC_SAMPLE_RATE", "0.05")),
             shadow_traffic_base_url=os.getenv(
@@ -566,6 +586,12 @@ class Settings:
         ):
             if count is not None and count < 1:
                 raise ValueError(f"{name} must be at least 1 or unset")
+        if self.drift_max_cost_factor is not None and self.drift_max_cost_factor <= 1:
+            raise ValueError("DRIFT_MAX_COST_FACTOR must be greater than 1 or unset")
+        if self.drift_max_stale_citation_rate is not None and not (
+            0 < self.drift_max_stale_citation_rate <= 1
+        ):
+            raise ValueError("DRIFT_MAX_STALE_CITATION_RATE must be in (0, 1] or unset")
         if not 1 <= self.drift_window_days <= 90:
             raise ValueError("DRIFT_WINDOW_DAYS must be between 1 and 90")
         if self.is_production and self.auth_mode != "api_key":

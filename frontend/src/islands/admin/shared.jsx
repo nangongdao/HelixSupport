@@ -32,6 +32,13 @@ function currentIdentity() {
  * {role, permissions, actorId, tenantId}) whenever the authenticated
  * operator changes; until then canManage is false and every query stays
  * disabled — no privileged fetch can fire early.
+ *
+ * React 18 without act() commits effects asynchronously, so the identity
+ * dispatch can land between the first render (stale globals snapshot) and
+ * this effect's subscription — observed live as an admin island stuck on
+ * "guest" forever on a warm server. Re-syncing from the snapshot after
+ * subscribing closes that window: whatever happened before subscription is
+ * captured by the globals, and events keep it fresh afterwards.
  */
 export function useIdentity() {
   const [identity, setIdentity] = useState(currentIdentity);
@@ -39,6 +46,7 @@ export function useIdentity() {
     const sync = (event) =>
       setIdentity(event.detail ? { ...event.detail } : currentIdentity());
     window.addEventListener(ADMIN_EVENTS.IDENTITY, sync);
+    setIdentity(currentIdentity());
     return () => window.removeEventListener(ADMIN_EVENTS.IDENTITY, sync);
   }, []);
   return identity;

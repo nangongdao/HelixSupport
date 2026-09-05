@@ -4,14 +4,21 @@ The monitor is the safety net *behind* the eval gate (ADR-014): the gate
 blocks a bad candidate before it enters canary routing, this module pulls it
 back out when live traffic proves it worse than offline evaluation believed.
 
-Signals come from two existing surfaces — nothing new is written at turn
+Signals come from three existing surfaces — nothing new is written at turn
 time:
 
 - **quality buckets** (:meth:`QualityService.list_buckets`) supply
   escalation-rate and negative-feedback-rate per day/prompt-version;
 - **audit events** (:meth:`Database.export_audit_events`) supply refusal
   counts: ``turn.model_denied``, ``turn.budget_exceeded`` and
-  ``tool.denied``.
+  ``tool.denied``;
+- **cost attribution** (:class:`~app.cost_attribution.CostAttributionService`)
+  supplies the spend factor — the current day's attributed cost versus the
+  tenant's baseline daily average (ROADMAP 2.4.0, closing the §43.5
+  deferral that waited on live-model cost telemetry);
+- **assistant messages + knowledge articles** supply citation validity —
+  the share of window messages whose citations no longer resolve to a
+  served article (retired/deleted/unpublished).
 
 When any configured threshold breaches over the look-back window, every
 currently-canary prompt version of the affected tenant is cleared back to
@@ -35,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
+from app.cost_attribution import CostAttributionService
 from app.database import Database
 from app.prompts import PromptRegistry
 from app.quality import QualityService
@@ -76,7 +84,7 @@ class DriftReport:
 
 
 class DriftMonitor:
-    """Threshold sweep over quality buckets and denial audit counts."""
+    """Threshold sweep over quality buckets, denial counts, cost and citations."""
 
     def __init__(
         self,
@@ -85,12 +93,14 @@ class DriftMonitor:
         *,
         quality_service: QualityService | None = None,
         prompt_registry: PromptRegistry | None = None,
+        cost_service: CostAttributionService | None = None,
         now: Any = None,
     ) -> None:
         self.database = database
         self.settings = settings
         self.quality_service = quality_service or QualityService(database)
         self.prompt_registry = prompt_registry or PromptRegistry(database)
+        self.cost_service = cost_service or CostAttributionService(database)
         # Injectable clock keeps the window math testable.
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -116,6 +126,8 @@ class DriftMonitor:
                 settings.drift_min_turns,
             )
         signals.extend(self._denial_signals(tenant_id, until))
+        signals.extend(self._cost_signal(tenant_id, until_date))
+        signals.extend(self._citation_signal(tenant_id, until))
         return signals
 
     def _rate_signals(
@@ -194,6 +206,103 @@ class DriftMonitor:
         except ValueError:
             return 0
         return sum(int(bucket.get("turn_count") or 0) for bucket in buckets)
+
+    def _cost_signal(self, tenant_id: str, until_date: str) -> list[DriftSignal]:
+        """Cost-factor signal: current-day spend vs the tenant's baseline.
+
+        The threshold is applied here (not inside ``check_anomaly``) so the
+        analytics endpoint keeps its own ``CostTolerance`` semantics while the
+        monitor obeys ``DRIFT_MAX_COST_FACTOR``. A zero baseline — no priced
+        inference yet — never fires, mirroring the anomaly check.
+        """
+        limit = self.settings.drift_max_cost_factor
+        if limit is None:
+            return []
+        try:
+            report = self.cost_service.check_anomaly(tenant_id, today=until_date)
+        except Exception:
+            logger.info("drift.cost_probe_failed tenant=%s", tenant_id)
+            return []
+        baseline = float(report.get("baseline_cost_usd") or 0.0)
+        factor = float(report.get("factor") or 0.0)
+        if baseline > 0 and factor >= limit:
+            return [DriftSignal("cost_factor", round(factor, 2), limit)]
+        return []
+
+    def _citation_signal(self, tenant_id: str, until: datetime) -> list[DriftSignal]:
+        """Stale-citation-rate signal over window assistant messages.
+
+        A citation is stale when its article id no longer resolves to a
+        served article (retired, deleted, unpublished or deactivated) —
+        exactly the rows retrieval would no longer return. Metadata is
+        parsed in Python rather than through JSON SQL so the check is
+        dialect-neutral (SQLite ``json_extract`` vs PostgreSQL JSON paths).
+        """
+        settings = self.settings
+        limit = settings.drift_max_stale_citation_rate
+        if limit is None:
+            return []
+        since_iso = (until - timedelta(days=settings.drift_window_days)).isoformat(
+            timespec="microseconds"
+        )
+        cited_total = 0
+        cited_ids: set[str] = set()
+        message_citations: list[list[dict[str, Any]]] = []
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT metadata_json FROM messages "
+                "WHERE tenant_id = ? AND role = 'assistant' AND created_at >= ?",
+                (tenant_id, since_iso),
+            ).fetchall()
+            for row in rows:
+                try:
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                citations = metadata.get("citations")
+                if not isinstance(citations, list) or not citations:
+                    continue
+                entries = [
+                    citation
+                    for citation in citations
+                    if isinstance(citation, dict) and citation.get("id")
+                ]
+                if not entries:
+                    continue
+                cited_total += 1
+                message_citations.append(entries)
+                cited_ids.update(str(citation["id"]) for citation in entries)
+            valid_ids: set[str] = set()
+            ordered = sorted(cited_ids)
+            # Chunk the IN-list: SQLite caps host parameters at 999.
+            for start in range(0, len(ordered), 500):
+                chunk = ordered[start : start + 500]
+                placeholders = ", ".join("?" for _ in chunk)
+                served = connection.execute(
+                    "SELECT id FROM knowledge_articles "
+                    f"WHERE tenant_id = ? AND active = 1 "
+                    f"AND (status = 'published' OR status IS NULL) "
+                    f"AND id IN ({placeholders})",
+                    (tenant_id, *chunk),
+                ).fetchall()
+                valid_ids.update(str(served_row["id"]) for served_row in served)
+        if cited_total < settings.drift_min_turns:
+            logger.info(
+                "drift.citation_sample_too_small tenant=%s cited=%s min=%s",
+                tenant_id,
+                cited_total,
+                settings.drift_min_turns,
+            )
+            return []
+        stale_messages = sum(
+            1
+            for entries in message_citations
+            if any(str(citation["id"]) not in valid_ids for citation in entries)
+        )
+        rate = stale_messages / cited_total
+        if rate > limit:
+            return [DriftSignal("stale_citation_rate", round(rate, 4), limit)]
+        return []
 
     def _count_events(self, tenant_id: str, event_types: tuple[str, ...], since_iso: str) -> int:
         total = 0

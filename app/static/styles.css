@@ -1291,6 +1291,51 @@ a.knowledge-source:hover {
   color: var(--muted);
 }
 
+/* Cost dashboard card (admin island, 2.3.0 analytics API): status chip in
+   the h3 mirrors badge styling; breakdown rows reuse the csat-day row
+   shape so the two read-only cards read identically. */
+.cost-status {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.cost-status.is-anomaly {
+  /* --amber is the contrast-fixed pill token (light theme darkens it). */
+  color: var(--amber);
+  border-color: currentColor;
+}
+
+.cost-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.cost-row-label {
+  font-weight: 600;
+}
+
+.cost-row-meta {
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.admin-card h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .sla-rule-main,
 .routing-rule-main {
   display: flex;

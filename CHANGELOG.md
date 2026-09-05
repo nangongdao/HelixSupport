@@ -2,14 +2,39 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
-## Unreleased
+## 2.4.0 — AI 治理闭环: 成本/citation drift 信号 (2026-09-05)
+
+Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation validity 与成本阈值接 drift 信号源"。2.3.0 交付 live-model 成本遥测后，本版本把成本异常与引用失效接成 drift 信号：越限时与质量/拒绝信号一样自动清空 canary 并审计，线上 AI 治理四类信号（质量、拒绝、成本、引用）全部闭环。
+
+**发布亮点**:
+- ✅ **成本因子信号**: 当日归因成本达到租户基线日均的 `DRIFT_MAX_COST_FACTOR` 倍（默认 2.0）自动停 canary
+- ✅ **引用失效信号**: 窗口内 assistant 消息引用失效（退役/删除/未发布）知识文章的占比超过 `DRIFT_MAX_STALE_CITATION_RATE`（默认 0.2）自动停 canary
+- ✅ **零新写路径**: 两个信号全部复用既有面（`tenant_cost_daily` 聚合 + `messages.metadata_json` + `knowledge_articles`），turn 路径零新增写入
 
 ### Added
 
-- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
-- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
-- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
-- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
+- **成本 drift 信号（ROADMAP 2.4.0）**:
+  - `app/cost_attribution.py`: `check_anomaly()` 新增可选 `today` 参数（默认真实当前日期）——drift 监控注入自己的时钟使窗口数学可测，analytics 端点行为不变。
+  - `app/drift_monitor.py`: `DriftMonitor` 新增 `cost_service` 注入（默认自行构造）；`_cost_signal()` 复用 `check_anomaly` 的基线/因子语义，但阈值由 `DRIFT_MAX_COST_FACTOR` 独立判定（analytics 端点继续走 `CostTolerance`，两套消费互不干扰）；基线为 0（尚无定价推理）永不触发，与异常检测语义一致；探测失败仅记日志不阻塞其余信号。
+  - `app/config.py`: `DRIFT_MAX_COST_FACTOR`（默认 2.0；校验必须 >1；`None`/未设置停用）。
+- **引用失效 drift 信号（ROADMAP 2.4.0）**:
+  - `app/drift_monitor.py`: `_citation_signal()` 统计窗口内带引用的 assistant 消息中，引用 id 不再解析为可服务文章（`active=1` 且 `status='published'` 或 NULL——与检索面完全一致）的占比；样本量低于 `drift_min_turns` 静默（小样本不停发布）；越限严格大于阈值才触发（与率值信号一致）。metadata 用 Python 解析而非 JSON SQL，SQLite/PG 双方言中立；`IN` 列表按 500 分块规避 SQLite 参数上限。
+  - `app/config.py`: `DRIFT_MAX_STALE_CITATION_RATE`（默认 0.2；校验 (0,1]；`None`/未设置停用）。
+- **接线**: `app/main.py` 把 `cost_attribution_service` 注入 `DriftMonitor`，housekeeping 小时 sweep 自动获得两个新信号；`ai.drift_canary_stopped` 审计 payload 的 `signals` 数组携带 `cost_factor`/`stale_citation_rate`。
+- **测试**: `tests/test_ai_governance.py` 新增 `DriftCostCitationSignalTests` 8 例（成本越限停 canary + 审计断言/低于阈值与零基线静默/信号停用；引用退役越限停 canary/新引用静默/部分越限与恰好阈值不触发/样本下限静默/信号停用），`tests/test_config_validation.py` 新增 2 例负向校验（factor ≤1 拒绝、rate 越界拒绝）。
+- **成本仪表盘管理卡（岛原生，补 2.3.0 API 的 UI 面）**: admin 岛第 9 张卡 `frontend/src/islands/admin/cost-card.jsx`——4 个只读 GET（`/api/analytics/costs/{daily,by_agent,by_prompt,anomaly}`）经 `["admin"]` 前缀 react-query 接入既有身份门控与 `helix-admin-refresh/saved` 生命周期，零新写桥；读数含累计调用/tokens/成本（`formatUsd`：亚美分保留 6 位、可读金额 2 位）、今日 vs 基线异常读数（与 2.4.0 drift 同一评估语义，`无定价推理` 空态渲染 — 而非 $0.00，沿用 CSAT 卡 W2 约定）、按功能（agent 值 → 中文标签映射）与按提示版本拆分（成本降序）；`cost-status` 状态徽标用对比度修正过的 `--amber` 令牌，行样式与 CSAT 卡同形。模型/卡/常量按域拆分进 `admin/`（模块均 ≤400 行），vitest 新增 5 例（模型纯函数 4 + 渲染契约 1，九卡断言更新），真实浏览器岛模式 + 种子数据全旅程验证（含双主题），全套前端/性能门禁绿。
+- **桌面壳 admin 写旅程自动化 + 岛身份门控竞态修复**: 新增 `tests/ui_admin_island.py`——桌面壳（Tauri 前置条件）里真浏览器 + 真后端驱动岛模式管理台完整写闭环（岛表单 → helix-admin-* 桥 → legacy 处理器 → 真实 API → saved 事件 → 岛 react-query 重取重渲染）：配额保存/成员邀请+改角色+停用/webhook 注册+确认删除/非管理员零特权请求（含 `/api/analytics/`）。**套件首跑即抓出既有竞态缺陷**：React 18 无 act() 时 effect 异步提交，`/api/me` 的 helix-identity 派发可落在岛首次渲染（陈旧全局快照）与 effect 订阅之间——事件无订阅者被错过，管理员岛在暖服务器上永久卡在 guest 门控。修复：`useIdentity` 类钩子（admin 门控/identity 读数/mentions 徽标三处）订阅后从全局快照追赶同步一次，窗口闭合；渲染序技巧的确定性 vitest 回归测试锁定（兄弟组件渲染期派发、effect 阶段前无订阅者的精确窗口）。真机套件连跑 3 次全绿，vitest 173、前端/性能门禁、a11y 浏览器套件绿。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.4.0"。
+- **组合根瘦身（Phase 27 纪律回归）**: `app/main.py` 因 2.x 装配代码回涨到 1,237 行——超出 Phase 27 拆分后的 714 行基线。请求控制中间件（request-id/安全响应头/影子流量采样/request 指标）与 versioned Problem Details 异常处理器整体抽取为 `app/middleware.py`（325 行，`register_request_controls`/`register_error_handlers` 两个注册工厂，代码逐字搬移仅换归属），main.py 回落到 963 行。快照门禁不变、全量后端套件绿。
+- **组合根瘦身第二片（服务装配体）**: 数据库引导、凭据注册层、orchestrator/worker/成本归因核心、审计锚定、信封加密、outbox、附件/归档存储、保留服务、控制面、drift/影子监控、cell 注册与 `AppServices` 容器整体抽取为 `app/bootstrap.py`（522 行，`build_application(settings)` 返回 `ApplicationContext`，装配顺序逐字保留，housekeeping 闭包对 `services` 的晚绑定语义不变）；OIDC 构造随之入 bootstrap（避免闭包绑定断裂，ruff F821 抓出 `oidc_flow` 在新作用域未赋值的隐患）；`AppServices` 随迁并从 main 重导出，消费方导入面零改动。main.py 最终回落到 **519 行**（低于 Phase 27 基线），快照不变、全量后端套件绿。
+- **controller 领域化（生命周期域拆分）**: `app/orchestrator.py`（935 行）的运营者状态迁移域——handoff/claim/release/assign/回复/内部备注/标签与优先级/批量操作/resolve/reopen 及 CSAT 链接与 webhook emit 助手——整体抽取为 `app/conversation_lifecycle.py` 的 `ConversationLifecycleMixin`（591 行，方法逐字、经 `self` 读协作方，延续 db mixin 的既定模式与 pyright 文件级豁免）；三个生命周期异常类（`TurnInProgressError`/`InvalidTransitionError`/`IdempotencyConflictError`）迁入 `app/domain.py` 与 `ConversationStatus` 同域，orchestrator 重导出保持 middleware/routers/tests 的导入面零改动。orchestrator.py 回落到 **372 行**（只留启动、turn 接收与流水线组装），快照不变、全量后端套件绿、零测试修改。
+
+### Fixed
+
+- **`check_anomaly` 在 PostgreSQL 上不可用（2.3.0 方言缺陷，本版本审计发现）**: 基线查询用了 SQLite 专有的两参 `date(?, '-N days')` 修饰符（PG 无此函数且 pg_compat 垫片刻意未提供）和 `MAX(1, COUNT(*))`（PG 的 `COUNT(*)` 返回 bigint，不匹配 int/int `max()` 垫片）——成本异常端点在真实 PostgreSQL 上直接报 `UndefinedFunction`，2.4.0 的 drift 成本信号也会因 fail-safe 静默失效。本机 PG 18 现场复现后修复：窗口边界改在 Python 计算（ISO 日期串比较，双方言中立），除零守卫改用 `NULLIF(COUNT(*), 0)`，SUM/COUNT(*) 的 NULL 稀释语义与原实现逐位一致（SQLite/PG 双端数字核对相同）。回归守卫：`tests/test_cost_attribution.py` 源码方言扫描（AST 字符串常量级，含守卫自证断言）+ PG 集成套件新增运行时用例 `test_cost_anomaly_uses_portable_sql`（真实 PG 上锁定稀释语义与 2× 异常边界）。
 
 ## 2.3.0 — AI Cost Attribution: 完整推理成本追踪与异常检测 (2026-09-04)
 
@@ -35,6 +60,13 @@ Version 2.3.0 实现了 AI 成本归因系统，为每次模型推理调用记�
   - 测试：`tests/test_cost_attribution.py` 9 例（记录成本/汇总查询/维度分组/异常检测基线/超标/正常/**turn 路径接线**/无模型跳过）、`tests/test_cost_analytics_api.py` 6 例（daily 汇总/by_agent/by_prompt/anomaly 端点/viewer 权限拒绝），所有测试修复 Windows 清理顺序（database.close() 先于 client.close() 和 _tmp.cleanup()）。
   - OpenAPI 快照：`api/openapi.json` 重生成（+326 行 = 4 个新端点 schema）。
   - 迁移上界同步：`tests/test_phase38.py`、`tests/test_streaming.py`、`tests/test_migration_registry.py` 三处断言更新为 44（从 43）。
+
+### Added（2.2.x 列车补完，随 2.3.0 发布合入）
+
+- **影子流量真实链路接通（2.1.x 补完）**: v1 读请求现在会按采样率经 HTTP 中间件异步重放到 v2 端点，写入 `shadow_traffic_comparisons`；`SHADOW_TRAFFIC_BASE_URL` 替代原先硬编码的 `http://127.0.0.1:8000`（生产可指向真实 v2 API）；监控接入 turn-worker housekeeping 周期评估 24h 窗口健康度。v42 迁移已注册进迁移链。
+- **多 Cell 真实链路接通（2.2.x）**: 注册 v43 迁移（`replication_log` 表）；新增带内部认证（控制面 secret）的 `POST /api/internal/replication/apply` 复制入口，支持 `conversations`/`messages`/`audit_events`/`knowledge_articles` 的白名单列 upsert 与 delete；启动时按 cell 注册表为每个对等 cell 拉起复制 worker 与周期健康检查任务。
+- **审计锚定密钥持久化（SEC-005）**: `AUDIT_ANCHOR_KEY`（base64 原始 Ed25519 私钥）现在真正生效——`Ed25519KmsSigner.from_encoded()` 恢复持久键，重启后 kid 稳定、历史锚点可继续验证。
+- **区域故障切换（ROADMAP 2.2.3）**: 新增 `app/region_failover.py`——`check_region_health`（fail-safe 探测）、`find_healthy_cell_in_region`、`initiate_failover`（校验目标 cell 健康 → 强制数据驻留 → 发布带签名的新控制面快照 → 返回可审计的 FailoverState）；`--dry-run` 只验证不发布。配套 runbook `scripts/run_region_failover.py`（支持 `--target-cell`/`--target-region`/`--dry-run`/`--skip-health`）。`CELL_REGISTRY_JSON` 环境变量绑定补齐，多 cell 部署配置可完全走环境变量。
 
 ### Changed
 

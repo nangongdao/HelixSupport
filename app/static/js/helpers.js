@@ -125,13 +125,21 @@ export function scheduleIdle(fn, timeoutMs = 2000) {
   }
 }
 
-/** Toggle the busy frame on a form (disables every control inside it). */
+/** Toggle the busy frame on a form (disables every control inside it).
+ * Island mode: republish the composer snapshot afterwards — the island's
+ * mirrored forms read the busy flags from these dataset attributes, and the
+ * send lifecycle toggles them on the yielded legacy forms only, so without
+ * this republish the desktop shell's composer stays disabled after every
+ * send. No-op outside island mode (the bridge checks the mode flag). */
 export function setFormBusy(form, busy) {
   form.dataset.busy = String(busy);
   form.setAttribute("aria-busy", String(busy));
   form.querySelectorAll("button, input, textarea, select").forEach((control) => {
     control.disabled = busy;
   });
+  if (typeof window !== "undefined" && window.__HELIX_ISLAND_MODE__) {
+    window.HelixModules?.composerIslandBridge?.publishComposerState?.();
+  }
 }
 
 /** Generate an idempotency key sharing the console's ui- prefix. */

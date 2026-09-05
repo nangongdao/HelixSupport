@@ -168,6 +168,16 @@ class SettingsValidationTests(unittest.TestCase):
     def test_rejects_drift_window_above_90(self) -> None:
         self._assert_rejects("DRIFT_WINDOW_DAYS", "91", "DRIFT_WINDOW_DAYS")
 
+    def test_rejects_drift_cost_factor_at_or_below_one(self) -> None:
+        self._assert_rejects("DRIFT_MAX_COST_FACTOR", "1", "DRIFT_MAX_COST_FACTOR")
+        self._assert_rejects("DRIFT_MAX_COST_FACTOR", "0.5", "DRIFT_MAX_COST_FACTOR")
+
+    def test_rejects_drift_stale_citation_rate_out_of_bounds(self) -> None:
+        self._assert_rejects(
+            "DRIFT_MAX_STALE_CITATION_RATE", "1.5", "DRIFT_MAX_STALE_CITATION_RATE"
+        )
+        self._assert_rejects("DRIFT_MAX_STALE_CITATION_RATE", "0", "DRIFT_MAX_STALE_CITATION_RATE")
+
     def test_rejects_prompt_canary_ratio(self) -> None:
         self._assert_rejects("PROMPT_CANARY_RATIO", "1.5", "PROMPT_CANARY_RATIO")
 
