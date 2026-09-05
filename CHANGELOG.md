@@ -2,6 +2,33 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.5.0 — AI Governance 生产接线: 审批 API、capability secret 与首个 mutating 工具 (2026-09-05)
+
+Version 2.5.0 关闭 §43.5 最后一个本地推迟项——"capability secret 在 main.py→orchestrator→ToolGateway 生产接线（随首个真实 mutating 工具）"。审计发现治理注册表（审批/数据集/在线反馈）自 43.5 起是**纯测试机器**：app 内零构造、零 API 暴露。本版本把治理面接入生产装配。
+
+**发布亮点**:
+- ✅ **首个真实 mutating 工具**: `knowledge.draft` 经 ToolGateway 全治理链（策略→schema→capability token→审计）创建 `draft` 状态知识文章
+- ✅ **治理审批 API**: maker-checker 工作流（请求→他人批准，自批 409）让 `tool_enablement` 审批在生产可操作
+- ✅ **CAPABILITY_SECRET**: 网关令牌验证的生产开关（≥32 字节校验；服务端按调用铸造短 TTL 令牌）
+
+**无新迁移**（复用 v41 四表）。
+
+### Added
+
+- **配置**: `CAPABILITY_SECRET`（可选，空=开发默认令牌不强制；设置时 ≥32 字节校验）——经 `ConversationOrchestrator` 注入 `ToolGateway`，生产装配同时传入 `AiGovernanceService`（此前从未在 app 内构造）；bootstrap 在生产未设置时记录 `capability_secret.unset` 警告。
+- **首个 mutating 工具 `knowledge.draft`**: 网关方法（策略 `side_effect="mutating"`、参数 schema 含长度边界）经 `SandboxKnowledgeConnector.draft_article`/`ResilientKnowledgeConnector.draft_article`（写调用熔断降级必须**响亮失败**而非假成功）创建 `draft` 状态文章并审计 `tool.knowledge_drafted`；拒绝路径审计 `tool.denied`（drift 监控信号源）。
+- **治理审批 API**（新 `app/routers/governance.py`，全 `admin:manage`）: `GET /api/admin/governance/approvals?status=`、`POST .../approvals/request`、`POST .../approvals/{id}/decide`（SelfApprovalError→409）。
+- **Copilot draft 端点**: `POST /api/copilot/knowledge-draft`（`operator:act`）——服务端按调用铸造短 TTL capability token 并呈现给网关验证，拒绝以 403 + `tool denied (reason)` 呈现。
+- **schema 校验器扩展**: `minLength`/`maxLength`/`minItems`/`maxItems`（进 schema digest——收紧边界即令牌失效）。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.5.0"。
+
+### Tests
+
+- `tests/test_governance_api.py` 8 例（审批 round-trip/maker-checker/重复 409/RBAC、draft 落库+审计/令牌铸造验证/schema 拒绝+审计/viewer 403/无密钥 fail-closed、CAPABILITY_SECRET 校验 2 例）；`test_ai_governance.py` +校验器边界单测；装配接线断言（gateway.governance_service is services.ai_governance）。
+
 ## 2.4.0 — AI 治理闭环: 成本/citation drift 信号 (2026-09-05)
 
 Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation validity 与成本阈值接 drift 信号源"。2.3.0 交付 live-model 成本遥测后，本版本把成本异常与引用失效接成 drift 信号：越限时与质量/拒绝信号一样自动清空 canary 并审计，线上 AI 治理四类信号（质量、拒绝、成本、引用）全部闭环。

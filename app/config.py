@@ -178,6 +178,12 @@ class Settings:
     # 43.1: HMAC key for signed tenant configuration snapshots. Empty falls
     # back to the widget secret so development works out of the box.
     control_plane_secret: str = ""
+    # ROADMAP 2.5.0: HMAC secret for tool capability tokens (43.5). When set,
+    # the ToolGateway verifies every presented capability token against it
+    # and server-side tool callers mint short-lived tokens per call; when
+    # empty, token enforcement stays disabled (tokens presented without a
+    # secret fail closed with ``token_unsupported``).
+    capability_secret: str = ""
     audit_anchor_enabled: bool = True
     audit_anchor_environment: str = "development"
     audit_anchor_key: str = ""  # base64 Ed25519 private key; empty => generated
@@ -384,6 +390,9 @@ class Settings:
             audit_worm_dir=Path(os.getenv("AUDIT_WORM_DIR", "data/anchors")),
             archive_object_dir=Path(os.getenv("ARCHIVE_OBJECT_DIR", "data/archive-objects")),
             control_plane_secret=os.getenv("CONTROL_PLANE_SECRET", ""),
+            capability_secret=(
+                os.environ["CAPABILITY_SECRET"] if os.getenv("CAPABILITY_SECRET") else ""
+            ),
             audit_trusted_kids=tuple(
                 kid.strip() for kid in os.getenv("AUDIT_TRUSTED_KIDS", "").split(",") if kid.strip()
             ),
@@ -594,6 +603,11 @@ class Settings:
             raise ValueError("DRIFT_MAX_STALE_CITATION_RATE must be in (0, 1] or unset")
         if not 1 <= self.drift_window_days <= 90:
             raise ValueError("DRIFT_WINDOW_DAYS must be between 1 and 90")
+        if self.capability_secret and len(self.capability_secret.encode("utf-8")) < 32:
+            raise ValueError(
+                "CAPABILITY_SECRET must be at least 32 bytes when set "
+                "(it signs short-lived tool capability tokens)"
+            )
         if self.is_production and self.auth_mode != "api_key":
             raise ValueError("AUTH_MODE=api_key is required in production")
         if self.api_keys_file is not None:

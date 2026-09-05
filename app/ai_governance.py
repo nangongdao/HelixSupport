@@ -248,6 +248,33 @@ class AiGovernanceService:
             )
         return {"id": approval_id, "decision": "pending", "requested_by": requested_by}
 
+    def list_approvals(
+        self,
+        tenant_id: str,
+        *,
+        status: str = "pending",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List approval requests for a tenant, newest first.
+
+        ``status`` filters the decision column ("all" disables the filter);
+        used by the governance admin API so operators can see which tools
+        are gated and which requests await a second pair of eyes.
+        """
+        limit = max(1, min(int(limit), 100))
+        clauses = ["tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if status != "all":
+            clauses.append("decision = ?")
+            values.append(status)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM ai_approvals WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def decide_approval(
         self,
         approval_id: str,

@@ -46,6 +46,7 @@ from app.database import Database
 from app.tool_governance import (
     CapabilityError,
     ToolPolicy,
+    issue_capability_token,
     validate_arguments,
     verify_capability_token,
 )
@@ -80,6 +81,26 @@ DEFAULT_TOOL_POLICIES: dict[str, ToolPolicy] = {
             "type": "object",
             "required": ["customer_ref"],
             "properties": {"customer_ref": {"type": "string"}},
+        },
+    ),
+    # ROADMAP 2.5.0: the first mutating tool. Drafts land in
+    # ``draft`` status — a human still approves publication, so the side
+    # effect is ``mutating`` rather than ``high_risk``; the governance chain
+    # (schema, capability token when presented, audit) applies in full.
+    "knowledge.draft": ToolPolicy(
+        name="knowledge.draft",
+        side_effect="mutating",
+        parameter_schema={
+            "type": "object",
+            "required": ["title", "content", "tags"],
+            "properties": {
+                "title": {"type": "string", "minLength": 2, "maxLength": 160},
+                "content": {"type": "string", "minLength": 10, "maxLength": 12000},
+                "tags": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "category": {"type": "string", "maxLength": 60},
+                "source_url": {"type": "string", "maxLength": 500},
+                "language": {"type": "string", "maxLength": 8},
+            },
         },
     ),
 }
@@ -400,6 +421,98 @@ class ToolGateway:
             duration_ms=int((perf_counter() - started) * 1000),
             output=output,
             arguments={"order_id": order_id},
+        )
+
+    def mint_capability_token(self, tool: str, tenant_id: str) -> dict[str, Any] | None:
+        """Mint a short-lived single-tool capability token for one call.
+
+        Returns ``None`` when the gateway has no capability secret — callers
+        then proceed tokenless (the enforcement layer only validates tokens
+        that are presented). This keeps development working while a
+        production deployment that configures ``CAPABILITY_SECRET`` gets the
+        full delegation chain on every mutating call.
+        """
+        if not self._capability_secret:
+            return None
+        policy = self.tool_policies.get(tool)
+        digest = policy.schema_digest() if policy else ""
+        return issue_capability_token(
+            secret=self._capability_secret,
+            tool=tool,
+            tenant_id=tenant_id,
+            schema_digest=digest,
+        )
+
+    def draft_knowledge(
+        self,
+        tenant_id: str,
+        arguments: dict[str, Any],
+        *,
+        actor_id: str,
+        capability: dict[str, Any] | None = None,
+    ) -> ToolExecution:
+        """Create a pending-review knowledge draft (the first mutating tool).
+
+        ROADMAP 2.5.0 closes the §43.5 production-wiring deferral: the full
+        governance chain (policy → capability token → schema → audit) runs on
+        a call that actually writes. The draft lands in ``draft`` status —
+        publication still requires the human review step, which is why the
+        side effect is ``mutating`` rather than ``high_risk``.
+        """
+        started = perf_counter()
+        tool = "knowledge.draft"
+        arguments_note = {
+            "title": str(arguments.get("title", "")),
+            "tags": ",".join(str(tag) for tag in (arguments.get("tags") or []))[:120],
+        }
+
+        def _denied(code: str, reason: str, message: str) -> ToolExecution:
+            logger.info("tool.denied tool=%s reason=%s", tool, reason)
+            self.database.audit(
+                tenant_id,
+                None,
+                actor_id,
+                "tool.denied",
+                {"tool": tool, "reason": reason, "message": message},
+            )
+            return ToolExecution(
+                tool=tool,
+                success=False,
+                code=code,
+                duration_ms=int((perf_counter() - started) * 1000),
+                output={"reason": reason, "message": message},
+                arguments=arguments_note,
+            )
+
+        try:
+            self.enforce_governance(tool, tenant_id, arguments, capability=capability)
+        except ToolGovernanceDenied as exc:
+            return _denied("policy_denied", exc.reason, str(exc))
+
+        article = self._knowledge_connector.draft_article(
+            tenant_id,
+            title=str(arguments["title"]).strip(),
+            content=str(arguments["content"]).strip(),
+            tags=[str(tag) for tag in arguments["tags"]],
+            category=str(arguments.get("category") or "general").strip() or "general",
+            source_url=str(arguments.get("source_url") or "").strip(),
+            language=str(arguments.get("language") or "").strip() or None,
+            actor_id=actor_id,
+        )
+        self.database.audit(
+            tenant_id,
+            None,
+            actor_id,
+            "tool.knowledge_drafted",
+            {"tool": tool, "article_id": article["id"], "title": article["title"]},
+        )
+        return ToolExecution(
+            tool=tool,
+            success=True,
+            code="drafted",
+            duration_ms=int((perf_counter() - started) * 1000),
+            output={"article_id": article["id"], "status": article.get("status") or "draft"},
+            arguments=arguments_note,
         )
 
 

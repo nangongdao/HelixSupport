@@ -21,6 +21,7 @@ from typing import Any
 
 from app.anchor_service import AnchorService
 from app.audit_anchor import Ed25519KmsSigner
+from app.ai_governance import AiGovernanceService
 from app.audit_gap import AuditGapTracker
 from app.channel_webhooks import InboundChannelRegistry
 from app.config import Settings
@@ -73,6 +74,7 @@ class AppServices:
     envelope_cipher: Any | None = None
     outbox_consumer: Any | None = None
     drift_monitor: Any | None = None
+    ai_governance: Any | None = None
     cell_registry: Any | None = None
     cost_attribution: Any | None = None
 
@@ -199,6 +201,15 @@ def build_application(settings: Settings) -> ApplicationContext:
 
     cost_attribution_service = CostAttributionService(database)
 
+    # ROADMAP 2.5.0: the AI governance registry reaches production here —
+    # it powers high-risk tool approvals in the gateway, and the capability
+    # secret turns on token verification for gateway-mediated tool calls.
+    ai_governance = AiGovernanceService(database)
+    if settings.is_production and not settings.capability_secret:
+        logger.warning(
+            "capability_secret.unset: tool capability tokens are not verified; "
+            "set CAPABILITY_SECRET to enable the full tool delegation chain"
+        )
     orchestrator = ConversationOrchestrator(
         database,
         settings,
@@ -206,6 +217,8 @@ def build_application(settings: Settings) -> ApplicationContext:
         queue=queue,
         webhook_service=webhook_service,
         cost_attribution=cost_attribution_service,
+        capability_secret=settings.capability_secret,
+        governance_service=ai_governance,
     )
     turn_worker = TurnJobWorker(
         database,
@@ -504,6 +517,7 @@ def build_application(settings: Settings) -> ApplicationContext:
         drift_monitor=drift_monitor,
         cell_registry=cell_registry,
         cost_attribution=cost_attribution_service,
+        ai_governance=ai_governance,
     )
 
     return ApplicationContext(

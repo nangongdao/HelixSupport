@@ -36,7 +36,7 @@ configure_logging()
 configure_tracing()
 logger = logging.getLogger("helix")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 
 
 def _conversation_quota_exceeded(database: Any, tenant_id: str) -> str | None:
@@ -477,6 +477,12 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     app.include_router(build_reports_router(route_deps))
     app.include_router(build_attachments_router(route_deps))
     app.include_router(build_analytics_router(route_deps))
+
+    # ROADMAP 2.5.0: governance registry API — maker-checker approvals for
+    # tool enablement (the gateway consults these before high-risk calls).
+    from app.routers.governance import build_router as build_governance_router
+
+    app.include_router(build_governance_router(route_deps))
 
     # 43.3: /api/v2 — cursor envelopes, honoured Idempotency-Key, and the
     # transactional domain-event outbox. v1 keeps serving unchanged.
