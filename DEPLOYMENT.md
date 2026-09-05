@@ -296,6 +296,23 @@ never query parameters or server-rendered logs. See
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md#web-chat-widget) for the integration
 flow.
 
+### Control-Plane And Widget Secret Requirements (2.3.0 tightening)
+
+Production startup fails fast on two secret rules (enforced by
+`Settings.validate()`):
+
+1. `WIDGET_SECRET` must be replaced with a long random value. The built-in
+   development default (`helix-widget-dev-secret`) lets anyone forge widget
+   tokens and is rejected in production.
+2. `CONTROL_PLANE_SECRET` must be set explicitly. Without it the control
+   plane would fall back to the development widget secret; production
+   refuses that fallback. Generate at least 32 random bytes — a shorter
+   value disables the tenant control plane entirely (signed policy
+   snapshots and restricted-field envelope encryption depend on it), and
+   the process logs `control_plane.disabled` while request-path model
+   governance keeps its fail-open pre-43.5 behavior.
+
+
 For a formal inbound messaging channel, configure the provider account map
 with `CHANNEL_WEBHOOKS_FILE` (preferred) or `CHANNEL_WEBHOOKS_JSON`. Each map
 entry binds one account id to a tenant, channel, and at least 32 random bytes;

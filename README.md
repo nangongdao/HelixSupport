@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>v2.3.0</code>&nbsp;
+  <code>v2.4.0</code>&nbsp;
   <code>Python 3.11+</code>&nbsp;
   <code>FastAPI</code>&nbsp;
   <code>SQLite / PostgreSQL</code>&nbsp;
@@ -215,6 +215,18 @@ sequenceDiagram
 - 渠道 HMAC、时间窗重放防护、线程/消息持久幂等、统一 Problem Details
 - 审计哈希链、可校验冷热归档、数据保留、PII 脱敏、数据主体导出/删除基础
 - PostgreSQL/SQLite 迁移等价、Redis 租约队列、背压、恢复、优雅关闭和混沌测试
+
+</details>
+
+<details>
+<summary><strong>平台化与企业治理（2.x）</strong></summary>
+
+- AI 成本归因：每次推理记录 token 用量与 USD 成本（供应商定价），按租户/日期/agent/提示版本聚合，管理端成本仪表盘含异常检测
+- 线上 drift 监控：质量、拒绝计数、成本因子、引用失效四类信号越限自动停 canary 并审计
+- v1→v2 影子流量：按采样率把 v1 读请求重放到 v2 端点做字段级对比，24 小时健康窗口自动告警
+- 多 cell：注册表驱动的 cell 路由、跨区异步复制（内部认证入口）、受控区域故障切换 runbook
+- 数据面/控制面：HMAC 签名租户策略快照、LKG 降级、restricted 字段信封加密、外部审计锚定（Ed25519 + WORM）
+- SDK v2：游标分页、Idempotency-Key 重放语义与跨版本一致性测试（clients/python）
 
 </details>
 
