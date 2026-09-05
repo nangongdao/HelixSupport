@@ -54,3 +54,15 @@ class AgentResult:
 class QualityAssessment:
     approved: bool
     issues: list[str] = field(default_factory=list)
+
+
+class TurnInProgressError(ValueError):
+    """A turn is already being processed for the conversation."""
+
+
+class InvalidTransitionError(ValueError):
+    """The conversation lifecycle rejects the requested transition."""
+
+
+class IdempotencyConflictError(ValueError):
+    """A request id was reused with a different payload."""
