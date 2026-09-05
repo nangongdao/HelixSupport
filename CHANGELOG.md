@@ -29,6 +29,7 @@ Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation vali
 
 - **版本号**: `app/main.py` APP_VERSION 更新至 "2.4.0"。
 - **组合根瘦身（Phase 27 纪律回归）**: `app/main.py` 因 2.x 装配代码回涨到 1,237 行——超出 Phase 27 拆分后的 714 行基线。请求控制中间件（request-id/安全响应头/影子流量采样/request 指标）与 versioned Problem Details 异常处理器整体抽取为 `app/middleware.py`（325 行，`register_request_controls`/`register_error_handlers` 两个注册工厂，代码逐字搬移仅换归属），main.py 回落到 963 行。快照门禁不变、全量后端套件绿。
+- **组合根瘦身第二片（服务装配体）**: 数据库引导、凭据注册层、orchestrator/worker/成本归因核心、审计锚定、信封加密、outbox、附件/归档存储、保留服务、控制面、drift/影子监控、cell 注册与 `AppServices` 容器整体抽取为 `app/bootstrap.py`（522 行，`build_application(settings)` 返回 `ApplicationContext`，装配顺序逐字保留，housekeeping 闭包对 `services` 的晚绑定语义不变）；OIDC 构造随之入 bootstrap（避免闭包绑定断裂，ruff F821 抓出 `oidc_flow` 在新作用域未赋值的隐患）；`AppServices` 随迁并从 main 重导出，消费方导入面零改动。main.py 最终回落到 **519 行**（低于 Phase 27 基线），快照不变、全量后端套件绿。
 
 ### Fixed
 
