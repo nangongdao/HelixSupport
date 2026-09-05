@@ -2,6 +2,35 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.6.0 — Online Feedback 管线: 负评分自动入治理库 + 评审/晋级 API (2026-09-05)
+
+Version 2.6.0 打通 43.5 治理注册表的另一半：线上反馈从采集到评测数据集的生产管线。此前只有审批面接了线（2.5.0），客户负评分与治理注册表之间是断开的。
+
+**发布亮点**:
+- ✅ **负评分自动入治理库**: 客户评分翻转为 -1 时，被评分的交换自动脱敏入册（pending_review，exactly-once per flip，best-effort 绝不阻塞评分写入）
+- ✅ **评审队列 API**: 治理 API 新增 feedback 列表/评审与数据集列表/条目端点
+- ✅ **晋级 API**: accepted 行折叠进具名数据集的新版本；pending/rejected 搭车即整批 409 中止
+
+**无新迁移**（复用 v41 四表）。
+
+### Added
+
+- **负评分自动摄取**（`app/routers/conversations.py`）: 评分端点在质量聚合之后 best-effort 调用 `ingest_online_feedback(source="negative_rating", payload={message_id, rating, reason, rated_content})`——脱敏发生在入库前（存储即脱敏文档）；仅新评分 = -1 且旧评分 ≠ -1 时触发（与质量聚合的翻转语义一致）。
+- **治理反馈/数据集 API**（`app/routers/governance.py` 扩展，全 `admin:manage`）:
+  - `GET /api/admin/governance/feedback?status=pending_review` — 评审队列（accepted/rejected/all 可选）
+  - `POST /api/admin/governance/feedback/{id}/review` — 人工接受/拒绝
+  - `POST /api/admin/governance/datasets/promote-feedback` — accepted 行折进具名数据集新版本（`strategy="feedback"`）；任何 pending/rejected id 整批 409 中止
+  - `GET /api/admin/governance/datasets` + `GET .../datasets/{id}/items` — 注册表与条目
+- **服务方法**: `AiGovernanceService.list_feedback` / `list_datasets`。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.6.0"。
+
+### Tests
+
+- `tests/test_governance_feedback.py` 6 例（负评分翻转自动入册且脱敏文档落库/exactly-once/正评分不入册/评审+晋级 round-trip/pending 搭车 409 中止/评审与晋级 RBAC 403）。
+
 ## 2.5.0 — AI Governance 生产接线: 审批 API、capability secret 与首个 mutating 工具 (2026-09-05)
 
 Version 2.5.0 关闭 §43.5 最后一个本地推迟项——"capability secret 在 main.py→orchestrator→ToolGateway 生产接线（随首个真实 mutating 工具）"。审计发现治理注册表（审批/数据集/在线反馈）自 43.5 起是**纯测试机器**：app 内零构造、零 API 暴露。本版本把治理面接入生产装配。
