@@ -506,6 +506,46 @@ class PostgresIntegrationTests(unittest.TestCase):
         self.assertEqual(fetched["customer_name"], "PG Customer")
         self.assertEqual(fetched["labels"], [])
 
+    def test_cost_anomaly_uses_portable_sql(self) -> None:
+        """check_anomaly must run identical SQL on both backends (2.3.0 parity).
+
+        The 2.3.0 baseline query used SQLite's two-argument ``date(x, '-N
+        days')`` modifier (no PostgreSQL equivalent and no pg_compat shim)
+        and ``MAX(1, COUNT(*))`` — PG's ``COUNT(*)`` is ``bigint`` and does
+        not match the int/int ``max()`` shim, so the analytics endpoint and
+        the drift cost signal both failed on real PostgreSQL. The portable
+        rewrite (Python window bounds + ``NULLIF(COUNT(*), 0)``) must keep
+        the SUM/COUNT(*) NULL-dilution semantics of the original.
+        """
+        from app.cost_attribution import CostAttributionService
+
+        service = CostAttributionService(self.db)
+        for day, cost in (
+            ("2026-09-01", 10.0),
+            ("2026-09-02", None),
+            ("2026-09-03", 10.0),
+        ):
+            service.record_inference_cost(
+                self.TENANT,
+                provider="openai",
+                model="gpt-4.1-mini",
+                prompt_tokens=100,
+                completion_tokens=10,
+                cost_usd=cost,
+                date_str=day,
+            )
+        report = service.check_anomaly(self.TENANT, today="2026-09-03")
+        # Baseline window is date < today: 09-01 (10.0) and 09-02 (NULL) —
+        # SUM 10.0 over COUNT(*) 2. The unpriced day dilutes the baseline
+        # exactly like the original SQLite SUM/MAX(1, COUNT(*)) math would
+        # (without it the average would be 10/1 = 10.0). Today's own 10.0
+        # against the diluted 5.0 baseline lands exactly on the default 2x
+        # anomaly boundary.
+        self.assertEqual(report["baseline_cost_usd"], 5.0)
+        self.assertEqual(report["today_cost_usd"], 10.0)
+        self.assertEqual(report["factor"], 2.0)
+        self.assertTrue(report["anomaly"])
+
     def test_formal_channel_mapping_receipt_and_job_id_are_durable(self) -> None:
         conversation, created = self.db.get_or_create_channel_conversation(
             self.TENANT,

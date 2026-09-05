@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -245,6 +247,61 @@ class TurnPathCostWiringTests(unittest.TestCase):
         agent = TriageAgent(None, cost_attribution=self.service)
         agent.decide("退款", tenant_id="tenant-1")
         self.assertEqual(self.service.get_cost_by_dimension("tenant-1", "agent"), [])
+
+
+# SQL patterns that are SQLite-only and fail on PostgreSQL: the two-argument
+# date(text, modifier) call (no PG equivalent, no pg_compat shim) and MIN/MAX
+# wrapping COUNT(*) (PG's COUNT(*) is bigint and misses the int/int max()
+# shim). Both shipped in 2.3.0's check_anomaly and were reproduced live.
+_DATE_MODIFIER = re.compile(r"\bdate\(\s*[^()]*,")
+_MINMAX_COUNT = re.compile(r"\b(?:MIN|MAX)\(\s*[^()]*\bCOUNT\s*\(")
+_GUARDS = (
+    (
+        _DATE_MODIFIER,
+        "two-argument date(..., modifier) — compute window bounds in Python and "
+        "compare ISO strings instead",
+    ),
+    (
+        _MINMAX_COUNT,
+        "MIN/MAX wrapping COUNT(*) — PG's COUNT(*) is bigint and misses the "
+        "int/int max() shim; use NULLIF(COUNT(*), 0) instead",
+    ),
+)
+
+
+class CostDialectPortabilityTests(unittest.TestCase):
+    """The cost SQL must stay valid under the PostgreSQL dialect.
+
+    PostgreSQL has no two-argument ``date(text, modifier)`` (the pg_compat
+    shims deliberately don't add one) and its ``COUNT(*)`` returns ``bigint``,
+    which does not match the int/int ``max()`` shim — so the 2.3.0 baseline
+    query failed on real PostgreSQL (reproduced live; the SQLite-only default
+    test run cannot see it, and the PG integration suite only runs when
+    HELIX_PG_INTEGRATION=1). The portable rewrite uses Python window bounds
+    and ``NULLIF(COUNT(*), 0)``; guard the source so neither pattern can be
+    reintroduced.
+    """
+
+    def test_no_sqlite_date_modifier_or_count_wrapped_in_minmax(self) -> None:
+        # The guard must keep its teeth: both guarded regressions match.
+        self.assertIsNotNone(_DATE_MODIFIER.search("AND date >= date(?, ?)"))
+        self.assertIsNotNone(_MINMAX_COUNT.search("SUM(cost_usd) / MAX(1, COUNT(*))"))
+
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        for path in sorted(app_dir.rglob("*.py")):
+            if path.name == "pg_compat.py":
+                continue  # that file *is* the shim layer
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                    continue  # SQL only — prose in docstrings/comments may name the patterns
+                for pattern, message in _GUARDS:
+                    match = pattern.search(node.value)
+                    if match is None:
+                        continue
+                    self.fail(
+                        f"{path.relative_to(app_dir.parent)} SQL {match.group()!r}: {message}"
+                    )
 
 
 if __name__ == "__main__":

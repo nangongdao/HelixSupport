@@ -27,6 +27,10 @@ Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation vali
 
 - **版本号**: `app/main.py` APP_VERSION 更新至 "2.4.0"。
 
+### Fixed
+
+- **`check_anomaly` 在 PostgreSQL 上不可用（2.3.0 方言缺陷，本版本审计发现）**: 基线查询用了 SQLite 专有的两参 `date(?, '-N days')` 修饰符（PG 无此函数且 pg_compat 垫片刻意未提供）和 `MAX(1, COUNT(*))`（PG 的 `COUNT(*)` 返回 bigint，不匹配 int/int `max()` 垫片）——成本异常端点在真实 PostgreSQL 上直接报 `UndefinedFunction`，2.4.0 的 drift 成本信号也会因 fail-safe 静默失效。本机 PG 18 现场复现后修复：窗口边界改在 Python 计算（ISO 日期串比较，双方言中立），除零守卫改用 `NULLIF(COUNT(*), 0)`，SUM/COUNT(*) 的 NULL 稀释语义与原实现逐位一致（SQLite/PG 双端数字核对相同）。回归守卫：`tests/test_cost_attribution.py` 源码方言扫描（AST 字符串常量级，含守卫自证断言）+ PG 集成套件新增运行时用例 `test_cost_anomaly_uses_portable_sql`（真实 PG 上锁定稀释语义与 2× 异常边界）。
+
 ## Unreleased
 
 ### Added

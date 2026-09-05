@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -275,8 +276,18 @@ class CostAttributionService:
         ``factor`` (default 2.0) times the baseline (ignored when the
         baseline is 0). ``today`` defaults to the real current date; the
         drift monitor injects its own clock so window math stays testable.
+
+        The window bounds are computed in Python (ISO date strings) rather
+        than with SQLite's two-argument ``date()`` modifier — PostgreSQL has
+        no such overload and the pg_compat shims don't add one — and the
+        divide guard is ``NULLIF(COUNT(*), 0)`` because PG's ``COUNT(*)``
+        returns ``bigint``, which does not match the int/int ``max()`` shim.
+        Both backends run the identical query.
         """
         day = today or utc_now()[:10]
+        cutoff = (
+            datetime.strptime(day, "%Y-%m-%d").date() - timedelta(days=self.tolerance.baseline_days)
+        ).isoformat()
         with self.database.connect() as connection:
             today_row = connection.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0.0) AS cost_usd "
@@ -284,11 +295,10 @@ class CostAttributionService:
                 (tenant_id, day),
             ).fetchone()
             baseline_row = connection.execute(
-                "SELECT COALESCE(SUM(cost_usd) / MAX(1, COUNT(*)), 0.0) AS avg_cost "
+                "SELECT COALESCE(SUM(cost_usd) / NULLIF(COUNT(*), 0), 0.0) AS avg_cost "
                 "FROM tenant_cost_daily "
-                "WHERE tenant_id = ? AND date < ? "
-                "AND date >= date(?, ?)",
-                (tenant_id, day, day, f"-{self.tolerance.baseline_days} days"),
+                "WHERE tenant_id = ? AND date < ? AND date >= ?",
+                (tenant_id, day, cutoff),
             ).fetchone()
         today_cost = float(today_row["cost_usd"])
         baseline = float(baseline_row["avg_cost"])
