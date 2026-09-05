@@ -335,6 +335,13 @@ jobs:
           python tests/ui_admin.py
           python tests/ui_knowledge.py
           python tests/ui_accessibility.py
+          # Desktop-shell island journeys (Tauri preconditions boot the React
+          # islands; these caught four shipped defects — PG-dialect-adjacent
+          # identity race, stuck composer busy, dead label bridge). Legacy
+          # suites run first; the island suites share the same server and DB.
+          python tests/ui_admin_island.py
+          python tests/ui_console_island.py
+          python tests/ui_knowledge_island.py
 
       - name: Nightly performance and visual gates (schedule only)
         if: github.event_name == 'schedule'
