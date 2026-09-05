@@ -24,6 +24,7 @@ control-plane deployment:
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -37,6 +38,7 @@ from app.ai_governance import (
 )
 from app.config import Settings
 from app.control_plane import DataPlaneConfig, TenantControlPlane, TenantPolicy
+from app.cost_attribution import CostAttributionService
 from app.database import Database
 from app.drift_monitor import DriftMonitor
 from app.model_provider import (
@@ -551,6 +553,263 @@ class DriftMonitorTests(unittest.TestCase):
             now=self.now,
         )
         self.assertEqual(monitor.run_once(tenants=["acme"]), [])
+
+
+class DriftCostCitationSignalTests(unittest.TestCase):
+    """ROADMAP 2.4.0: cost-factor and stale-citation drift signals.
+
+    Closes the §43.5 deferral that waited on live-model cost telemetry
+    (delivered by 2.3.0): spend anomalies and citations that no longer
+    resolve to a served knowledge article now stop canaries like the
+    quality/denial signals do.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self._tmp.name) / "drift24.db")
+        self.db.initialize()
+        self.db.ensure_tenant("acme")
+        self.quality = QualityService(self.db)
+        self.registry = PromptRegistry(self.db)
+        self.costs = CostAttributionService(self.db)
+        self.now = lambda: datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self._tmp.cleanup()
+
+    def _settings(self, **overrides: object) -> Settings:
+        kwargs: dict = {
+            "drift_enabled": True,
+            "drift_min_turns": 10,
+            "drift_window_days": 1,
+        }
+        kwargs.update(overrides)
+        return Settings(**kwargs)
+
+    def _seed_canary(self) -> None:
+        active = self.registry.create_version("acme", "triage_prompt", "1.0", "a", None, "admin")
+        self.registry.activate("acme", active.id, "admin")
+        canary = self.registry.create_version("acme", "triage_prompt", "1.1", "b", None, "admin")
+        self.registry.set_canary("acme", canary.id, "admin")
+
+    def _seed_cost(self, day: str, cost_usd: float) -> None:
+        self.costs.record_inference_cost(
+            "acme",
+            provider="openai",
+            model="gpt-4.1-mini",
+            prompt_tokens=1000,
+            completion_tokens=100,
+            cost_usd=cost_usd,
+            date_str=day,
+        )
+
+    def _seed_cited_messages(self, article_id: str, count: int) -> None:
+        conv = self.db.create_conversation("acme", "C", None, "web", "admin", 120)
+        for _ in range(count):
+            self.db.add_message(
+                "acme",
+                conv["id"],
+                "assistant",
+                "assistant",
+                "根据当前服务政策：内容",
+                metadata={"agent": "knowledge", "citations": [{"id": article_id}]},
+            )
+
+    def _stopped_signal_kinds(self, monitor: DriftMonitor) -> set[str]:
+        reports = monitor.run_once(tenants=["acme"])
+        return {signal.kind for report in reports for signal in report.signals}
+
+    def test_cost_factor_breach_stops_canary(self) -> None:
+        for day in ("2026-08-16", "2026-08-18", "2026-08-20"):
+            self._seed_cost(day, 10.0)
+        self._seed_cost("2026-08-23", 30.0)  # 3x the 10.0 baseline
+        self._seed_canary()
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_cost_factor=2.0),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        reports = monitor.run_once(tenants=["acme"])
+        self.assertEqual(len(reports), 1)
+        signal = next(s for s in reports[0].signals if s.kind == "cost_factor")
+        self.assertEqual(signal.value, 3.0)
+        self.assertEqual(signal.limit, 2.0)
+        self.assertEqual(reports[0].stopped_canaries, [{"name": "triage_prompt", "version": "1.1"}])
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM audit_events WHERE tenant_id='acme' "
+                "AND event_type='ai.drift_canary_stopped'"
+            ).fetchone()
+        signals = json.loads(row["payload_json"])["signals"]
+        self.assertIn("cost_factor", {s["kind"] for s in signals})
+
+    def test_cost_below_threshold_and_zero_baseline_stay_silent(self) -> None:
+        for day in ("2026-08-16", "2026-08-18", "2026-08-20"):
+            self._seed_cost(day, 10.0)
+        self._seed_cost("2026-08-23", 15.0)  # 1.5x baseline
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_cost_factor=2.0),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        self.assertEqual(monitor.collect_signals("acme"), [])
+        # No baseline at all (only today has priced inference) never fires.
+        fresh = tempfile.TemporaryDirectory()
+        try:
+            fresh_db = Database(Path(fresh.name) / "fresh.db")
+            fresh_db.initialize()
+            fresh_db.ensure_tenant("acme")
+            fresh_costs = CostAttributionService(fresh_db)
+            fresh_costs.record_inference_cost(
+                "acme",
+                provider="openai",
+                model="gpt-4.1-mini",
+                prompt_tokens=1000,
+                completion_tokens=100,
+                cost_usd=999.0,
+                date_str="2026-08-23",
+            )
+            fresh_monitor = DriftMonitor(
+                fresh_db,
+                self._settings(drift_max_cost_factor=2.0),
+                cost_service=fresh_costs,
+                now=self.now,
+            )
+            self.assertEqual(fresh_monitor.collect_signals("acme"), [])
+            fresh_db.close()
+        finally:
+            fresh.cleanup()
+
+    def test_cost_signal_disabled(self) -> None:
+        self._seed_cost("2026-08-20", 10.0)
+        self._seed_cost("2026-08-23", 100.0)
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_cost_factor=None),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        self.assertEqual(monitor.collect_signals("acme"), [])
+
+    def test_stale_citation_breach_stops_canary(self) -> None:
+        article = self.db.create_knowledge(
+            "acme", "退换货政策", "七天内可退", ["政策"], "general", ""
+        )
+        self._seed_cited_messages(article["id"], 10)
+        self.db.review_knowledge("acme", article["id"], "retire", "admin")
+        self._seed_canary()
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_stale_citation_rate=0.2),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        reports = monitor.run_once(tenants=["acme"])
+        self.assertEqual(len(reports), 1)
+        signal = next(s for s in reports[0].signals if s.kind == "stale_citation_rate")
+        self.assertEqual(signal.value, 1.0)
+        self.assertEqual(reports[0].stopped_canaries, [{"name": "triage_prompt", "version": "1.1"}])
+
+    def test_fresh_citations_stay_silent(self) -> None:
+        article = self.db.create_knowledge(
+            "acme", "退换货政策", "七天内可退", ["政策"], "general", ""
+        )
+        self._seed_cited_messages(article["id"], 10)
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_stale_citation_rate=0.2),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        self.assertEqual(monitor.collect_signals("acme"), [])
+
+    def test_citation_rate_partial_breach_and_ceiling(self) -> None:
+        article = self.db.create_knowledge(
+            "acme", "退换货政策", "七天内可退", ["政策"], "general", ""
+        )
+        stale = self.db.create_knowledge("acme", "旧政策", "已下线", ["政策"], "general", "")
+        self.db.review_knowledge("acme", stale["id"], "retire", "admin")
+        conv = self.db.create_conversation("acme", "C", None, "web", "admin", 120)
+        for i in range(10):
+            cited = stale["id"] if i < 3 else article["id"]
+            self.db.add_message(
+                "acme",
+                conv["id"],
+                "assistant",
+                "assistant",
+                "根据当前服务政策：内容",
+                metadata={"agent": "knowledge", "citations": [{"id": cited}]},
+            )
+        kwargs = {
+            "quality_service": self.quality,
+            "prompt_registry": self.registry,
+            "cost_service": self.costs,
+            "now": self.now,
+        }
+        breaching = DriftMonitor(
+            self.db, self._settings(drift_max_stale_citation_rate=0.2), **kwargs
+        )
+        kinds = {s.kind for s in breaching.collect_signals("acme")}
+        self.assertIn("stale_citation_rate", kinds)
+        # A rate exactly at the ceiling is not a breach (rate signals use >).
+        at_ceiling = DriftMonitor(
+            self.db, self._settings(drift_max_stale_citation_rate=0.3), **kwargs
+        )
+        self.assertEqual(
+            [s for s in at_ceiling.collect_signals("acme") if s.kind == "stale_citation_rate"],
+            [],
+        )
+
+    def test_citation_sample_floor_stays_silent(self) -> None:
+        self.db.ensure_tenant("tiny")
+        conv = self.db.create_conversation("tiny", "C", None, "web", "admin", 120)
+        for _ in range(3):
+            self.db.add_message(
+                "tiny",
+                conv["id"],
+                "assistant",
+                "assistant",
+                "内容",
+                metadata={"agent": "knowledge", "citations": [{"id": "kb_missing"}]},
+            )
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_stale_citation_rate=0.2, drift_min_turns=10),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        self.assertEqual(monitor.collect_signals("tiny"), [])
+
+    def test_citation_signal_disabled(self) -> None:
+        article = self.db.create_knowledge(
+            "acme", "退换货政策", "七天内可退", ["政策"], "general", ""
+        )
+        self._seed_cited_messages(article["id"], 10)
+        self.db.review_knowledge("acme", article["id"], "retire", "admin")
+        monitor = DriftMonitor(
+            self.db,
+            self._settings(drift_max_stale_citation_rate=None),
+            quality_service=self.quality,
+            prompt_registry=self.registry,
+            cost_service=self.costs,
+            now=self.now,
+        )
+        self.assertEqual(monitor.collect_signals("acme"), [])
 
 
 if __name__ == "__main__":

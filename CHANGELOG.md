@@ -2,6 +2,31 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.4.0 — AI 治理闭环: 成本/citation drift 信号 (2026-09-05)
+
+Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation validity 与成本阈值接 drift 信号源"。2.3.0 交付 live-model 成本遥测后，本版本把成本异常与引用失效接成 drift 信号：越限时与质量/拒绝信号一样自动清空 canary 并审计，线上 AI 治理四类信号（质量、拒绝、成本、引用）全部闭环。
+
+**发布亮点**:
+- ✅ **成本因子信号**: 当日归因成本达到租户基线日均的 `DRIFT_MAX_COST_FACTOR` 倍（默认 2.0）自动停 canary
+- ✅ **引用失效信号**: 窗口内 assistant 消息引用失效（退役/删除/未发布）知识文章的占比超过 `DRIFT_MAX_STALE_CITATION_RATE`（默认 0.2）自动停 canary
+- ✅ **零新写路径**: 两个信号全部复用既有面（`tenant_cost_daily` 聚合 + `messages.metadata_json` + `knowledge_articles`），turn 路径零新增写入
+
+### Added
+
+- **成本 drift 信号（ROADMAP 2.4.0）**:
+  - `app/cost_attribution.py`: `check_anomaly()` 新增可选 `today` 参数（默认真实当前日期）——drift 监控注入自己的时钟使窗口数学可测，analytics 端点行为不变。
+  - `app/drift_monitor.py`: `DriftMonitor` 新增 `cost_service` 注入（默认自行构造）；`_cost_signal()` 复用 `check_anomaly` 的基线/因子语义，但阈值由 `DRIFT_MAX_COST_FACTOR` 独立判定（analytics 端点继续走 `CostTolerance`，两套消费互不干扰）；基线为 0（尚无定价推理）永不触发，与异常检测语义一致；探测失败仅记日志不阻塞其余信号。
+  - `app/config.py`: `DRIFT_MAX_COST_FACTOR`（默认 2.0；校验必须 >1；`None`/未设置停用）。
+- **引用失效 drift 信号（ROADMAP 2.4.0）**:
+  - `app/drift_monitor.py`: `_citation_signal()` 统计窗口内带引用的 assistant 消息中，引用 id 不再解析为可服务文章（`active=1` 且 `status='published'` 或 NULL——与检索面完全一致）的占比；样本量低于 `drift_min_turns` 静默（小样本不停发布）；越限严格大于阈值才触发（与率值信号一致）。metadata 用 Python 解析而非 JSON SQL，SQLite/PG 双方言中立；`IN` 列表按 500 分块规避 SQLite 参数上限。
+  - `app/config.py`: `DRIFT_MAX_STALE_CITATION_RATE`（默认 0.2；校验 (0,1]；`None`/未设置停用）。
+- **接线**: `app/main.py` 把 `cost_attribution_service` 注入 `DriftMonitor`，housekeeping 小时 sweep 自动获得两个新信号；`ai.drift_canary_stopped` 审计 payload 的 `signals` 数组携带 `cost_factor`/`stale_citation_rate`。
+- **测试**: `tests/test_ai_governance.py` 新增 `DriftCostCitationSignalTests` 8 例（成本越限停 canary + 审计断言/低于阈值与零基线静默/信号停用；引用退役越限停 canary/新引用静默/部分越限与恰好阈值不触发/样本下限静默/信号停用），`tests/test_config_validation.py` 新增 2 例负向校验（factor ≤1 拒绝、rate 越界拒绝）。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.4.0"。
+
 ## Unreleased
 
 ### Added

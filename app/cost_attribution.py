@@ -265,28 +265,30 @@ class CostAttributionService:
 
     # -------------------------------------------------------------- anomalies
 
-    def check_anomaly(self, tenant_id: str) -> dict[str, Any]:
-        """Compare today's cost to the tenant's recent baseline.
+    def check_anomaly(self, tenant_id: str, *, today: str | None = None) -> dict[str, Any]:
+        """Compare the current day's cost to the tenant's recent baseline.
 
         Returns ``{"anomaly": bool, "today_cost_usd": float,
         "baseline_cost_usd": float, "factor": float}``. The baseline is the
-        average daily cost over ``baseline_days`` (default 7) ending yesterday;
-        an anomaly fires when today's cost exceeds ``factor`` (default 2.0)
-        times that baseline (ignored when the baseline is 0).
+        average daily cost over ``baseline_days`` (default 7) ending the day
+        before ``today``; an anomaly fires when that day's cost exceeds
+        ``factor`` (default 2.0) times the baseline (ignored when the
+        baseline is 0). ``today`` defaults to the real current date; the
+        drift monitor injects its own clock so window math stays testable.
         """
-        today = utc_now()[:10]
+        day = today or utc_now()[:10]
         with self.database.connect() as connection:
             today_row = connection.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0.0) AS cost_usd "
                 "FROM tenant_cost_daily WHERE tenant_id = ? AND date = ?",
-                (tenant_id, today),
+                (tenant_id, day),
             ).fetchone()
             baseline_row = connection.execute(
                 "SELECT COALESCE(SUM(cost_usd) / MAX(1, COUNT(*)), 0.0) AS avg_cost "
                 "FROM tenant_cost_daily "
                 "WHERE tenant_id = ? AND date < ? "
                 "AND date >= date(?, ?)",
-                (tenant_id, today, today, f"-{self.tolerance.baseline_days} days"),
+                (tenant_id, day, day, f"-{self.tolerance.baseline_days} days"),
             ).fetchone()
         today_cost = float(today_row["cost_usd"])
         baseline = float(baseline_row["avg_cost"])

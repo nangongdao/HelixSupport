@@ -74,7 +74,7 @@ configure_tracing()
 logger = logging.getLogger("helix")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 
 
 def _http_exception_code(status_code: int) -> str:
@@ -714,7 +714,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     # failures are logged by the worker, never fatal.
     from app.drift_monitor import DriftMonitor
 
-    drift_monitor = DriftMonitor(database, settings)
+    drift_monitor = DriftMonitor(database, settings, cost_service=cost_attribution_service)
 
     def _housekeeping_drift_monitor() -> None:
         reports = drift_monitor.run_once()
