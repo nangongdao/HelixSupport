@@ -28,6 +28,7 @@ Version 2.4.0 关闭 ROADMAP §43.5 遗留的本地推迟项——"citation vali
 ### Changed
 
 - **版本号**: `app/main.py` APP_VERSION 更新至 "2.4.0"。
+- **组合根瘦身（Phase 27 纪律回归）**: `app/main.py` 因 2.x 装配代码回涨到 1,237 行——超出 Phase 27 拆分后的 714 行基线。请求控制中间件（request-id/安全响应头/影子流量采样/request 指标）与 versioned Problem Details 异常处理器整体抽取为 `app/middleware.py`（325 行，`register_request_controls`/`register_error_handlers` 两个注册工厂，代码逐字搬移仅换归属），main.py 回落到 963 行。快照门禁不变、全量后端套件绿。
 
 ### Fixed
 
