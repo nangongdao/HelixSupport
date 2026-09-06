@@ -16,15 +16,17 @@ import { ADMIN_EVENTS, CARD_IDS } from "./constants.js";
 import {
   governanceApprovalItems,
   governanceDatasetRows,
+  governanceEvalRunItems,
   governanceFeedbackItems,
 } from "./models.js";
 import { AdminEmpty, AdminReadout, useBridge } from "./shared.jsx";
 
-export function AdminGovernanceCard({ approvals, feedback, datasets }) {
+export function AdminGovernanceCard({ approvals, feedback, datasets, evalRuns }) {
   const bridge = useBridge();
   const approvalItems = governanceApprovalItems(approvals);
   const feedbackItems = governanceFeedbackItems(feedback);
   const datasetRows = governanceDatasetRows(datasets);
+  const evalRunItems = governanceEvalRunItems(evalRuns);
 
   const decide = (approvalId, approve) =>
     bridge(ADMIN_EVENTS.GOVERNANCE_DECIDE, { approvalId, approve });
@@ -95,6 +97,19 @@ export function AdminGovernanceCard({ approvals, feedback, datasets }) {
 
       <h4>评测数据集</h4>
       <AdminReadout id={CARD_IDS.governanceDatasetsReadout} rows={datasetRows} />
+
+      <h4>评测运行</h4>
+      <ul id={CARD_IDS.governanceEvalRunsList} className="admin-list">
+        {!evalRunItems.length && <AdminEmpty>暂无评测运行</AdminEmpty>}
+        {evalRunItems.map((item) => (
+          <li className="governance-row" key={item.id}>
+            <span className="governance-row-main">
+              <span className="governance-row-subject">{item.subject}</span>
+              <span className="governance-row-meta">{item.meta}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

@@ -204,4 +204,47 @@ def build_router(deps: RouteDeps) -> APIRouter:
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.get(
+        "/eval-runs",
+        summary="List evaluation runs for the tenant's datasets",
+        description=(
+            "List evaluation runs linked to the tenant's eval datasets "
+            "(newest first; optionally filtered by dataset). Requires "
+            "``admin:manage``."
+        ),
+    )
+    def list_eval_runs(
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+        dataset_id: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> list[dict[str, Any]]:
+        return governance.list_eval_runs(principal.tenant_id, dataset_id=dataset_id, limit=limit)
+
+    @router.get(
+        "/eval-runs/{run_id}",
+        summary="Fetch one evaluation run with its WORM report",
+        description=(
+            "Run detail plus the immutable evaluation report stored in the "
+            "WORM store (null when the report object is not present in this "
+            "deployment's store). Requires ``admin:manage``."
+        ),
+    )
+    def get_eval_run(
+        run_id: str,
+        principal: Annotated[Principal, Depends(require_permission("admin:manage"))],
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        run = governance.get_eval_run(run_id, principal.tenant_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"unknown eval run {run_id!r}")
+        report: dict[str, Any] | None = None
+        if run.get("report_object_id"):
+            for stored in deps.services.eval_reports.read_all():
+                # The WORM payload wraps the report: {kind, run_id, report}.
+                if stored.get("run_id") == run["report_object_id"]:
+                    report = stored.get("report")
+                    break
+        return {**run, "report": report}
+
     return router

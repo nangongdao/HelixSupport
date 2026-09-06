@@ -27,6 +27,7 @@ from app.channel_webhooks import InboundChannelRegistry
 from app.config import Settings
 from app.database import Database
 from app.db._util import utc_now
+from app.eval_reports import EvalReportStore
 from app.jobs import TurnJobWorker
 from app.queue import TaskQueue, create_task_queue
 from app.model_provider import OpenAICompatibleProvider
@@ -75,6 +76,7 @@ class AppServices:
     outbox_consumer: Any | None = None
     drift_monitor: Any | None = None
     ai_governance: Any | None = None
+    eval_reports: Any | None = None
     cell_registry: Any | None = None
     cost_attribution: Any | None = None
 
@@ -205,6 +207,7 @@ def build_application(settings: Settings) -> ApplicationContext:
     # it powers high-risk tool approvals in the gateway, and the capability
     # secret turns on token verification for gateway-mediated tool calls.
     ai_governance = AiGovernanceService(database)
+    eval_reports = EvalReportStore(settings.eval_worm_dir)
     if settings.is_production and not settings.capability_secret:
         logger.warning(
             "capability_secret.unset: tool capability tokens are not verified; "
@@ -518,6 +521,7 @@ def build_application(settings: Settings) -> ApplicationContext:
         cell_registry=cell_registry,
         cost_attribution=cost_attribution_service,
         ai_governance=ai_governance,
+        eval_reports=eval_reports,
     )
 
     return ApplicationContext(
