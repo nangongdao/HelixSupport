@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, patch
 
+
 import httpx
 
 from app.cell_router import (
@@ -12,6 +13,7 @@ from app.cell_router import (
     CellSpec,
     check_cell_health,
     forward_request_to_cell,
+    health_check_tick,
     route_request_to_cell,
 )
 
@@ -252,6 +254,69 @@ class TestForwardRequestToCell(unittest.IsolatedAsyncioTestCase):
                 json_body={"customer_name": "Test User"},
             )
             self.assertEqual(response.status_code, 201)
+
+
+class TestHealthLoopRobustness(unittest.IsolatedAsyncioTestCase):
+    """ROADMAP 2.8.0: the health loop is fire-and-forget — an escaped
+    exception would freeze EVERY cell's health state silently, and region
+    failover decides on exactly that data."""
+
+    async def test_invalid_health_url_never_raises(self) -> None:
+        # httpx.InvalidURL / UnsupportedProtocol are outside the httpx error
+        # taxonomy the original catch covered — a misconfigured health_url
+        # must come back as (False, reason), not raise.
+        cell = CellSpec(
+            cell_id="cell-bad",
+            db_url="postgresql://localhost:5432/db",
+            redis_url="redis://localhost:6379/0",
+            health_url="ftp://localhost:9/health",
+            region="us-east-1",
+            capacity_tier="default",
+        )
+        is_healthy, reason = await check_cell_health(cell)
+        self.assertFalse(is_healthy)
+        self.assertIsNotNone(reason)
+
+    async def test_one_bad_cell_does_not_kill_the_tick_for_others(self) -> None:
+        """Per-cell isolation: the exploding cell is skipped and logged while
+        the healthy cell on the same tick is still checked and recorded."""
+        good = CellSpec(
+            cell_id="cell-good",
+            db_url="postgresql://localhost:5432/db",
+            redis_url="redis://localhost:6379/0",
+            health_url="http://localhost:9/health",
+            region="us-east-1",
+            capacity_tier="default",
+        )
+        bad = CellSpec(
+            cell_id="cell-bad",
+            db_url="postgresql://localhost:5432/db",
+            redis_url="redis://localhost:6379/0",
+            health_url="http://localhost:9/health",
+            region="us-west-2",
+            capacity_tier="premium",
+        )
+        registry = CellRegistry({"cell-good": good, "cell-bad": bad})
+
+        async def exploding_check(cell):
+            if cell.cell_id == "cell-bad":
+                raise RuntimeError("boom")
+            return True, None
+
+        with patch("app.cell_router.check_cell_health", side_effect=exploding_check):
+            await health_check_tick(registry)
+
+        good_health = registry.get_health("cell-good")
+        bad_health = registry.get_health("cell-bad")
+        self.assertIsNotNone(good_health)
+        self.assertTrue(good_health.is_healthy)
+        # The crashed cell is skipped (no health record) rather than killing
+        # the tick for the others.
+        self.assertIsNone(bad_health)
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":
