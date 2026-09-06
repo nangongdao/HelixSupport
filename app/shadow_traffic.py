@@ -74,6 +74,7 @@ def should_shadow_request(settings: Settings) -> bool:
 async def shadow_request_to_v2(
     snapshot: ShadowRequest,
     v1_response_body: dict[str, Any] | None,
+    v1_status_code: int | None,
     v1_latency_ms: int,
     settings: Settings,
     db: Database,
@@ -124,7 +125,7 @@ async def shadow_request_to_v2(
         tenant_id=snapshot.tenant_id,
         request_id=snapshot.request_id,
         route=snapshot.path,
-        v1_status_code=200 if v1_response_body else None,
+        v1_status_code=v1_status_code,
         v2_status_code=v2_status_code,
         fields_matched=fields_matched,
         fields_mismatched=fields_mismatched,
@@ -229,6 +230,7 @@ def _record_comparison(db: Database, comparison: ShadowComparison) -> None:
 def create_shadow_task(
     snapshot: ShadowRequest,
     v1_response_body: dict[str, Any] | None,
+    v1_status_code: int | None,
     v1_latency_ms: int,
     settings: Settings,
     db: Database,
@@ -247,11 +249,41 @@ def create_shadow_task(
         shadow_request_to_v2(
             snapshot=snapshot,
             v1_response_body=v1_response_body,
+            v1_status_code=v1_status_code,
             v1_latency_ms=v1_latency_ms,
             settings=settings,
             db=db,
         )
     )
+
+
+def response_json_body(
+    response_headers: Any,
+    body: bytes | None,
+    *,
+    max_bytes: int = 262144,
+) -> dict[str, Any] | None:
+    """Best-effort parse of a JSON response body for shadow comparison.
+
+    Returns the parsed dict for ``application/json`` bodies of at most
+    ``max_bytes`` bytes; ``None`` for anything else (other content types,
+    oversized payloads, undecodable bytes). A v1 side without a body
+    records empty ``fields_*`` in the comparison — no field diff, but the
+    status/latency signals survive.
+    """
+    try:
+        content_type = response_headers.get("content-type", "")
+    except Exception:
+        return None
+    if not content_type.startswith("application/json"):
+        return None
+    if not isinstance(body, bytes) or len(body) > max_bytes:
+        return None
+    try:
+        parsed = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def maybe_shadow_request(
@@ -292,6 +324,7 @@ def maybe_shadow_request(
         create_shadow_task(
             snapshot=snapshot,
             v1_response_body=v1_response_body,
+            v1_status_code=v1_status_code,
             v1_latency_ms=v1_latency_ms,
             settings=settings,
             db=db,

@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.config import Settings
+from fastapi.testclient import TestClient
 from app.database import Database
 from app.shadow_monitor import (
     ShadowMonitorThresholds,
@@ -26,6 +27,7 @@ from app.shadow_monitor import (
 )
 from app.shadow_traffic import (
     ShadowComparison,
+    response_json_body,
     _compare_responses,
     _deep_equal,
     _record_comparison,
@@ -316,3 +318,96 @@ class ShadowTrafficTests(unittest.TestCase):
         # v2 latencies are consistently 10ms higher
         self.assertIsNotNone(signals.latency_regression_ms)
         self.assertTrue(8 <= signals.latency_regression_ms <= 12)  # roughly 10ms
+
+
+class ResponseJsonBodyTests(unittest.TestCase):
+    """The v1 body extractor used by the request-controls middleware."""
+
+    def test_parses_json_dict(self) -> None:
+        headers = {"content-type": "application/json"}
+        self.assertEqual(
+            response_json_body(headers, b'{"items": [1, 2, 3], "total": 3}'),
+            {"items": [1, 2, 3], "total": 3},
+        )
+
+    def test_rejects_non_json_content_type(self) -> None:
+        self.assertIsNone(response_json_body({"content-type": "text/event-stream"}, b"data: x"))
+        self.assertIsNone(response_json_body({}, b"{}"))
+
+    def test_rejects_oversized_bodies(self) -> None:
+        headers = {"content-type": "application/json"}
+        self.assertIsNone(response_json_body(headers, b"x" * 262145, max_bytes=262144))
+
+    def test_rejects_non_dict_json(self) -> None:
+        # A JSON list is not comparable field-by-field; the v1 side records
+        # no field comparison rather than guessing.
+        self.assertIsNone(response_json_body({"content-type": "application/json"}, b"[1, 2]"))
+        self.assertIsNone(response_json_body({"content-type": "application/json"}, b"null"))
+
+    def test_rejects_undecodable_bytes(self) -> None:
+        self.assertIsNone(response_json_body({"content-type": "application/json"}, b"\xff\xfe"))
+
+
+class ShadowMiddlewareIntegrationTests(unittest.TestCase):
+    """The request-controls middleware captures the REAL v1 response.
+
+    The 2.1.x wiring hardcoded ``v1_response_body={"status": "ok"}`` and
+    recorded ``v1_status_code=200`` unconditionally — every field comparison
+    compared v2's real payload against a fake, so the health monitor would
+    read a permanent mismatch rate. These tests pin the fixed wiring through
+    the actual app middleware.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.settings = Settings(
+            database_path=Path(self._tmp.name) / "shadow-mw.db",
+            auth_mode="demo",
+            shadow_traffic_enabled=True,
+            shadow_traffic_base_url="http://127.0.0.1:9",  # v2 replay target unreachable
+            rate_limit_per_minute=10000,
+            docs_enabled=False,
+        )
+        from app.main import create_app
+
+        self.client = TestClient(create_app(self.settings))
+
+    def tearDown(self) -> None:
+        self.client.app.state.services.database.close()
+        self._tmp.cleanup()
+
+    def test_middleware_captures_real_body_and_status(self) -> None:
+        captured: dict = {}
+        with patch(
+            "app.shadow_traffic.maybe_shadow_request",
+            side_effect=lambda **kw: captured.update(kw),
+        ):
+            response = self.client.get("/health/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        # The captured body is the REAL response payload, not {"status": "ok"}.
+        self.assertEqual(captured["v1_response_body"]["status"], "ready")
+        self.assertEqual(captured["v1_status_code"], 200)
+
+    def test_middleware_captures_404_status(self) -> None:
+        captured: dict = {}
+        with patch(
+            "app.shadow_traffic.maybe_shadow_request",
+            side_effect=lambda **kw: captured.update(kw),
+        ):
+            response = self.client.get("/api/nonexistent-endpoint")
+        self.assertEqual(response.status_code, 404)
+        # The old wiring recorded 200 unconditionally; the real status now
+        # reaches the comparison.
+        self.assertEqual(captured["v1_status_code"], 404)
+        self.assertIsNotNone(captured["v1_response_body"])
+
+    def test_shadow_replay_marker_is_never_shadowed(self) -> None:
+        captured: dict = {}
+        with patch(
+            "app.shadow_traffic.maybe_shadow_request",
+            side_effect=lambda **kw: captured.update(kw),
+        ):
+            response = self.client.get("/health/ready", headers={"X-Shadow-Request": "true"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured, {})
