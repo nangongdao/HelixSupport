@@ -2,6 +2,28 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.7.0 — 治理操作台: 审批与反馈评审的人工操作面 (2026-09-05)
+
+Version 2.7.0 给治理面补上人工操作入口：admin 岛第 10 张卡「治理操作台」把 2.5/2.6 的审批与反馈评审 API 变成可点击的操作——待决审批的批准/拒绝、线上反馈队列的接受/拒绝、评测数据集读数。
+
+**无后端变更、无新迁移**（纯前端 + legacy 写桥）。
+
+### Added
+
+- **AdminGovernanceCard**（`frontend/src/islands/admin/governance-card.jsx`）: 三个查询（pending 审批/pending_review 反馈/数据集注册表）接入既有身份门控与刷新生命周期；批准/拒绝与接受/拒绝经 **helix-admin-governance-decide / -feedback-review** 两个新桥事件回 legacy（api()/toast 生命周期不变，与既有九卡同构）。
+- **legacy 写桥**: `js/admin-actions.js` 新增 `governanceDecideFromIsland` / `governanceFeedbackReviewFromIsland`（fail-closed + dispatchAdminSaved 驱动岛重取），boot.js 绑定 + wire.js ctx + app.js 委托面同步。
+- **样式**: `.governance-row` 行族复用 bulk-member/SLA-row 形态。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.7.0"。
+
+### Tests
+
+- vitest +2（治理卡渲染契约：审批/反馈行与数据集读数；桥契约：decide/review 事件载荷与 saved 域）。
+- `tests/ui_admin_island.py` 扩展治理段（种子审批/反馈经直接 DB 插入——maker-checker 请求人用 seed 身份避免自批 409；岛上批准/接受 → POST 断言 → 列表清空），真机绿。
+- **岛旅程加固（冷服务器取证驱动的三处稳健化）**: ①导航点击改为「点击直到目标视图可见」重试原语（冷服务器上点击可早于 app.js 绑定视图切换——岛自身的 react-query 照常发数据请求，卡片网格在仍隐藏的视图里渲染，等待因而超时；admin/knowledge 两套件同享 open_view 原语）②boot_shell 显式等待 `#desktopSplash` 隐藏（文本断言在覆盖层下也能通过而 fill/click 的可操作性检查不能）③admin 岛 open_admin_island 检测全新库首渲染的零高裁剪布局并 reload 一次重开（取证：input 在视口 y=0 被 app-header 覆盖、祖先链含空 class/overflow:clip/h=0 节点，第二次页面加载即恢复）。修复过程中 admin-actions.js 一度超 400 行门禁，治理处理器迁至独立 `js/governance-bridge.js` 模块（mirroring admin-report-bridge.js）
+
 ## 2.6.0 — Online Feedback 管线: 负评分自动入治理库 + 评审/晋级 API (2026-09-05)
 
 Version 2.6.0 打通 43.5 治理注册表的另一半：线上反馈从采集到评测数据集的生产管线。此前只有审批面接了线（2.5.0），客户负评分与治理注册表之间是断开的。

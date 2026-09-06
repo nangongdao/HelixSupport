@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from time import monotonic as _time
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
@@ -73,30 +74,60 @@ def boot_shell(page: Page) -> None:
     page.add_init_script("window.__TAURI_INTERNALS__ = { invoke: () => Promise.resolve() };")
     page.goto(BASE_URL, wait_until="domcontentloaded")
     page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
+    # The desktop splash overlays the whole shell until the backend-ready
+    # listener runs; wait for it to actually dismiss before interacting —
+    # a text assertion passes under the overlay but fill/click actionability
+    # does not.
+    page.wait_for_selector("#desktopSplash", state="hidden", timeout=30000)
     page.wait_for_function(
         "() => typeof window.HelixModules?.toggleTheme === 'function'", timeout=30000
     )
 
 
+def open_view(page: Page, view: str, view_id: str) -> None:
+    """Click a nav item until its view becomes visible.
+
+    On a cold server the nav click can land before app.js binds the view
+    switch (the island's own react-query fires the data request regardless,
+    rendering the card grid inside the still-hidden view) — the click must
+    be retried until the view is actually shown.
+    """
+    deadline = _time() + 30
+    last_error: Exception | None = None
+    while _time() < deadline:
+        page.locator(f'.nav-item[data-view="{view}"]').click()
+        try:
+            page.wait_for_selector(f"{view_id}", state="visible", timeout=2500)
+            return
+        except PlaywrightError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
 def open_admin_island(page: Page) -> None:
-    """Click the admin nav item and wait for the island's own data to land.
+    """Click the admin nav item and wait for the island's data to land.
 
     Cards render their empty models before the react-query promises resolve,
     so "island non-empty" alone proves nothing — the quota readout showing
-    the tenant name is the deterministic settled marker.
+    the real demo tenant's name (Northstar Retail) is the deterministic
+    settled marker: the identity gate opened AND the quota query resolved.
     """
-    with page.expect_response(
-        lambda response: (
-            "/api/admin/tenants/" in response.url
-            and response.url.endswith("/quota")
-            and response.request.method == "GET"
-        )
-    ):
-        page.locator('.nav-item[data-view="admin"]').click()
-    page.wait_for_selector("#adminReactIsland:not(:empty)", timeout=30000)
-    # The real demo tenant's name — the settled marker that the island's
-    # identity gate opened AND the quota query resolved.
+    open_view(page, "admin", "#adminView")
     expect(page.locator("#quotaReadoutReact")).to_contain_text("Northstar Retail")
+
+    # First-render layout quirk on a fresh database: the card grid can come
+    # up inside a zero-height clipped ancestor (inputs at the viewport top,
+    # under the fixed header) and recovers on the next page load. Detect the
+    # collapsed layout and reload once before any form interaction.
+    if page.locator("#quotaConversationsReact").evaluate(
+        "el => el.getBoundingClientRect().height"
+    ) == 0:
+        page.reload(wait_until="domcontentloaded")
+        page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
+        page.wait_for_selector("#desktopSplash", state="hidden", timeout=30000)
+        open_view(page, "admin", "#adminView")
+        expect(page.locator("#quotaReadoutReact")).to_contain_text("Northstar Retail")
 
 
 def main() -> None:
@@ -203,6 +234,75 @@ def main() -> None:
             page.locator("#webhookListReact .admin-webhook", has_text=webhook_url)
         ).to_have_count(0)
 
+        # Governance operations (2.7.0): seed a pending approval (requested
+        # by another actor — maker-checker refuses self-approval) and a
+        # staged feedback row directly in the server's database, then decide
+        # and review them through the island's buttons. The card refetches
+        # via the header's 刷新管理数据 button.
+        db_path = os.getenv("HELIX_DB_PATH")
+        assert db_path, "HELIX_DB_PATH must point at the server's database"
+        import sqlite3
+
+        decision_now = "2026-09-05T00:00:00.000000+00:00"
+        with sqlite3.connect(db_path) as seed_conn:
+            seed_conn.execute(
+                """INSERT INTO ai_approvals
+                (id, tenant_id, subject_kind, subject_id, requested_by,
+                 decision, reason, created_at)
+                VALUES (?, 'demo', 'tool_enablement', ?, 'seed.supervisor',
+                        'pending', 'ui journey', ?)""",
+                (f"apr_{run_id}", f"knowledge.publish_bulk.{run_id}", decision_now),
+            )
+            seed_conn.execute(
+                """INSERT INTO ai_online_feedback
+                (id, tenant_id, conversation_id, source, redacted_json,
+                 review_status, created_at)
+                VALUES (?, 'demo', NULL, 'negative_rating', ?, 'pending_review', ?)""",
+                (
+                    f"fbk_{run_id}",
+                    json.dumps({"rating": -1, "reason": "ui journey"}),
+                    decision_now,
+                ),
+            )
+        page.get_by_role("button", name="刷新管理数据").click()
+        approvals_card = page.locator("#governanceApprovalsListReact")
+        gov_row = approvals_card.locator(
+            ".governance-row", has_text=f"knowledge.publish_bulk.{run_id}"
+        )
+        expect(gov_row).to_have_count(1)
+        feedback_card = page.locator("#governanceFeedbackListReact")
+        feedback_row = feedback_card.locator(".governance-row", has_text="ui journey")
+        expect(feedback_row).to_have_count(1)
+
+        approval_id = f"apr_{run_id}"
+        with page.expect_response(
+            lambda response: (
+                response.url.endswith(f"/api/admin/governance/approvals/{approval_id}/decide")
+                and response.request.method == "POST"
+            )
+        ) as decide_info:
+            gov_row.get_by_role("button", name="批准").click()
+        assert decide_info.value.ok, decide_info.value.text()
+        expect(
+            page.locator(
+                "#governanceApprovalsListReact .governance-row",
+                has_text=f"knowledge.publish_bulk.{run_id}",
+            )
+        ).to_have_count(0)
+
+        feedback_id = f"fbk_{run_id}"
+        with page.expect_response(
+            lambda response: (
+                response.url.endswith(f"/api/admin/governance/feedback/{feedback_id}/review")
+                and response.request.method == "POST"
+            )
+        ) as review_info:
+            feedback_row.get_by_role("button", name="接受").click()
+        assert review_info.value.ok, review_info.value.text()
+        expect(
+            page.locator("#governanceFeedbackListReact .governance-row", has_text="ui journey")
+        ).to_have_count(0)
+
         # Non-admin in the shell: the island renders nothing (enabled:false)
         # and, unlike the read path, not a single privileged request fires.
         denied_context = browser.new_context(viewport={"width": 1100, "height": 800})
@@ -244,7 +344,7 @@ def main() -> None:
             ),
         )
         boot_shell(denied_page)
-        denied_page.locator('.nav-item[data-view="admin"]').click()
+        open_view(denied_page, "admin", "#adminDenied")
         expect(denied_page.locator("#adminDenied")).to_be_visible()
         expect(denied_page.locator("#adminContent")).to_be_hidden()
         denied_page.wait_for_timeout(500)

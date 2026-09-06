@@ -188,3 +188,43 @@ export function costAnomalyModel(anomaly) {
     ],
   };
 }
+
+/* ── governance operations (2.7.0; island-native card) ────────────────── */
+
+/** Pending approvals → list items with the maker-checker context. */
+export function governanceApprovalItems(approvals) {
+  const list = Array.isArray(approvals) ? approvals : [];
+  return list.map((row) => ({
+    id: String(row.id),
+    subject: `${row.subject_kind}:${row.subject_id}`,
+    meta: `请求人 ${row.requested_by}${row.reason ? ` · ${row.reason}` : ""}`,
+  }));
+}
+
+/** Pending feedback rows → review-queue items. */
+export function governanceFeedbackItems(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map((row) => {
+    let document = {};
+    try {
+      document = JSON.parse(row.redacted_json || "{}");
+    } catch {
+      document = {};
+    }
+    const reason = String(document.reason || "").slice(0, 60);
+    return {
+      id: String(row.id),
+      subject: `会话 ${String(row.conversation_id || "—").slice(0, 12)}`,
+      meta: `${document.rating > 0 ? "+" : ""}${document.rating ?? "?"} 评分${reason ? ` · ${reason}` : ""}`,
+    };
+  });
+}
+
+/** Dataset registry rows → readout rows. */
+export function governanceDatasetRows(datasets) {
+  const list = Array.isArray(datasets) ? datasets : [];
+  const rows = list
+    .slice(0, 3)
+    .map((row) => [`${row.name} v${row.version}`, `${Number(row.item_count || 0)} 条 · ${row.strategy}`]);
+  return rows.length ? rows : [["已注册数据集", "—"]];
+}

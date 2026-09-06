@@ -142,6 +142,27 @@ const FULL_ROUTES = {
     baseline_cost_usd: 1.0,
     factor: 2.5,
   },
+  "/api/admin/governance/approvals": [
+    {
+      id: "apr_gov1",
+      subject_kind: "tool_enablement",
+      subject_id: "knowledge.publish_bulk",
+      requested_by: "supervisor-1",
+      reason: "supervisor bulk publishing",
+      decision: "pending",
+    },
+  ],
+  "/api/admin/governance/feedback": [
+    {
+      id: "fbk_gov1",
+      conversation_id: "conv_gov1",
+      review_status: "pending_review",
+      redacted_json: JSON.stringify({ rating: -1, reason: "答非所问", message_id: "msg_1" }),
+    },
+  ],
+  "/api/admin/governance/datasets": [
+    { id: "ds_gov1", name: "browser-feedback", version: 1, strategy: "feedback", item_count: 4 },
+  ],
 };
 
 function grantAdmin({ actorId = "demo.admin", tenantId = "demo" } = {}) {
@@ -389,8 +410,8 @@ describe("pure card models", () => {
   it("domainsToQueryKeys maps saved domains onto namespaced queries", () => {
     const keys = domainsToQueryKeys(["quota", "members"]);
     expect(keys).toEqual([["admin", "quota"], ["admin", "members"]]);
-    // Empty domains (defensive) → every admin query (8 legacy domains + 4 cost).
-    expect(domainsToQueryKeys([])).toHaveLength(12);
+    // Empty domains (defensive) → every admin query (8 legacy + 4 cost + 3 governance).
+    expect(domainsToQueryKeys([])).toHaveLength(15);
   });
 
   it("canManageIdentity requires the admin:manage permission", () => {
@@ -449,6 +470,7 @@ describe("cards render legacy contracts", () => {
     expect(screen.getByText("报表导出")).toBeTruthy();
     expect(screen.getByText("CSAT 评分汇总")).toBeTruthy();
     expect(screen.getByText("成本仪表盘")).toBeTruthy();
+    expect(screen.getByText("治理操作台")).toBeTruthy();
     expect(screen.getByText("SLA 策略")).toBeTruthy();
     expect(screen.getByText("自动路由规则")).toBeTruthy();
     const readout = document.getElementById(CARD_IDS.quotaReadout);
@@ -469,6 +491,43 @@ describe("cards render legacy contracts", () => {
   it("resolves routing rule group names from the agent groups query", async () => {
     await renderIsland();
     expect(screen.getByText("→ 售后组 · 优先级 5")).toBeTruthy();
+  });
+
+  it("renders the governance card rows and readout", async () => {
+    await renderIsland();
+    const approvals = document.getElementById(CARD_IDS.governanceApprovalsList);
+    expect(approvals.textContent).toContain("tool_enablement:knowledge.publish_bulk");
+    expect(approvals.textContent).toContain("请求人 supervisor-1");
+    const feedback = document.getElementById(CARD_IDS.governanceFeedbackList);
+    expect(feedback.textContent).toContain("-1 评分 · 答非所问");
+    const readout = document.getElementById(CARD_IDS.governanceDatasetsReadout);
+    expect(readout.textContent).toContain("browser-feedback v1");
+    expect(readout.textContent).toContain("4 条 · feedback");
+  });
+
+  it("bridges a governance decide and a feedback review to legacy", async () => {
+    await renderIsland();
+    const spy = bridgeSpy();
+    // Approve via the pending-approvals row's 批准 button.
+    const row = screen
+      .getByText("tool_enablement:knowledge.publish_bulk")
+      .closest(".governance-row");
+    const approve = [...row.querySelectorAll("button")].find((b) => b.textContent === "批准");
+    fireEvent.click(approve);
+    const decided = eventsOfType(spy, ADMIN_EVENTS.GOVERNANCE_DECIDE)[0];
+    expect(decided.detail).toEqual({ approvalId: "apr_gov1", approve: true });
+    // Feedback review: 接受 on the single queue row.
+    const feedbackRow = screen.getByText("-1 评分 · 答非所问").closest(".governance-row");
+    const accept = [...feedbackRow.querySelectorAll("button")].find((b) => b.textContent === "接受");
+    fireEvent.click(accept);
+    const reviewed = eventsOfType(spy, ADMIN_EVENTS.GOVERNANCE_FEEDBACK_REVIEW)[0];
+    expect(reviewed.detail).toEqual({ feedbackId: "fbk_gov1", accept: true });
+    // The legacy answer (helix-admin-saved) drives the island's refetch.
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_EVENTS.SAVED, { detail: { ok: true, domains: ["governance-approvals"] } }),
+      );
+    });
   });
 
   it("renders the cost dashboard readouts, status and breakdowns", async () => {

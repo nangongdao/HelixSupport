@@ -146,6 +146,8 @@ const wiring = {
   saveSlaFromIsland,
   createRuleFromIsland,
   deleteRuleFromIsland,
+  governanceDecideFromIsland,
+  governanceFeedbackReviewFromIsland,
   applyMacroFromSuggest,
   switchInspectorTab,
   renderReportWebhookOptions,
@@ -440,6 +442,10 @@ async function saveSlaFromIsland(...args) { return window.HelixModules?.['adminR
 async function createRuleFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['createRuleFromIsland'](...args); }
 
 async function deleteRuleFromIsland(...args) { return window.HelixModules?.['adminReportBridge']?.['deleteRuleFromIsland'](...args); }
+
+async function governanceDecideFromIsland(...args) { return window.HelixModules?.['governanceBridge']?.['governanceDecideFromIsland'](...args); }
+
+async function governanceFeedbackReviewFromIsland(...args) { return window.HelixModules?.['governanceBridge']?.['governanceFeedbackReviewFromIsland'](...args); }
 
 function renderReportWebhookOptions(...args) { return window.HelixModules?.['adminReport']?.['renderReportWebhookOptions'](...args); }
 
