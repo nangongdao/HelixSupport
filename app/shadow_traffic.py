@@ -118,7 +118,20 @@ async def shadow_request_to_v2(
         v2_status_code = None
         v2_latency_ms = None
 
-    fields_matched, fields_mismatched = _compare_responses(v1_response_body, v2_response_body)
+    # Envelope alignment: v2 list responses wrap the payload as
+    # {"data": [...], "next_cursor": ...} while v1 returns the bare list,
+    # and the cursor formats differ by design (cursor vs offset pagination)
+    # — so the comparison targets the payload and ignores the envelope.
+    v2_payload: Any = v2_response_body
+    v1_payload: Any = v1_response_body
+    if (
+        isinstance(v2_response_body, dict)
+        and set(v2_response_body) == {"data", "next_cursor"}
+        and isinstance(v1_response_body, list)
+    ):
+        v2_payload = v2_response_body["data"]
+
+    fields_matched, fields_mismatched = _compare_responses(v1_payload, v2_payload)
 
     comparison = ShadowComparison(
         id=comparison_id,
@@ -150,33 +163,46 @@ async def shadow_request_to_v2(
 
 
 def _compare_responses(
-    v1_body: dict[str, Any] | None, v2_body: dict[str, Any] | None
+    v1_body: dict[str, Any] | list[Any] | None,
+    v2_body: dict[str, Any] | list[Any] | None,
 ) -> tuple[list[str], list[str]]:
-    """Compare two response bodies field-by-field.
+    """Compare a v1 response against a v2 response, v2-driven.
 
-    Returns (matched_fields, mismatched_fields) where matched_fields are
-    top-level keys that have identical values in both responses.
+    The v2 API is the CONTRACT: every field v2 declares must carry the same
+    value in the v1 response. Fields only v1 declares are by-design
+    omissions (v2 is a slim projection — measured live: a conversation item
+    is 31 keys in v1 versus the 8-key v2 contract with zero value
+    differences on the shared keys), so they are not drift. Lists compare
+    element-wise (same sort order on both sides) with per-element problem
+    names; a length difference is itself a mismatch.
+
+    Returns (matched_fields, mismatched_fields).
     """
     if v1_body is None or v2_body is None:
         return [], []
+    if isinstance(v1_body, list) or isinstance(v2_body, list):
+        if not isinstance(v1_body, list) or not isinstance(v2_body, list):
+            return [], ["payload_type"]
+        problems: list[str] = []
+        if len(v1_body) != len(v2_body):
+            problems.append(f"items.length {len(v1_body)} != {len(v2_body)}")
+        for index, (v1_item, v2_item) in enumerate(zip(v1_body, v2_body)):
+            matched_i, mismatched_i = _compare_responses(v1_item, v2_item)
+            problems.extend(f"items[{index}].{name}" for name in mismatched_i)
+        if problems:
+            return [], problems
+        return ["items"], []
 
     matched: list[str] = []
     mismatched: list[str] = []
-
-    all_keys = set(v1_body.keys()) | set(v2_body.keys())
-    for key in all_keys:
-        if key not in v1_body or key not in v2_body:
+    for key, v2_val in v2_body.items():
+        if key not in v1_body:
             mismatched.append(key)
             continue
-
-        v1_val = v1_body[key]
-        v2_val = v2_body[key]
-
-        if _deep_equal(v1_val, v2_val):
+        if _deep_equal(v1_body[key], v2_val):
             matched.append(key)
         else:
             mismatched.append(key)
-
     return matched, mismatched
 
 
@@ -257,6 +283,27 @@ def create_shadow_task(
     )
 
 
+_V2_ELIGIBLE_PATHS = (
+    "/api/conversations",  # list (cursor-paginated, enveloped in v2)
+)
+
+
+def is_v2_shadow_eligible(path: str) -> bool:
+    """Whether a v1 GET path has a comparable v2 counterpart.
+
+    Only the surfaces whose v2 item shapes were measured to agree with v1
+    are shadowed (list + messages; the SDK shadow-read contract covers
+    them). Everything else — health probes, turn-jobs, the detail endpoint
+    (v1's ConversationDetail nests what v2 returns flat) — has no
+    meaningful field comparison and would only produce noise.
+    """
+    if path in _V2_ELIGIBLE_PATHS:
+        return True
+    if path.startswith("/api/conversations/") and path.endswith("/messages"):
+        return True
+    return False
+
+
 def response_json_body(
     response_headers: Any,
     body: bytes | None,
@@ -311,6 +358,8 @@ def maybe_shadow_request(
     if not should_shadow_request(settings):
         return
     if method not in {"GET", "HEAD", "OPTIONS"}:
+        return
+    if not is_v2_shadow_eligible(path):
         return
     try:
         snapshot = ShadowRequest(

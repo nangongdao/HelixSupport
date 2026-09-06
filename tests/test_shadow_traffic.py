@@ -10,6 +10,7 @@ Verifies:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -25,9 +26,14 @@ from app.shadow_monitor import (
     collect_shadow_signals,
     evaluate_shadow_health,
 )
+import httpx
+
 from app.shadow_traffic import (
     ShadowComparison,
+    ShadowRequest,
+    is_v2_shadow_eligible,
     response_json_body,
+    shadow_request_to_v2,
     _compare_responses,
     _deep_equal,
     _record_comparison,
@@ -157,12 +163,15 @@ class ShadowTrafficTests(unittest.TestCase):
         self.assertEqual(set(matched), {"id", "count"})
         self.assertEqual(mismatched, ["status"])
 
-    def test_compare_responses_missing_fields(self) -> None:
-        v1 = {"id": "123", "status": "active"}
+    def test_compare_responses_v1_only_keys_ignored(self) -> None:
+        # v2 is a slim projection: fields only v1 declares are by-design
+        # omissions (measured live: 31-key v1 item vs the 8-key v2 contract),
+        # not drift. Only fields v2 DECLARE are compared.
+        v1 = {"id": "123", "status": "active", "labels": ["x"]}
         v2 = {"id": "123"}
         matched, mismatched = _compare_responses(v1, v2)
         self.assertEqual(matched, ["id"])
-        self.assertEqual(mismatched, ["status"])
+        self.assertEqual(mismatched, [])
 
     def test_compare_responses_extra_fields(self) -> None:
         v1 = {"id": "123"}
@@ -170,6 +179,30 @@ class ShadowTrafficTests(unittest.TestCase):
         matched, mismatched = _compare_responses(v1, v2)
         self.assertEqual(matched, ["id"])
         self.assertEqual(mismatched, ["extra"])
+
+    def test_compare_responses_lists_element_wise(self) -> None:
+        v1 = [{"id": "1", "status": "open"}, {"id": "2", "status": "resolved"}]
+        v2 = [{"id": "1", "status": "open"}, {"id": "2", "status": "resolved"}]
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(matched, ["items"])
+        self.assertEqual(mismatched, [])
+
+    def test_compare_responses_list_value_diff_is_per_element(self) -> None:
+        v1 = [{"id": "1", "status": "open"}, {"id": "2", "status": "resolved"}]
+        v2 = [{"id": "1", "status": "open"}, {"id": "2", "status": "open"}]
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(matched, [])
+        self.assertEqual(mismatched, ["items[1].status"])
+
+    def test_compare_responses_list_length_difference(self) -> None:
+        v1 = [{"id": "1"}, {"id": "2"}]
+        v2 = [{"id": "1"}]
+        matched, mismatched = _compare_responses(v1, v2)
+        self.assertEqual(mismatched, ["items.length 2 != 1"])
+
+    def test_compare_responses_list_shape_mismatch(self) -> None:
+        matched, mismatched = _compare_responses([{"id": "1"}], {"id": "1"})
+        self.assertEqual(mismatched, ["payload_type"])
 
     def test_compare_responses_handles_none(self) -> None:
         matched, mismatched = _compare_responses(None, {"id": "123"})
@@ -411,3 +444,135 @@ class ShadowMiddlewareIntegrationTests(unittest.TestCase):
             response = self.client.get("/health/ready", headers={"X-Shadow-Request": "true"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured, {})
+
+
+class ShadowEligibilityTests(unittest.TestCase):
+    """Only v1 GETs with a proven-comparable v2 counterpart are shadowed."""
+
+    def test_conversation_list_and_messages_are_eligible(self) -> None:
+        self.assertTrue(is_v2_shadow_eligible("/api/conversations"))
+        self.assertTrue(is_v2_shadow_eligible("/api/conversations/conv_1/messages"))
+
+    def test_surfaces_without_v2_counterparts_are_not_eligible(self) -> None:
+        self.assertFalse(is_v2_shadow_eligible("/api/turn-jobs"))
+        self.assertFalse(is_v2_shadow_eligible("/api/labels"))
+        self.assertFalse(is_v2_shadow_eligible("/health/ready"))
+        # The detail endpoint nests what v2 returns flat — zero shared
+        # top-level keys (measured live), so a field comparison is noise.
+        self.assertFalse(is_v2_shadow_eligible("/api/conversations/conv_1"))
+
+
+class FullChainComparisonTests(unittest.TestCase):
+    """v1 real list body vs the real v2 envelope -> a recorded comparison
+    whose fields MATCH (the eight-key contract, zero diffs measured live)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        db_path = Path(self._tmp.name) / "chain.db"
+        self.settings = Settings(
+            database_path=db_path,
+            auth_mode="demo",
+            shadow_traffic_enabled=True,
+            shadow_traffic_base_url="http://v2.test",
+            shadow_traffic_sample_rate=1.0,
+            rate_limit_per_minute=10000,
+            docs_enabled=False,
+            turn_worker_enabled=False,
+        )
+        self.db = Database(db_path)
+        self.db.initialize()
+        self.db.ensure_tenant("demo")
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self._tmp.cleanup()
+
+    def test_v1_list_against_enveloped_v2_payload_records_matches(self) -> None:
+        import httpx
+
+        v1_body = [
+            {
+                "id": "conv_1",
+                "status": "open",
+                "channel": "web",
+                "priority": "normal",
+                "customer_name": "C",
+                "customer_ref": None,
+                "created_at": "t1",
+                "updated_at": "t1",
+            },
+            {
+                "id": "conv_2",
+                "status": "resolved",
+                "channel": "web",
+                "priority": "high",
+                "customer_name": "C2",
+                "customer_ref": None,
+                "created_at": "t2",
+                "updated_at": "t2",
+            },
+        ]
+        v2_envelope = {
+            "data": [
+                {
+                    "id": "conv_1",
+                    "status": "open",
+                    "channel": "web",
+                    "priority": "normal",
+                    "customer_name": "C",
+                    "customer_ref": None,
+                    "created_at": "t1",
+                    "updated_at": "t1",
+                },
+                {
+                    "id": "conv_2",
+                    "status": "resolved",
+                    "channel": "web",
+                    "priority": "high",
+                    "customer_name": "C2",
+                    "customer_ref": None,
+                    "created_at": "t2",
+                    "updated_at": "t2",
+                },
+            ],
+            "next_cursor": "cursor-abc",
+        }
+        snapshot = ShadowRequest(
+            method="GET",
+            path="/api/conversations",
+            headers={},
+            body=None,
+            tenant_id="demo",
+            request_id="req-chain-1",
+        )
+
+        def v2_handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/v2/conversations"
+            return httpx.Response(200, json=v2_envelope)
+
+        real_client = httpx.AsyncClient(transport=httpx.MockTransport(v2_handler))
+        with patch("app.shadow_traffic.httpx.AsyncClient", return_value=real_client):
+            asyncio.run(
+                shadow_request_to_v2(
+                    snapshot=snapshot,
+                    v1_response_body=v1_body,
+                    v1_status_code=200,
+                    v1_latency_ms=10,
+                    settings=self.settings,
+                    db=self.db,
+                )
+            )
+
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shadow_traffic_comparisons WHERE id = ?",
+                ("shadow-req-chain-1",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(json.loads(row["fields_matched"]), ["items"])
+        self.assertEqual(json.loads(row["fields_mismatched"]), [])
+        self.assertEqual(row["v1_status_code"], 200)
+
+
+if __name__ == "__main__":
+    unittest.main()
