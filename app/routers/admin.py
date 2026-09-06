@@ -265,6 +265,28 @@ def build_router(deps: RouteDeps) -> APIRouter:
             storage_quota_bytes=payload.storage_quota_bytes,
             region=payload.region,
         )
+
+        # ROADMAP 2.9.x: publish the tenant's INITIAL control-plane policy so
+        # the region-failover runbook has a policy to switch. The first
+        # provisioning is the only production path that creates one (the
+        # failover itself publishes subsequent versions); idempotent
+        # re-provisioning must not bump the policy version. The policy's
+        # deployment cell is the cell this process belongs to; its region
+        # follows the tenant's pinned residency (defaulting to the policy's
+        # own "local").
+        control_plane = services.control_plane
+        if control_plane is not None and control_plane.current_version(payload.tenant_id) == 0:
+            from app.control_plane import TenantPolicy
+
+            control_plane.set_policy(
+                payload.tenant_id,
+                TenantPolicy(
+                    plan="standard",
+                    region=payload.region or "local",
+                    deployment_cell=deps.settings.current_cell_id,
+                ),
+            )
+
         return TenantQuotaOut(**quota)
 
     @router.get(
