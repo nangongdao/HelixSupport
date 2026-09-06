@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from time import monotonic as _time
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
@@ -52,13 +53,29 @@ def attach_failure_recorders(
     )
 
 
+def open_view(page: Page, view: str, view_id: str) -> None:
+    """Click a nav item until its view becomes visible (cold-server race:
+    the click can land before app.js binds the view switch)."""
+    deadline = _time() + 30
+    last_error: Exception | None = None
+    while _time() < deadline:
+        page.locator(f'.nav-item[data-view="{view}"]').click()
+        try:
+            page.wait_for_selector(f"{view_id}", state="visible", timeout=2500)
+            return
+        except PlaywrightError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
 def open_knowledge_island(page: Page) -> None:
     """Click the knowledge nav item and wait for the island's own list.
 
     The island fetches /api/knowledge at boot (before the nav click), so
     the settled marker is rendered article rows, not the response.
     """
-    page.locator('.nav-item[data-view="knowledge"]').click()
+    open_view(page, "knowledge", "#knowledgeView")
     page.wait_for_selector("#knowledgeReactIsland:not(:empty)", timeout=30000)
     expect(page.locator("#knowledgeReactIsland .knowledge-article").first).to_be_visible(
         timeout=30000

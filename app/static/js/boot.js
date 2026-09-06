@@ -198,6 +198,8 @@ function bindLegacyBoot() {
     ["helix-admin-member-role", ctx.changeMemberRoleFromIsland],
     ["helix-admin-member-deactivate", ctx.deactivateMemberFromIsland],
     ["helix-admin-register-webhook", ctx.registerWebhookFromIsland],
+    ["helix-admin-governance-decide", ctx.governanceDecideFromIsland],
+    ["helix-admin-governance-feedback-review", ctx.governanceFeedbackReviewFromIsland],
     ["helix-admin-delete-webhook", ctx.deleteWebhookFromIsland],
     ["helix-admin-create-subscription", ctx.createSubscriptionFromIsland],
     ["helix-admin-toggle-subscription", ctx.toggleSubscriptionFromIsland],

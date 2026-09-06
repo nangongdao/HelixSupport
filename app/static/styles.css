@@ -1330,6 +1330,40 @@ a.knowledge-source:hover {
   font-family: var(--font-mono);
 }
 
+/* Governance operations card (2.7.0): rows reuse the bulk-member shape;
+   the subject stacks over the request context like the SLA rule rows. */
+.governance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.governance-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.governance-row-subject {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.governance-row-meta {
+  color: var(--muted);
+}
+
+.governance-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .admin-card h4 {
   margin: 0 0 8px;
   font-size: 12px;

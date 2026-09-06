@@ -69,6 +69,7 @@ function configureModules(b) {
   });
   m("adminReport")?.configure?.({ state: b.state, els: b.els, api: b.api, showToast: b.showToast, escapeHtml: b.escapeHtml, formatTime: b.formatTime });
   m("adminReportBridge")?.configure?.({ api: b.api, showToast: b.showToast });
+  m("governanceBridge")?.configure?.({ api: b.api, showToast: b.showToast });
   m("ticketView")?.configure?.({
     state: b.state,
     els: b.els,
@@ -321,6 +322,8 @@ function configureModules(b) {
     saveSlaFromIsland: b.saveSlaFromIsland,
     createRuleFromIsland: b.createRuleFromIsland,
     deleteRuleFromIsland: b.deleteRuleFromIsland,
+    governanceDecideFromIsland: b.governanceDecideFromIsland,
+    governanceFeedbackReviewFromIsland: b.governanceFeedbackReviewFromIsland,
     changeMemberRole: b.changeMemberRole,
     deactivateMember: b.deactivateMember,
     deleteWebhook: b.deleteWebhook,

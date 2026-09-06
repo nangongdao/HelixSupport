@@ -42,6 +42,7 @@ import * as queueHelpers from "./queue-helpers.js?v=1.4.0";
 import * as shortcuts from "./shortcuts.js?v=1.4.0";
 import * as detail from "./detail.js?v=1.4.0";
 import * as adminActions from "./admin-actions.js?v=1.4.0";
+import * as governanceBridge from "./governance-bridge.js?v=1.4.0";
 import * as nav from "./nav.js?v=1.4.0";
 import * as queueView from "./queue-view.js?v=1.4.0";
 import * as qualityCharts from "./quality-charts.js?v=1.4.0";
@@ -157,6 +158,7 @@ export function initModules() {
     shortcuts,
     detail,
     adminActions,
+    governanceBridge,
     nav,
     queueView,
     qualityCharts,

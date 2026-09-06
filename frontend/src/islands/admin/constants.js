@@ -59,6 +59,8 @@ export const ADMIN_EVENTS = Object.freeze({
   SAVE_SLA: "helix-admin-save-sla",
   CREATE_RULE: "helix-admin-create-rule",
   DELETE_RULE: "helix-admin-delete-rule",
+  GOVERNANCE_DECIDE: "helix-admin-governance-decide",
+  GOVERNANCE_FEEDBACK_REVIEW: "helix-admin-governance-feedback-review",
 });
 
 /** React-suffixed ids: the yielded legacy cards keep the originals. */
@@ -88,6 +90,9 @@ export const CARD_IDS = Object.freeze({
   reportPreview: "reportPreviewReact",
   csatReadout: "csatReadoutReact",
   csatTrend: "csatTrendReact",
+  governanceApprovalsList: "governanceApprovalsListReact",
+  governanceFeedbackList: "governanceFeedbackListReact",
+  governanceDatasetsReadout: "governanceDatasetsReadoutReact",
   costReadout: "costReadoutReact",
   costAnomalyReadout: "costAnomalyReadoutReact",
   costAgentList: "costAgentListReact",

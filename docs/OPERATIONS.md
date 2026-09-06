@@ -513,6 +513,30 @@ automatic behavior: `python scripts/run_region_failover.py --target-region
 publishes a signed new control-plane snapshot; `--dry-run` validates without
 publishing. See `ROADMAP_2_X.md` §42-43 for the gate evidence.
 
+## AI Governance Operations (2.5-2.7)
+
+The governance plane is operable from the admin island's 治理操作台 card
+and the governance API (all `admin:manage`):
+
+- **Pending approvals** (`GET /api/admin/governance/approvals?status=pending`):
+  maker-checker requests for `tool_enablement` and other governance
+  subjects. Decide via the card's 批准/拒绝 buttons or
+  `POST /api/admin/governance/approvals/{id}/decide` — the requester
+  cannot be the approver (self-approval → 409). A high-risk tool stays
+  inoperable until its approval is granted.
+- **Online feedback review queue** (`GET /api/admin/governance/feedback?status=pending_review`):
+  customer negative ratings auto-stage the exchange here, redacted at
+  ingest. Accept or reject via the card's 接受/拒绝 buttons or
+  `POST /api/admin/governance/feedback/{id}/review`.
+- **Eval dataset promotion** (`POST /api/admin/governance/datasets/promote-feedback`):
+  folds accepted feedback rows into the next version of a named dataset;
+  any pending/rejected id in the batch aborts with 409.
+- **Capability tokens**: set `CAPABILITY_SECRET` (>= 32 bytes) to turn on
+  token verification for gateway-mediated tool calls; the copilot
+  knowledge-draft endpoint mints a short-TTL token per call. Without the
+  secret, presented tokens fail closed (`token_unsupported`) and the
+  process logs `capability_secret.unset` at boot.
+
 ## Routine Work
 
 - Daily: review SLA breaches, tool failures, negative feedback, and escalations.

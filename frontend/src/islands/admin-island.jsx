@@ -52,6 +52,7 @@ import {
   AdminSubscriptionsCard,
 } from "./admin/report-cards.jsx";
 import { AdminCostCard } from "./admin/cost-card.jsx";
+import { AdminGovernanceCard } from "./admin/governance-card.jsx";
 import { AdminRoutingCard, AdminSlaCard } from "./admin/policy-cards.jsx";
 
 export { ADMIN_EVENTS, CARD_IDS } from "./admin/constants.js";
@@ -61,6 +62,9 @@ export {
   costAnomalyModel,
   costBreakdownItems,
   costSummaryRows,
+  governanceApprovalItems,
+  governanceDatasetRows,
+  governanceFeedbackItems,
   csatModel,
   formatTime,
   formatUsd,
@@ -90,6 +94,17 @@ const QUERY_DEFS = [
   { key: ["admin", "cost-agents"], domain: "cost-agents", path: () => "/api/analytics/costs/by_agent" },
   { key: ["admin", "cost-prompts"], domain: "cost-prompts", path: () => "/api/analytics/costs/by_prompt" },
   { key: ["admin", "cost-anomaly"], domain: "cost-anomaly", path: () => "/api/analytics/costs/anomaly" },
+  {
+    key: ["admin", "governance-approvals"],
+    domain: "governance-approvals",
+    path: () => "/api/admin/governance/approvals?status=pending",
+  },
+  {
+    key: ["admin", "governance-feedback"],
+    domain: "governance-feedback",
+    path: () => "/api/admin/governance/feedback?status=pending_review",
+  },
+  { key: ["admin", "governance-datasets"], domain: "governance-datasets", path: () => "/api/admin/governance/datasets" },
 ];
 
 /** Legacy api() contract: tenant header from the host document. */
@@ -172,6 +187,11 @@ export function AdminIsland() {
         agents={data["cost-agents"]}
         prompts={data["cost-prompts"]}
         anomaly={data["cost-anomaly"]}
+      />
+      <AdminGovernanceCard
+        approvals={data["governance-approvals"]}
+        feedback={data["governance-feedback"]}
+        datasets={data["governance-datasets"]}
       />
       <AdminSlaCard policies={data.sla} />
       <AdminRoutingCard rules={data.rules} groups={data.groups} />
