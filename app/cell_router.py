@@ -150,6 +150,11 @@ async def check_cell_health(
         return (False, f"connect_error: {exc}")
     except httpx.HTTPError as exc:
         return (False, f"http_error: {exc}")
+    except Exception as exc:
+        # Non-httpx failures (e.g. httpx.InvalidURL / UnsupportedProtocol for
+        # a misconfigured health_url) must not break the never-raise
+        # contract — the health loop would otherwise die on first tick.
+        return (False, f"error: {exc}")
 
 
 async def forward_request_to_cell(
@@ -196,6 +201,35 @@ async def forward_request_to_cell(
         return response
 
 
+async def health_check_tick(registry: CellRegistry) -> None:
+    """One health-check sweep over every cell (ROADMAP 2.8.0 hardening).
+
+    Isolated per cell: a cell whose health check raises (a non-httpx
+    failure outside check_cell_health's taxonomy) is logged and skipped —
+    the periodic loop is fire-and-forget, so an escaped exception would
+    freeze every cell's health state silently, and region failover decides
+    on exactly that data.
+    """
+    for cell in registry.list_cells():
+        try:
+            is_healthy, reason = await check_cell_health(cell)
+        except Exception:
+            logger.exception(
+                "cell.health_check_crashed",
+                extra={"cell_id": cell.cell_id},
+            )
+            continue
+        registry.update_health(cell.cell_id, is_healthy, reason)
+        if not is_healthy:
+            logger.warning(
+                "cell.health_check_failed",
+                extra={
+                    "cell_id": cell.cell_id,
+                    "reason": reason,
+                },
+            )
+
+
 async def periodic_health_check(registry: CellRegistry, interval_seconds: int = 30) -> None:
     """Background task to periodically check all cell health.
 
@@ -206,15 +240,5 @@ async def periodic_health_check(registry: CellRegistry, interval_seconds: int = 
     import asyncio
 
     while True:
-        for cell in registry.list_cells():
-            is_healthy, reason = await check_cell_health(cell)
-            registry.update_health(cell.cell_id, is_healthy, reason)
-            if not is_healthy:
-                logger.warning(
-                    "cell.health_check_failed",
-                    extra={
-                        "cell_id": cell.cell_id,
-                        "reason": reason,
-                    },
-                )
+        await health_check_tick(registry)
         await asyncio.sleep(interval_seconds)
