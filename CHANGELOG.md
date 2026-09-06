@@ -2,6 +2,12 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## Unreleased
+
+### Fixed
+
+- **影子流量对比保真度（2.1.x 缺陷，2.8.0 审计发现）**: 请求控制中间件的影子调用把 `v1_response_body` 硬编码为 `{"status": "ok"}`——字段级对比拿 v2 真实响应对比一个假体，每条影子记录都是全字段 mismatch（健康监控的 24h 窗口会读到常驻 ~100% 不匹配率，告警全是噪声）；且 `v1_status_code` 参数被无视，比较记录写死 `200 if v1_response_body else None`（404 也记成 200）。修复：中间件对 JSON 响应有界缓冲（256KB 上限，超限部分懒透传绝不截断客户端响应）并重包响应，`response_json_body` 提取真实体（非 JSON/超大/非 dict/不可解码 → 无字段对比但状态/延迟信号保留）；真实 `v1_status_code` 穿过 maybe_shadow_request → create_shadow_task → shadow_request_to_v2 三跳。既有测试全为单元件（无中间件路径），缺陷因此存活。新增 10 例：`response_json_body` 边界（非 JSON/超大/非 dict/不可解码）+ 真实 app 中间件集成（真实体捕获/404 状态传递/X-Shadow-Request 重放标记永不二次影子）。
+
 ## 2.7.0 — 治理操作台: 审批与反馈评审的人工操作面 (2026-09-05)
 
 Version 2.7.0 给治理面补上人工操作入口：admin 岛第 10 张卡「治理操作台」把 2.5/2.6 的审批与反馈评审 API 变成可点击的操作——待决审批的批准/拒绝、线上反馈队列的接受/拒绝、评测数据集读数。

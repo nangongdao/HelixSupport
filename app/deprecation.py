@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from typing import Any
+from starlette.datastructures import MutableHeaders
 
 logger = logging.getLogger("helix")
 
@@ -100,7 +101,9 @@ def validate_registry(*, today: str | None = None) -> list[str]:
     return problems
 
 
-def apply_deprecation_headers(operation: str, headers: dict[str, str]) -> bool:
+def apply_deprecation_headers(
+    operation: str, headers: MutableHeaders | dict[str, str]
+) -> bool:
     """Stamp Deprecation/Sunset onto ``headers`` when the op is deprecated.
 
     Returns True when headers were added. Called from response paths that

@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.assets import STATIC_ASSET_VERSION, VERSIONED_STATIC_CACHE_CONTROL
 from app.audit_gap import AuditUnavailableError
@@ -129,8 +129,59 @@ def register_request_controls(
                     and request.headers.get("X-Shadow-Request") != "true"
                 ):
                     try:
-                        from app.shadow_traffic import maybe_shadow_request
+                        from app.shadow_traffic import (
+                            maybe_shadow_request,
+                            response_json_body,
+                        )
 
+                        # ROADMAP 2.8.0: pass the REAL v1 response body — the
+                        # original 2.1.x wiring hardcoded {"status": "ok"},
+                        # making every field comparison meaningless (the
+                        # health monitor would read a permanent 100% mismatch
+                        # rate). JSON responses are buffered up to a cap and
+                        # re-wrapped so the client still receives the full
+                        # body; anything else (SSE, redirects) passes through
+                        # unbuffered and compares status/latency only.
+                        v1_body: bytes | None = None
+                        if response.headers.get("content-type", "").startswith("application/json"):
+                            chunks: list[bytes] = []
+                            buffered = 0
+                            oversized = False
+                            body_iterator = getattr(response, "body_iterator")
+                            async for chunk in body_iterator:
+                                chunks.append(chunk)
+                                buffered += len(chunk)
+                                if buffered > 262144:
+                                    oversized = True
+                                    break
+
+                            if oversized:
+                                # Pass the collected prefix AND the rest
+                                # through unbuffered — the client must see
+                                # the full body even though we skip the
+                                # field comparison.
+                                async def _stream() -> AsyncIterator[bytes]:
+                                    for chunk in chunks:
+                                        yield chunk
+                                    async for chunk in body_iterator:
+                                        yield chunk
+
+                                response = StreamingResponse(
+                                    _stream(),
+                                    status_code=response.status_code,
+                                    headers=dict(response.headers),
+                                    media_type=response.media_type,
+                                    background=response.background,
+                                )
+                            else:
+                                v1_body = b"".join(chunks)
+                                response = Response(
+                                    content=v1_body,
+                                    status_code=response.status_code,
+                                    headers=dict(response.headers),
+                                    media_type=response.media_type,
+                                    background=response.background,
+                                )
                         maybe_shadow_request(
                             settings=settings,
                             db=database,
@@ -139,7 +190,7 @@ def register_request_controls(
                             headers=dict(request.headers),
                             body=None,
                             v1_status_code=status_code,
-                            v1_response_body={"status": "ok"},
+                            v1_response_body=response_json_body(response.headers, v1_body),
                             v1_latency_ms=int((perf_counter() - started) * 1000),
                             tenant_id=current_tenant() or "demo",
                             request_id=request_id,
