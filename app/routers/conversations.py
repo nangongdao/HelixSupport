@@ -12,13 +12,11 @@ from typing import Annotated
 from typing import Annotated as TAnnotated  # noqa: F401
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from app.intake import backpressure_reason
 from app.labels import normalize_conversation_labels
 from app.main import (
-    IDEMPOTENCY_KEY_PATTERN,
     _conversation_quota_exceeded,
     _message_date_for_quality,
     _message_intent_for_quality,
@@ -27,7 +25,6 @@ from app.main import (
     message_out,
     require_any_permission,
     require_permission,
-    turn_job_out,
 )
 from app.pagination import (
     InvalidCursorError,
@@ -42,7 +39,6 @@ from app.schemas import (
     AuditEventOut,
     BulkConversationActionOut,
     BulkConversationActionRequest,
-    CollaboratorOut,
     ConversationDetail,
     ConversationLabelOut,
     ConversationLabelsRequest,
@@ -54,19 +50,11 @@ from app.schemas import (
     FeedbackOut,
     FeedbackRequest,
     InternalNoteRequest,
-    MentionOut,
-    MentionsOut,
     MessageOut,
-    MessageRequest,
     OperatorMessageRequest,
     SavedQueueViewCreateRequest,
     SavedQueueViewOut,
-    SetConversationLanguageRequest,
     ThreadOut,
-    TranslateMessageRequest,
-    TranslateOut,
-    TurnJobOut,
-    TurnResponse,
 )
 from app.security import Principal, Role
 
@@ -518,187 +506,14 @@ def build_router(deps: RouteDeps) -> APIRouter:
             )
         )
 
-    @router.post(
-        "/api/conversations/{conversation_id}/messages",
-        response_model=TurnResponse,
-    )
-    def post_customer_message(
-        conversation_id: str,
-        payload: MessageRequest,
-        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
-        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
-    ) -> TurnResponse:
-        if idempotency_key and not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
-            raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
-        key = idempotency_key or f"turn_{uuid4().hex}"
-        result = orchestrator.handle_customer_message(
-            principal.tenant_id,
-            conversation_id,
-            payload.content,
-            principal.actor_id,
-            key,
-        )
-        return TurnResponse(**result)
+    # Phase 27.2 homes: turn intake/jobs and the collaboration
+    # surface are separate route factories (app/routers/turn_jobs.py,
+    # app/routers/collaboration.py).
+    from app.routers.turn_jobs import build_turn_jobs_router
+    from app.routers.collaboration import build_collaboration_router
 
-    @router.post(
-        "/api/conversations/{conversation_id}/turn-jobs",
-        response_model=TurnJobOut,
-        status_code=202,
-    )
-    def enqueue_turn_job(
-        conversation_id: str,
-        payload: MessageRequest,
-        response: Response,
-        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
-        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
-    ) -> TurnJobOut:
-        if idempotency_key and not IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
-            raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
-        # Phase 29.2 backpressure: refuse intake when the queue is overloaded.
-        overload = backpressure_reason(database, settings, principal.tenant_id)
-        if overload:
-            raise HTTPException(
-                status_code=429,
-                detail=overload,
-                headers={"Retry-After": "30"},
-            )
-        key = idempotency_key or f"turn_{uuid4().hex}"
-        job, replayed = orchestrator.queue_customer_message(
-            principal.tenant_id,
-            conversation_id,
-            payload.content,
-            principal.actor_id,
-            key,
-            settings.turn_job_max_attempts,
-        )
-        response.headers["Location"] = f"/api/turn-jobs/{job['id']}"
-        response.headers["X-Idempotent-Replay"] = str(replayed).lower()
-        turn_worker.notify()
-        return turn_job_out(job, idempotent_replay=replayed)
-
-    @router.get("/api/turn-jobs", response_model=list[TurnJobOut])
-    def list_turn_jobs(
-        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
-        response: Response,
-        status: Annotated[
-            str | None,
-            Query(pattern=r"^(queued|processing|completed|failed)$"),
-        ] = None,
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-        offset: Annotated[int, Query(ge=0, le=100000)] = 0,
-    ) -> list[TurnJobOut]:
-        rows = database.list_turn_jobs(
-            principal.tenant_id,
-            status=status,
-            limit=limit + 1,
-            offset=offset,
-        )
-        response.headers["X-Has-More"] = str(len(rows) > limit).lower()
-        response.headers["X-Page-Limit"] = str(limit)
-        response.headers["X-Page-Offset"] = str(offset)
-        return [turn_job_out(row, include_result=False) for row in rows[:limit]]
-
-    @router.get("/api/turn-jobs/{job_id}", response_model=TurnJobOut)
-    def get_turn_job(
-        job_id: str,
-        principal: Annotated[
-            Principal,
-            Depends(require_any_permission("conversation:read", "conversation:write")),
-        ],
-    ) -> TurnJobOut:
-        job = database.get_turn_job(principal.tenant_id, job_id)
-        if not job:
-            raise LookupError("Turn job not found")
-        return turn_job_out(job)
-
-    @router.get("/api/turn-jobs/{job_id}/events")
-    async def stream_turn_job_events(
-        job_id: str,
-        request: Request,
-        principal: Annotated[
-            Principal,
-            Depends(require_any_permission("conversation:read", "conversation:write")),
-        ],
-        timeout: Annotated[int, Query(ge=1, le=120)] = 30,
-    ) -> StreamingResponse:
-        job = database.get_turn_job(principal.tenant_id, job_id)
-        if not job:
-            raise LookupError("Turn job not found")
-
-        async def event_stream() -> AsyncIterator[str]:
-            # Phase 29.1: advertise the reconnect interval and tell the client
-            # to reconnect (drain) when the process is shutting down.
-            yield "retry: 2000\n\n"
-            last_status = ""
-            last_updated = ""
-            last_chunk_seq = 0
-            deadline = perf_counter() + timeout
-            while True:
-                if turn_worker.is_stopping:
-                    yield 'event: shutdown\ndata: {"detail":"server shutting down"}\n\n'
-                    break
-                if await request.is_disconnected():
-                    # Client gone: stop writing remaining paced chunks for this
-                    # turn (Phase 19.5). The reply itself is already durable.
-                    turn_worker.cancel_stream(job_id)
-                    break
-                current = database.get_turn_job(principal.tenant_id, job_id)
-                if not current:
-                    yield 'event: error\ndata: {"detail":"Turn job not found"}\n\n'
-                    break
-                # Emit any newly persisted output chunks before the job state,
-                # so the client sees tokens arrive progressively while the
-                # worker is still pacing writes.  ``seq`` is monotonic, so a
-                # resumable poll can never skip or repeat a chunk.
-                for chunk in database.list_turn_job_chunks(
-                    principal.tenant_id, job_id, after_seq=last_chunk_seq
-                ):
-                    payload = {
-                        "seq": int(chunk["seq"]),
-                        "content": str(chunk["content"]),
-                    }
-                    yield f"event: token\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    last_chunk_seq = int(chunk["seq"])
-                status = str(current["status"])
-                updated_at = str(current["updated_at"])
-                if status != last_status or updated_at != last_updated:
-                    payload = turn_job_out(current).model_dump(mode="json")
-                    yield f"event: job\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    last_status = status
-                    last_updated = updated_at
-                    if status in {"completed", "failed"}:
-                        break
-                if perf_counter() >= deadline:
-                    yield 'event: timeout\ndata: {"detail":"stream timeout"}\n\n'
-                    break
-                yield "event: ping\ndata: {}\n\n"
-                # ROADMAP 18.2c: poll cadence bounds worst-case TTFT transport
-                # latency (the first poll is immediate, so this only affects how
-                # long a token waits when the worker writes it mid-interval).
-                await asyncio.sleep(settings.turn_job_sse_poll_interval_ms / 1000)
-
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @router.post("/api/turn-jobs/{job_id}/retry", response_model=TurnJobOut, status_code=202)
-    def retry_turn_job(
-        job_id: str,
-        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
-    ) -> TurnJobOut:
-        job = orchestrator.retry_turn_job(
-            principal.tenant_id,
-            job_id,
-            principal.actor_id,
-        )
-        turn_worker.notify()
-        return turn_job_out(job)
+    build_turn_jobs_router(deps, router)
+    build_collaboration_router(deps, router)
 
     @router.post("/api/conversations/{conversation_id}/accept", response_model=ConversationOut)
     def accept_conversation(
@@ -872,155 +687,6 @@ def build_router(deps: RouteDeps) -> APIRouter:
             except Exception:
                 logger.exception("failed to stage governance online feedback")
         return FeedbackOut(**feedback)
-
-    @router.get("/api/collaborators", response_model=list[CollaboratorOut])
-    def list_collaborators(
-        principal: Annotated[Principal, Depends(require_permission("operator:act"))],
-    ) -> list[CollaboratorOut]:
-        """Tenant actors for the @-mention autocomplete (backlog M18).
-
-        Read-only roster of member actor ids; restricted to operators (the
-        only roles who act in the workspace) so viewer/auditor cannot
-        enumerate the roster. The note composer filters out the writer and
-        matches the trailing ``@token`` client-side.
-        """
-        return [CollaboratorOut(**row) for row in database.list_collaborators(principal.tenant_id)]
-
-    @router.patch(
-        "/api/conversations/{conversation_id}/language",
-        response_model=ConversationOut,
-    )
-    def update_conversation_language(
-        conversation_id: str,
-        payload: SetConversationLanguageRequest,
-        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
-    ) -> ConversationOut:
-        """Set (or clear) the manual language override for a conversation.
-
-        Backlog (多语言客服): ``language`` null clears the override so the
-        writer path re-detects automatically. The endpoint is a full upsert —
-        it returns the stored row so the frontend can sync its select.
-        """
-        existing = database.get_conversation(principal.tenant_id, conversation_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="conversation not found")
-        database.set_conversation_language(principal.tenant_id, conversation_id, payload.language)
-        database.audit(
-            principal.tenant_id,
-            conversation_id,
-            principal.actor_id,
-            "conversation.language_changed",
-            {"language": payload.language},
-        )
-        updated = database.get_conversation(principal.tenant_id, conversation_id)
-        if updated is None:
-            raise HTTPException(status_code=404, detail="conversation not found")
-        return conversation_out(updated)
-
-    @router.post(
-        "/api/conversations/{conversation_id}/messages/{message_id}/translate",
-        response_model=TranslateOut,
-    )
-    def translate_message(
-        conversation_id: str,
-        message_id: str,
-        payload: TranslateMessageRequest,
-        principal: Annotated[Principal, Depends(require_permission("conversation:write"))],
-    ) -> TranslateOut:
-        """Translate one customer message into ``target_language``.
-
-        Backlog (多语言客服): never blocks on model availability — without a
-        configured provider the original text is returned with
-        ``was_translated=False`` and ``source="rule"`` so the frontend can
-        degrade gracefully.
-        """
-        message = database.get_message(principal.tenant_id, conversation_id, message_id)
-        if message is None:
-            raise HTTPException(status_code=404, detail="message not found")
-        if message.get("role") != "customer":
-            raise HTTPException(
-                status_code=422,
-                detail="only customer messages can be translated",
-            )
-        translated, was_translated, source = orchestrator.languages.translate(
-            message.get("content") or "",
-            payload.target_language,
-            tenant_id=principal.tenant_id,
-        )
-        database.audit(
-            principal.tenant_id,
-            conversation_id,
-            principal.actor_id,
-            "message.translated",
-            {
-                "message_id": message_id,
-                "target_language": payload.target_language,
-                "source": source,
-            },
-        )
-        return TranslateOut(translated=translated, was_translated=was_translated, source=source)
-
-    @router.get("/api/mentions", response_model=MentionsOut)
-    def list_mentions(
-        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
-        unread_only: Annotated[bool, Query()] = False,
-        limit: Annotated[int, Query(ge=1, le=100)] = 50,
-        offset: Annotated[int, Query(ge=0)] = 0,
-    ) -> MentionsOut:
-        rows = database.list_mentions_for_actor(
-            principal.tenant_id,
-            principal.actor_id,
-            unread_only=unread_only,
-            limit=limit,
-            offset=offset,
-        )
-        mentions = [
-            MentionOut(
-                id=row["id"],
-                conversation_id=row["conversation_id"],
-                conversation_customer=row["customer_name"] or row["conversation_id"],
-                channel=row["channel"] or "web",
-                mentioned_by=row["mentioned_by"],
-                note_id=row["note_id"],
-                note_preview=row.get("note_preview", ""),
-                created_at=row["created_at"],
-                read_at=row["read_at"],
-                unread=bool(row["unread"]),
-            )
-            for row in rows
-        ]
-        return MentionsOut(
-            mentions=mentions,
-            unread_count=database.count_unread_mentions(principal.tenant_id, principal.actor_id),
-        )
-
-    @router.post("/api/mentions/{mention_id}/read", response_model=MentionOut)
-    def mark_mention_read(
-        mention_id: str,
-        principal: Annotated[Principal, Depends(require_permission("conversation:read"))],
-    ) -> MentionOut:
-        row = database.mark_mention_read(principal.tenant_id, principal.actor_id, mention_id)
-        if not row:
-            raise LookupError("Mention not found")
-        database.audit(
-            principal.tenant_id,
-            row.get("conversation_id"),
-            principal.actor_id,
-            "conversation.mention_read",
-            {"mention_id": mention_id, "note_id": row.get("note_id")},
-        )
-        return MentionOut(
-            id=row["id"],
-            conversation_id=row.get("conversation_id") or "",
-            conversation_customer="",
-            channel="web",
-            mentioned_by=row.get("mentioned_by") or "",
-            note_id=row.get("note_id") or "",
-            note_preview="",
-            created_at=row["created_at"],
-            read_at=row["read_at"],
-            unread=bool(row["unread"]),
-        )
 
     @router.get(
         "/api/conversations/{conversation_id}/threads",

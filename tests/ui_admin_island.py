@@ -120,9 +120,10 @@ def open_admin_island(page: Page) -> None:
     # up inside a zero-height clipped ancestor (inputs at the viewport top,
     # under the fixed header) and recovers on the next page load. Detect the
     # collapsed layout and reload once before any form interaction.
-    if page.locator("#quotaConversationsReact").evaluate(
-        "el => el.getBoundingClientRect().height"
-    ) == 0:
+    if (
+        page.locator("#quotaConversationsReact").evaluate("el => el.getBoundingClientRect().height")
+        == 0
+    ):
         page.reload(wait_until="domcontentloaded")
         page.evaluate("() => window.dispatchEvent(new Event('helix-backend-ready'))")
         page.wait_for_selector("#desktopSplash", state="hidden", timeout=30000)
