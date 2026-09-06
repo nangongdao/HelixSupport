@@ -2,7 +2,11 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
-## Unreleased
+## 2.8.0 — 审计修复列车: 影子流量保真度与 cell 健康循环 (2026-09-06)
+
+Version 2.8.0 收敛本轮对 2.x 旗舰功能面的功能审计——三个已发货缺陷修复(影子流量两层保真、cell 健康循环隔离),全部由"真实执行路径测试 + 失败瞬间取证"的方法论发现(既有测试全为单元件或未覆盖该路径)。
+
+**无新迁移、无 API 契约变更**。
 
 ### Fixed
 
@@ -10,7 +14,13 @@
 - **cell 健康循环鲁棒性（2.2.x 缺陷，同审计模式）**: `periodic_health_check` 的 while 循环无逐 cell 异常隔离——`check_cell_health` 只捕获 httpx 异常族（`InvalidURL`/`UnsupportedProtocol` 穿透），一个配置错误的 health_url 即可让火后不管的任务永久死亡，**所有 cell 的健康状态冻结**（区域故障切换据此决策）。修复：`check_cell_health` 补 `except Exception` 兜底（永不抛出契约）；巡检体抽为 `health_check_tick`（逐 cell 隔离、坏 cell 记录跳过），循环调用之；确定性 tick 测试替代 cancel 时序测试。
 - **影子对比第二层保真（同审计发现）**: 字段对比盲映射三处结构性问题——①v2 列表响应按设计是 `{"data": [...], "next_cursor": ...}` 信封而 v1 是裸列表，顶层键对比必然全 mismatch 且 `_compare_responses` 对两个 list 直接 AttributeError（fire-and-forget 任务静默崩溃）；②影子重放盲映射 `/api/` → `/api/v2/`，无 v2 对应面的 GET（health/turn-jobs/labels/detail 等）重放后全 404 噪声；③对比方向按并集把 v1 独有字段记为漂移，而实测 v2 会话条目是 8 键契约投影（v1 31 键超集，共享键零差异——SDK shadow-read 同款契约）。修复：`_align_payloads` 信封解包（对比负载、弃 next_cursor）、`_compare_responses` 改 **v2 驱动**语义并支持 list 逐元素对比（问题名 `items[i].field`/`items.length`）、`is_v2_shadow_eligible` 路径资格（仅会话列表与消息列表两个实测可对比面；detail 顶层零共享键不资格）。测试：语义更新（v1 独有键忽略）+ 列表/信封/资格 7 例 + 全链集成（MockTransport v2 信封 vs 真实 v1 体 → 比较行 fields_matched=["items"]）1 例。
 
-## 2.7.0 — 治理操作台: 审批与反馈评审的人工操作面 (2026-09-05)
+### Tests
+
+- `tests/test_shadow_traffic.py` +10 例(`response_json_body` 边界 + 真实 app 中间件集成:真实体捕获/404 状态传递/重放标记永不二次影子)+ 语义更新(v1 独有键忽略)+ 列表/信封/资格 7 例 + 全链集成(MockTransport v2 信封 → 比较行 fields_matched=["items"])。
+- `tests/test_cell_router.py` +2 例(坏 health_url 永不抛出/确定性 tick 逐 cell 隔离)。
+- 全量后端套件绿;ruff 0.9.9 / pyright app 0;OpenAPI 快照仅 info.version 变更。
+
+ — 治理操作台: 审批与反馈评审的人工操作面 (2026-09-05)
 
 Version 2.7.0 给治理面补上人工操作入口：admin 岛第 10 张卡「治理操作台」把 2.5/2.6 的审批与反馈评审 API 变成可点击的操作——待决审批的批准/拒绝、线上反馈队列的接受/拒绝、评测数据集读数。
 
