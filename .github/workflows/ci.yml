@@ -331,6 +331,12 @@ jobs:
 
       - name: Browser smoke test
         run: |
+          # ui_admin_island.py seeds governance rows directly in the
+          # server's database; point it at the same file the server was
+          # started with. ui_widget.py defaults to the local standalone
+          # widget port (8774) — the CI server shares every surface on
+          # 8765, so the journey runs against the same instance.
+          export HELIX_DB_PATH=/tmp/helix_ci.db
           python tests/ui_smoke.py
           python tests/ui_admin.py
           python tests/ui_knowledge.py
@@ -342,7 +348,7 @@ jobs:
           python tests/ui_admin_island.py
           python tests/ui_console_island.py
           python tests/ui_knowledge_island.py
-          python tests/ui_widget.py
+          HELIX_BASE_URL=http://127.0.0.1:8765 python tests/ui_widget.py
 
       - name: Nightly performance and visual gates (schedule only)
         if: github.event_name == 'schedule'

@@ -125,6 +125,73 @@ class WidgetRoutesTests(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["conversation"]["customer_name"], "Widget Visitor")
 
+    def test_history_exposes_csat_survey_url_when_resolved(self) -> None:
+        """ROADMAP 2.10.0: when the conversation is resolved and a CSAT
+        survey is still pending, the history endpoint hands the widget its
+        rating link via the X-CSAT-Survey-URL header — the customer side of
+        the CSAT loop was previously unreachable in the widget channel."""
+        init_token = self._sign_token()
+        session_resp = self.client.post(
+            "/api/widget/sessions",
+            json={"customer_name": "CSAT Customer"},
+            headers={"X-Widget-Token": init_token},
+        )
+        session_data = session_resp.json()
+        conversation_id = session_data["conversation"]["id"]
+        session_token = session_data["widget_token"]
+        widget_headers = {"X-Widget-Token": session_token}
+
+        # Unresolved: no survey header.
+        unresolved = self.client.get(
+            f"/api/widget/sessions/{conversation_id}/messages?limit=50",
+            headers=widget_headers,
+        )
+        self.assertEqual(unresolved.status_code, 200)
+        self.assertNotIn("X-CSAT-Survey-URL", unresolved.headers)
+
+        # Resolve (creates the one-time survey) -> the header appears.
+        self.db.transition_conversation(
+            self.tenant_id,
+            conversation_id,
+            ["open"],
+            "resolved",
+        )
+        expires = "2027-01-01T00:00:00+00:00"
+        survey_token = self.db.create_csat_survey(self.tenant_id, conversation_id, expires)
+        resolved = self.client.get(
+            f"/api/widget/sessions/{conversation_id}/messages?limit=50",
+            headers=widget_headers,
+        )
+        self.assertEqual(resolved.status_code, 200)
+        survey_url = resolved.headers.get("X-CSAT-Survey-URL")
+        self.assertIsNotNone(survey_url)
+        self.assertIn(survey_token, survey_url)
+
+    def test_history_header_absent_after_survey_responded(self) -> None:
+        init_token = self._sign_token()
+        session_resp = self.client.post(
+            "/api/widget/sessions",
+            json={"customer_name": "CSAT Customer 2"},
+            headers={"X-Widget-Token": init_token},
+        )
+        session_data = session_resp.json()
+        conversation_id = session_data["conversation"]["id"]
+        session_token = session_data["widget_token"]
+        widget_headers = {"X-Widget-Token": session_token}
+        self.db.transition_conversation(self.tenant_id, conversation_id, ["open"], "resolved")
+        survey_token = self.db.create_csat_survey(
+            self.tenant_id, conversation_id, "2027-01-01T00:00:00+00:00"
+        )
+        self.db.submit_csat_rating(survey_token, 1)
+
+        responded = self.client.get(
+            f"/api/widget/sessions/{conversation_id}/messages?limit=50",
+            headers=widget_headers,
+        )
+        self.assertEqual(responded.status_code, 200)
+        # The survey was answered: no second rating link.
+        self.assertNotIn("X-CSAT-Survey-URL", responded.headers)
+
     def test_send_message_sync_success(self) -> None:
         """POST /api/widget/sessions/{id}/messages (sync) returns TurnResponse."""
         # Create session first

@@ -2,6 +2,30 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.10.0 — Widget CSAT 客户面: 解决状态与评分链接跨面闭环 (2026-09-06)
+
+Version 2.10.0 打通 CSAT 循环的客户侧：此前运营者解决会话后，评分链接只回给运营端（ConversationOut.survey_url）——**widget 渠道的客户永远看不到评分入口**。
+
+**无后端契约变更**（history 端点新增响应头，只增不改）。
+
+### Added
+
+- **history 端点暴露评分链接**（`app/widget_routes.py`）: 会话 resolved 且存在未答复、未过期的 CSAT 调查（复用 `get_pending_csat_survey`）时，响应头携带 `X-CSAT-Survey-URL`（相对/绝对随 csat_base_url）。已答复的调查不再暴露（一次性语义）。
+- **widget 已解决横幅 + 评分链接**: `widget.html` 新增 `#resolvedBanner`（会话已解决 + 「评价本次服务」链接）；`widget-app.js` loadHistory 读取头并渲染，startSession 重置状态。
+- **跨面旅程**: `tests/ui_widget.py` 扩展——运营者经 API 解决 widget 会话 → widget 重载后横幅与链接出现 → 客户进入一次性评分页 → 5 星提交 → 感谢页。
+
+### Fixed
+
+- **评分链接被渲染守卫清空（自建代码缺陷，旅程首跑抓出）**: loadHistory 设置了 `csatLink.href` 但未同步 `state.resolvedSurveyUrl`，随后 renderResolvedBanner 的守卫用空 state 字段把 href 清空。修复：loadHistory 同步两个 state 字段。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.10.0"。
+
+### Tests
+
+- `tests/test_widget_routes.py` +2 例（resolved+pending 暴露链接/已答复不暴露）；`tests/ui_widget.py` 跨面旅程（解决→横幅/链接→一次性评分页→感谢态），真机绿。
+
 ## 2.9.0 — 评测运行面: 治理注册表 API 收官 (2026-09-06)
 
 Version 2.9.0 补齐治理注册表 API 面的最后一块：**评测运行（eval runs）**。2.5 接了审批、2.6 接了反馈/数据集，但运行记录（run 关联数据集/候选/WORM 报告对象）只存在于测试与 CLI 工具中——运营者无法查看任何一次评测的历史与报告。

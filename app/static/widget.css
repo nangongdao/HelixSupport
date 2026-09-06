@@ -118,6 +118,8 @@ input:focus, textarea:focus { border-color: var(--widget-accent); box-shadow: 0 
 .system-note { align-self: center; max-width: 90%; margin: 5px 0 7px; color: var(--widget-muted); font-size: 11px; line-height: 1.5; text-align: center; }
 .system-note::before { display: inline-block; width: 5px; height: 5px; margin: 0 6px 2px 0; border-radius: 50%; background: var(--widget-accent); content: ""; }
 .connection-banner { margin: 0 2px 8px; padding: 8px 10px; border: 1px solid var(--widget-accent-soft); border-radius: 8px; color: var(--widget-accent-bright); background: var(--widget-accent-soft); font-size: 11px; }
+.resolved-banner { margin: 0 2px 8px; padding: 8px 10px; border: 1px solid var(--widget-line); border-radius: 8px; color: var(--widget-ink); background: var(--widget-accent-soft); font-size: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.resolved-banner a { color: var(--widget-accent-bright); font-weight: 600; }
 .message-form { margin-top: auto; }
 .composer-shell { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 12px; border: 1px solid var(--widget-line); border-radius: 12px; background: var(--widget-panel-raised); }
 .composer-shell textarea { flex: 1; min-height: 24px; max-height: 140px; padding: 4px 0; border: 0; resize: none; background: transparent; line-height: 1.5; }

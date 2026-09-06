@@ -101,9 +101,7 @@ def validate_registry(*, today: str | None = None) -> list[str]:
     return problems
 
 
-def apply_deprecation_headers(
-    operation: str, headers: MutableHeaders | dict[str, str]
-) -> bool:
+def apply_deprecation_headers(operation: str, headers: MutableHeaders | dict[str, str]) -> bool:
     """Stamp Deprecation/Sunset onto ``headers`` when the op is deprecated.
 
     Returns True when headers were added. Called from response paths that
