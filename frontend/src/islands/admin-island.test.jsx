@@ -105,6 +105,7 @@ function stubBackend(routes) {
     vi.fn(async (path) => {
       const route = Object.entries(routes).find(([match]) => path.startsWith(match));
       if (!route) throw new Error(`unexpected admin fetch: ${path}`);
+      console.log("STUB-FETCH", path);
       return { ok: true, status: 200, json: async () => route[1] };
     }),
   );
@@ -158,6 +159,19 @@ const FULL_ROUTES = {
       conversation_id: "conv_gov1",
       review_status: "pending_review",
       redacted_json: JSON.stringify({ rating: -1, reason: "答非所问", message_id: "msg_1" }),
+    },
+  ],
+  "/api/admin/governance/eval-runs": [
+    {
+      id: "run_gov1",
+      dataset_id: "ds_gov1",
+      dataset_name: "browser-feedback",
+      candidate: "triage-v9",
+      baseline: "triage-v8",
+      report_object_id: "eval-gov1",
+      passed: 1,
+      metrics_json: JSON.stringify({ accuracy: 0.95 }),
+      created_at: "2026-09-06T00:00:00+00:00",
     },
   ],
   "/api/admin/governance/datasets": [
@@ -410,8 +424,9 @@ describe("pure card models", () => {
   it("domainsToQueryKeys maps saved domains onto namespaced queries", () => {
     const keys = domainsToQueryKeys(["quota", "members"]);
     expect(keys).toEqual([["admin", "quota"], ["admin", "members"]]);
-    // Empty domains (defensive) → every admin query (8 legacy + 4 cost + 3 governance).
-    expect(domainsToQueryKeys([])).toHaveLength(15);
+    // Empty domains (defensive) → every admin query
+    // (8 legacy + 4 cost + 4 governance incl. eval-runs).
+    expect(domainsToQueryKeys([])).toHaveLength(16);
   });
 
   it("canManageIdentity requires the admin:manage permission", () => {
@@ -732,7 +747,12 @@ describe("refresh semantics", () => {
   });
 
   it("skips the round-trip when an unforced refresh finds fresh data", async () => {
-    await renderIsland();
+    const { client } = await renderIsland();
+    // Let every query settle first: the count below must measure only the
+    // unforced refresh, not the initial mount's in-flight fetches.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
     const before = fetch.mock.calls.length;
     act(() => {
       window.dispatchEvent(new CustomEvent(ADMIN_EVENTS.REFRESH));
