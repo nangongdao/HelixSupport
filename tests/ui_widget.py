@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -101,6 +102,8 @@ def main() -> None:
         ) as session_info:
             page.get_by_role("button", name="开始对话").click()
         assert session_info.value.status == 201, session_info.value.text()
+        session_data = session_info.value.json()
+        widget_conversation_id = session_data["conversation"]["id"]
         expect(page.locator("#chatView")).to_be_visible()
         expect(page.locator("#prechatView")).to_be_hidden()
         expect(page.locator("#fatalState")).to_be_hidden()
@@ -205,6 +208,60 @@ def main() -> None:
         page.set_viewport_size({"width": 900, "height": 900})
         assert_no_overflow(page)
         page.screenshot(path=ARTIFACTS / "widget-desktop.png", full_page=True)
+
+        # ── Cross-surface CSAT loop (ROADMAP 2.10.0) ─────────────────────
+        # The operator resolves the widget conversation in the console (a
+        # second page, same demo session); the widget's next history load
+        # then surfaces the resolved banner and the customer's rating link.
+        conversation_id = widget_conversation_id
+        api_headers = {"X-API-Key": "helix-demo-key", "X-Tenant-Id": "demo"}
+        import urllib.request
+
+        def api_post(path: str, body: dict) -> dict:
+            request = urllib.request.Request(
+                f"{BASE_URL}{path}",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json", **api_headers},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        # Handoff/claim so the lifecycle reaches human_active first (the
+        # console's 解决 button is available from open too, but claim makes
+        # the flow deterministic), then resolve — creating the CSAT survey.
+        api_post(f"/api/conversations/{conversation_id}/accept", {})
+        api_post(f"/api/conversations/{conversation_id}/resolve", {})
+
+        # The widget page polls history on reload: the resolved banner and
+        # the rating link appear, pointing at the one-time survey.
+        page.bring_to_front()
+        page.reload(wait_until="domcontentloaded")
+        resolved_banner = page.locator("#resolvedBanner")
+        expect(resolved_banner).to_be_visible(timeout=30000)
+        expect(resolved_banner).to_contain_text("会话已解决")
+        csat_href = resolved_banner.locator("#csatLink").get_attribute("href")
+        assert csat_href and "/api/csat/" in csat_href, csat_href
+        survey_token = csat_href.rsplit("/", 1)[-1]
+
+        # The customer follows the rating link: the one-time survey page
+        # loads, the rating lands, and the thank-you state shows.
+        survey_page = context.new_page()
+        survey_page.goto(f"{BASE_URL}{csat_href}", wait_until="domcontentloaded")
+        expect(survey_page.get_by_role("button", name="提交评价")).to_be_visible()
+        survey_page.get_by_label("评分").select_option("5")
+        with survey_page.expect_response(
+            lambda response: (
+                response.url.endswith(f"/api/csat/{survey_token}")
+                and response.request.method == "POST"
+            )
+        ) as rating_info:
+            survey_page.get_by_role("button", name="提交评价").click()
+        assert rating_info.value.ok, rating_info.value.text()
+        expect(survey_page.locator("h2")).to_contain_text("感谢您的评价")
+        survey_page.close()
+
+        # ── Cross-surface CSAT loop ends ─────────────────────────────────
 
         # Opening an explicit bootstrap link in the same tab starts a new
         # customer entry instead of silently restoring the previous session.

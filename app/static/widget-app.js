@@ -18,6 +18,8 @@ const state = {
   token: config.token,
   conversationId: null,
   messages: [],
+  resolved: false,
+  resolvedSurveyUrl: "",
   pendingAssistant: "",
   busy: false,
   handoff: false,
@@ -32,6 +34,8 @@ const scroller = $("messageScroller");
 const messageInput = $("messageInput");
 const sendButton = $("sendButton");
 const messageForm = $("messageForm");
+const resolvedBanner = $("resolvedBanner");
+const csatLink = $("csatLink");
 const connectionBanner = $("connectionBanner");
 
 function setText(id, value) {
@@ -145,6 +149,13 @@ function appendSystemNote(text) {
   messageLog.appendChild(note);
 }
 
+function renderResolvedBanner() {
+  resolvedBanner.hidden = !state.resolved;
+  if (state.resolved && csatLink.getAttribute("href") !== state.resolvedSurveyUrl) {
+    csatLink.href = state.resolvedSurveyUrl;
+  }
+}
+
 function renderMessages() {
   messageLog.replaceChildren();
   if (!state.messages.length) appendSystemNote(copy(config.locale, "intro"));
@@ -170,9 +181,15 @@ function saveCurrentSession() {
 
 async function loadHistory() {
   const response = await request(`/api/widget/sessions/${encodeURIComponent(state.conversationId)}/messages?limit=200`);
-  state.handoff = ["waiting_human", "human_active"].includes(
-    response.headers.get("X-Conversation-Status"),
-  );
+  const conversationStatus = response.headers.get("X-Conversation-Status") || "";
+  state.handoff = ["waiting_human", "human_active"].includes(conversationStatus);
+  // ROADMAP 2.10.0: when the operator resolved the conversation, surface
+  // the resolved banner and the CSAT rating link — the customer side of
+  // the CSAT loop was previously unreachable in the widget channel.
+  const surveyUrl = response.headers.get("X-CSAT-Survey-URL") || "";
+  state.resolved = conversationStatus === "resolved" && Boolean(surveyUrl);
+  state.resolvedSurveyUrl = state.resolved ? surveyUrl : "";
+  renderResolvedBanner();
   state.messages = mergeMessages(
     state.messages.filter((message) => !String(message.id || "").startsWith("local-")),
     await response.json(),
@@ -260,6 +277,8 @@ async function startSession(event) {
     const session = await response.json();
     state.conversationId = session.conversation.id;
     state.token = session.widget_token;
+    state.resolved = false;
+    renderResolvedBanner();
     saveCurrentSession();
     history.replaceState({}, document.title, `${location.pathname}${location.search}`);
     setChatVisible();

@@ -245,7 +245,17 @@ def list_widget_messages(
     conversation = database.get_conversation(token.tenant_id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    response.headers["X-Conversation-Status"] = str(conversation["status"])
+    conversation_status = str(conversation["status"])
+    response.headers["X-Conversation-Status"] = conversation_status
+    # ROADMAP 2.10.0: when the operator has resolved the conversation and a
+    # CSAT survey is still pending, hand the customer its rating link — the
+    # customer side of the CSAT loop was previously unreachable in the
+    # widget channel (the survey URL only reached the operator console).
+    if conversation_status == "resolved":
+        survey = database.get_pending_csat_survey(token.tenant_id, conversation_id)
+        if survey:
+            base = services.settings.csat_base_url or ""
+            response.headers["X-CSAT-Survey-URL"] = f"{base}/api/csat/{survey['token']}"
     rows = [
         row
         for row in database.list_messages(token.tenant_id, conversation_id, limit=limit)
