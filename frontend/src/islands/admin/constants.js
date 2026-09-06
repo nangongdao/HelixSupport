@@ -93,6 +93,7 @@ export const CARD_IDS = Object.freeze({
   governanceApprovalsList: "governanceApprovalsListReact",
   governanceFeedbackList: "governanceFeedbackListReact",
   governanceDatasetsReadout: "governanceDatasetsReadoutReact",
+  governanceEvalRunsList: "governanceEvalRunsListReact",
   costReadout: "costReadoutReact",
   costAnomalyReadout: "costAnomalyReadoutReact",
   costAgentList: "costAgentListReact",

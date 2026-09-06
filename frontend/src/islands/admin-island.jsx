@@ -64,6 +64,7 @@ export {
   costSummaryRows,
   governanceApprovalItems,
   governanceDatasetRows,
+  governanceEvalRunItems,
   governanceFeedbackItems,
   csatModel,
   formatTime,
@@ -105,6 +106,11 @@ const QUERY_DEFS = [
     path: () => "/api/admin/governance/feedback?status=pending_review",
   },
   { key: ["admin", "governance-datasets"], domain: "governance-datasets", path: () => "/api/admin/governance/datasets" },
+  {
+    key: ["admin", "governance-eval-runs"],
+    domain: "governance-eval-runs",
+    path: () => "/api/admin/governance/eval-runs",
+  },
 ];
 
 /** Legacy api() contract: tenant header from the host document. */
@@ -192,6 +198,7 @@ export function AdminIsland() {
         approvals={data["governance-approvals"]}
         feedback={data["governance-feedback"]}
         datasets={data["governance-datasets"]}
+        evalRuns={data["governance-eval-runs"]}
       />
       <AdminSlaCard policies={data.sla} />
       <AdminRoutingCard rules={data.rules} groups={data.groups} />

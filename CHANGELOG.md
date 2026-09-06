@@ -2,6 +2,27 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.9.0 — 评测运行面: 治理注册表 API 收官 (2026-09-06)
+
+Version 2.9.0 补齐治理注册表 API 面的最后一块：**评测运行（eval runs）**。2.5 接了审批、2.6 接了反馈/数据集，但运行记录（run 关联数据集/候选/WORM 报告对象）只存在于测试与 CLI 工具中——运营者无法查看任何一次评测的历史与报告。
+
+**无后端契约变更**（新增只读端点，admin:manage）。
+
+### Added
+
+- **服务**: `AiGovernanceService.list_eval_runs(tenant_id, dataset_id, limit)` / `get_eval_run(run_id, tenant_id)`——经 ai_eval_datasets JOIN 做租户作用域（runs 表无 tenant 列，作用域即数据集属主）。
+- **API**（governance 路由扩展）: `GET /api/admin/governance/eval-runs?dataset_id=` 与 `GET .../eval-runs/{run_id}`——详情含 WORM 报告内容（`EvalReportStore.read_all()` 按 `report_object_id` 匹配后解包内层 `report`）。
+- **装配**: `EvalReportStore(settings.eval_worm_dir)` 首次进入生产装配（`AppServices.eval_reports`）——此前 WORM 报告存储只活在测试与 CLI 中。
+- **admin 岛治理卡**: 新增「评测运行」小节（候选 @ 数据集 + 通过/未判定状态）。
+
+### Changed
+
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.9.0"。
+
+### Tests
+
+- `tests/test_governance_api.py` +4 例（列表/详情租户作用域经 other-admin 主键、WORM 报告随行、404 与 RBAC、bootstrap 装配断言）。
+
 ## 2.8.0 — 审计修复列车: 影子流量保真度与 cell 健康循环 (2026-09-06)
 
 Version 2.8.0 收敛本轮对 2.x 旗舰功能面的功能审计——三个已发货缺陷修复(影子流量两层保真、cell 健康循环隔离),全部由"真实执行路径测试 + 失败瞬间取证"的方法论发现(既有测试全为单元件或未覆盖该路径)。

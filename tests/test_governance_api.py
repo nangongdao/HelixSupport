@@ -30,6 +30,7 @@ from app.main import create_app
 ADMIN_KEY = "gov-admin-key-00001"
 ADMIN2_KEY = "gov-admin2-key-0002"
 VIEWER_KEY = "gov-viewer-key-0001"
+OTHER_ADMIN_KEY = "gov-other-admin-001"
 SECRET = "capability-secret-0123456789abcdef-0123456789abcdef"
 
 
@@ -38,6 +39,11 @@ def _principals() -> dict[str, Any]:
         ADMIN_KEY: {"tenant_id": "demo", "actor_id": "gov.admin", "role": "admin"},
         ADMIN2_KEY: {"tenant_id": "demo", "actor_id": "gov.admin2", "role": "admin"},
         VIEWER_KEY: {"tenant_id": "demo", "actor_id": "gov.viewer", "role": "viewer"},
+        OTHER_ADMIN_KEY: {
+            "tenant_id": "other",
+            "actor_id": "gov.other.admin",
+            "role": "admin",
+        },
     }
 
 
@@ -235,6 +241,99 @@ class KnowledgeDraftToolTests(unittest.TestCase):
             self.assertFalse(execution.success)
             self.assertEqual(execution.code, "policy_denied")
             services.database.close()
+
+
+class EvalRunSurfaceTests(unittest.TestCase):
+    """The eval-run registry surface (ROADMAP 2.9.0): runs recorded against
+    a dataset are listable/fetchable tenant-scoped, and the WORM report
+    content rides along when the deployment's store holds it."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        # eval_worm_dir must live in the temp tree: the default is a
+        # repo-relative path and WORM objects are write-once (a second run
+        # would collide with the first run's report).
+        import dataclasses
+
+        self.settings = dataclasses.replace(
+            _settings(Path(self._tmp.name) / "runs.db"),
+            eval_worm_dir=Path(self._tmp.name) / "eval-reports",
+        )
+        self.client = TestClient(create_app(self.settings))
+        self.services = cast(Any, self.client.app).state.services
+        self.admin = {"X-API-Key": ADMIN_KEY, "X-Tenant-Id": "demo"}
+        self.viewer = {"X-API-Key": VIEWER_KEY, "X-Tenant-Id": "demo"}
+
+    def tearDown(self) -> None:
+        self.services.database.close()
+        self._tmp.cleanup()
+
+    def _seed_run(self, tenant: str = "demo") -> dict:
+        dataset = self.services.ai_governance.register_dataset(
+            tenant_id=tenant,
+            name="feedback-set",
+            strategy="feedback",
+            items=[{"messages": [{"role": "customer", "content": "q"}]}],
+            created_by="gov.admin",
+        )
+        run_id = self.services.ai_governance.record_eval_run(
+            dataset_id=dataset["id"],
+            candidate="triage-v9",
+            report_object_id="eval-abc123",
+            passed=True,
+            metrics={"accuracy": 0.95},
+            baseline="triage-v8",
+        )
+        return {"dataset": dataset, "run_id": run_id}
+
+    def test_list_and_get_are_tenant_scoped(self) -> None:
+        seeded = self._seed_run()
+        listed = self.client.get("/api/admin/governance/eval-runs", headers=self.admin)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(len(listed.json()), 1)
+        self.assertEqual(listed.json()[0]["candidate"], "triage-v9")
+        self.assertEqual(listed.json()[0]["dataset_name"], "feedback-set")
+
+        detail = self.client.get(
+            f"/api/admin/governance/eval-runs/{seeded['run_id']}", headers=self.admin
+        )
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["passed"], 1)
+        self.assertEqual(detail.json()["dataset_name"], "feedback-set")
+
+        # A different tenant's admin sees nothing (the join scopes by
+        # dataset owner).
+        self.services.database.ensure_tenant("other")
+        other = self.client.get(
+            "/api/admin/governance/eval-runs",
+            headers={"X-API-Key": OTHER_ADMIN_KEY, "X-Tenant-Id": "other"},
+        )
+        self.assertEqual(other.status_code, 200)
+        self.assertEqual(other.json(), [])
+
+    def test_report_rides_along_from_the_worm_store(self) -> None:
+        seeded = self._seed_run()
+        # The WORM key IS the report_object_id (the runner stamps the same
+        # value into both the store and the registry row).
+        report = {"verdict": "pass", "cases": 27}
+        self.services.eval_reports.write_evaluation_report("eval-abc123", report)
+        detail = self.client.get(
+            f"/api/admin/governance/eval-runs/{seeded['run_id']}", headers=self.admin
+        )
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["report"]["verdict"], "pass")
+        self.assertEqual(detail.json()["report"]["cases"], 27)
+
+    def test_unknown_run_404_and_rbac(self) -> None:
+        missing = self.client.get("/api/admin/governance/eval-runs/run_missing", headers=self.admin)
+        self.assertEqual(missing.status_code, 404)
+        forbidden = self.client.get("/api/admin/governance/eval-runs", headers=self.viewer)
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_bootstrap_wires_the_report_store(self) -> None:
+        from app.eval_reports import EvalReportStore
+
+        self.assertIsInstance(self.services.eval_reports, EvalReportStore)
 
 
 class CapabilitySecretValidationTests(unittest.TestCase):

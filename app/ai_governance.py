@@ -411,6 +411,41 @@ class AiGovernanceService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_eval_runs(
+        self,
+        tenant_id: str,
+        *,
+        dataset_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List evaluation runs for the tenant's datasets, newest first."""
+        limit = max(1, min(int(limit), 100))
+        clauses = ["d.tenant_id = ?"]
+        values: list[Any] = [tenant_id]
+        if dataset_id:
+            clauses.append("r.dataset_id = ?")
+            values.append(dataset_id)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT r.*, d.name AS dataset_name FROM ai_eval_runs r "
+                f"JOIN ai_eval_datasets d ON d.id = r.dataset_id "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY r.created_at DESC, r.id DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_eval_run(self, run_id: str, tenant_id: str) -> dict[str, Any] | None:
+        """Fetch one evaluation run, tenant-scoped via its dataset."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT r.*, d.name AS dataset_name FROM ai_eval_runs r "
+                "JOIN ai_eval_datasets d ON d.id = r.dataset_id "
+                "WHERE r.id = ? AND d.tenant_id = ?",
+                (run_id, tenant_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def list_datasets(self, tenant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         """List eval dataset registry rows for a tenant, newest version first."""
         limit = max(1, min(int(limit), 100))

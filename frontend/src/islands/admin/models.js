@@ -228,3 +228,13 @@ export function governanceDatasetRows(datasets) {
     .map((row) => [`${row.name} v${row.version}`, `${Number(row.item_count || 0)} 条 · ${row.strategy}`]);
   return rows.length ? rows : [["已注册数据集", "—"]];
 }
+
+/** Eval runs → list items (candidate + dataset + pass state). */
+export function governanceEvalRunItems(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map((row) => ({
+    id: String(row.id),
+    subject: `${row.candidate} @ ${row.dataset_name || row.dataset_id}`,
+    meta: `${row.passed === 1 || row.passed === true ? "通过" : row.passed === 0 || row.passed === false ? "未通过" : "未判定"}`,
+  }));
+}
