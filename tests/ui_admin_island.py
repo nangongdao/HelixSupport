@@ -215,9 +215,7 @@ def main() -> None:
 
         def _webhook_dns_clean(url: str) -> bool:
             try:
-                host = _socket.getaddrinfo(_socket.getfqdn(_urlsplit(url).hostname), None)[0][
-                    4
-                ][0]
+                host = _socket.getaddrinfo(_socket.getfqdn(_urlsplit(url).hostname), None)[0][4][0]
                 return not _ipaddress.ip_address(host).is_private
             except (OSError, ValueError):
                 return False
