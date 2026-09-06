@@ -66,7 +66,7 @@ class DiagnosticsTests(unittest.TestCase):
         body = response.json()
         for key in ("version", "config", "queue", "turn_worker", "audit_chain_head"):
             self.assertIn(key, body, f"missing diagnostics key {key}")
-        self.assertEqual(body["version"], "2.7.0")
+        self.assertEqual(body["version"], "2.8.0")
         # Config is redacted: no secrets.
         self.assertNotIn("api_keys", body["config"])
         self.assertNotIn("secret", json.dumps(body["config"]))
