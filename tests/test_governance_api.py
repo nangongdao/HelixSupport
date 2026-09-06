@@ -59,7 +59,6 @@ def _settings(db_path: Path, *, capability_secret: str = "") -> Settings:
     )
 
 
-
 def control_plane_policy_at(control: Any, tenant_id: str, version: int) -> Any:
     """Read a stored policy version (the table stores the policy columns)."""
     import json as _json
@@ -368,17 +367,10 @@ class ProvisioningInitialPolicyTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.settings = _settings(Path(self._tmp.name) / "prov.db").model_copy(
-            update={
-                "control_plane_secret": SECRET,
-                "current_cell_id": "cell-a",
-            }
-        ) if False else _settings(Path(self._tmp.name) / "prov.db")
-        # dataclasses.replace for the two extra fields
         import dataclasses
 
         self.settings = dataclasses.replace(
-            self.settings,
+            _settings(Path(self._tmp.name) / "prov.db"),
             control_plane_secret=SECRET,
             current_cell_id="cell-a",
         )
