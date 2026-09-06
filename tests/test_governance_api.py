@@ -59,6 +59,29 @@ def _settings(db_path: Path, *, capability_secret: str = "") -> Settings:
     )
 
 
+
+def control_plane_policy_at(control: Any, tenant_id: str, version: int) -> Any:
+    """Read a stored policy version (the table stores the policy columns)."""
+    import json as _json
+
+    from app.control_plane import TenantPolicy
+
+    with control.database.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM tenant_control_policies WHERE tenant_id = ? AND version = ?",
+            (tenant_id, version),
+        ).fetchone()
+    assert row is not None, f"no policy v{version} for {tenant_id}"
+    return TenantPolicy(
+        plan=row["plan"],
+        region=row["region"],
+        deployment_cell=row["deployment_cell"],
+        feature_policy=frozenset(_json.loads(row["features_json"])),
+        model_policy=_json.loads(row["model_policy_json"]),
+        credential_reference=row["credential_reference"],
+    )
+
+
 class GovernanceApprovalsAPITests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -334,6 +357,85 @@ class EvalRunSurfaceTests(unittest.TestCase):
         from app.eval_reports import EvalReportStore
 
         self.assertIsInstance(self.services.eval_reports, EvalReportStore)
+
+
+class ProvisioningInitialPolicyTests(unittest.TestCase):
+    """ROADMAP 2.9.x: provisioning publishes the tenant's INITIAL control-
+    plane policy — before this, the ONLY policy writer in the app was the
+    region failover itself, so the runbook's prerequisite (a policy to
+    switch) had no production path. Idempotent re-provisioning must not
+    bump the policy version."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.settings = _settings(Path(self._tmp.name) / "prov.db").model_copy(
+            update={
+                "control_plane_secret": SECRET,
+                "current_cell_id": "cell-a",
+            }
+        ) if False else _settings(Path(self._tmp.name) / "prov.db")
+        # dataclasses.replace for the two extra fields
+        import dataclasses
+
+        self.settings = dataclasses.replace(
+            self.settings,
+            control_plane_secret=SECRET,
+            current_cell_id="cell-a",
+        )
+        self.client = TestClient(create_app(self.settings))
+        self.services = cast(Any, self.client.app).state.services
+        self.admin = {"X-API-Key": ADMIN_KEY, "X-Tenant-Id": "demo"}
+
+    def tearDown(self) -> None:
+        self.services.database.close()
+        self._tmp.cleanup()
+
+    def _provision(self, tenant_id: str = "failover-tenant") -> Any:
+        return self.client.post(
+            "/api/admin/tenants",
+            headers=self.admin,
+            json={"tenant_id": tenant_id, "name": "Failover Tenant"},
+        )
+
+    def test_provisioning_publishes_initial_policy_once(self) -> None:
+        created = self._provision()
+        self.assertEqual(created.status_code, 201, created.text)
+        control = self.services.control_plane
+        self.assertEqual(control.current_version("failover-tenant"), 1)
+        policy = control_plane_policy_at(control, "failover-tenant", 1)
+        self.assertEqual(policy.deployment_cell, "cell-a")
+        self.assertEqual(policy.region, "local")
+
+        # Idempotent re-provisioning (the route returns 201 for both calls)
+        # must NOT bump the policy version.
+        again = self._provision()
+        self.assertIn(again.status_code, (200, 201), again.text)
+        self.assertEqual(control.current_version("failover-tenant"), 1)
+
+        # The data plane serves the published policy.
+        effective = self.services.data_plane_config.effective_policy("failover-tenant")
+        self.assertEqual(effective.deployment_cell, "cell-a")
+
+    def test_control_plane_disabled_skips_publication(self) -> None:
+        # A short control-plane secret disables the plane (fail closed);
+        # provisioning must still succeed without publishing a policy.
+        import dataclasses
+
+        disabled_settings = dataclasses.replace(
+            _settings(Path(self._tmp.name) / "disabled.db"),
+            control_plane_secret="",
+        )
+        client = TestClient(create_app(disabled_settings))
+        services = cast(Any, client.app).state.services
+        self.assertIsNone(services.control_plane)
+        created = client.post(
+            "/api/admin/tenants",
+            headers=self.admin,
+            json={"tenant_id": "no-plane", "name": "No Plane"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(services.control_plane, None)
+        client.app.state.services.database.close()
 
 
 class CapabilitySecretValidationTests(unittest.TestCase):
