@@ -342,6 +342,7 @@ jobs:
           python tests/ui_admin_island.py
           python tests/ui_console_island.py
           python tests/ui_knowledge_island.py
+          python tests/ui_widget.py
 
       - name: Nightly performance and visual gates (schedule only)
         if: github.event_name == 'schedule'
