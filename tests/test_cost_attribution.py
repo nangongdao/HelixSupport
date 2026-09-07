@@ -128,7 +128,11 @@ class TestAnomalyDetection(unittest.TestCase):
 
         today = datetime.now(timezone.utc).date()
         service = self.service
-        for day in (today - timedelta(days=3), today - timedelta(days=2), today - timedelta(days=1)):
+        for day in (
+            today - timedelta(days=3),
+            today - timedelta(days=2),
+            today - timedelta(days=1),
+        ):
             service.record_inference_cost(
                 "tenant-1",
                 provider="openai",
