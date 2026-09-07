@@ -25,6 +25,209 @@
         "pytest 全量（889 passed）含 credentials/audit_anchor/eval_reports/turn_stages 覆盖",
         "migration 链 v1–v32 连续校验通过（verify_migration_registry.py）"
       ]
+    },
+    {
+      "release": "1.5.0",
+      "date": "2026-09-03",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "SEC-006 附件对象存储与恶意内容隔离（quarantine 三态、EICAR/多态/伪装 MIME/压缩炸弹检测、TimeoutMalwareScanner 超时 fail closed、签名 URL TTL 600s、删除证明）",
+        "43.2 PostgreSQL RLS：18 张核心表 helix_tenant_isolation 策略、tenant_scope/maintenance_scope 双作用域、GUC 随事务消亡、无作用域访问 fail loud",
+        "43.2 restricted 字段信封加密（webhook_endpoints.secret 判别列 plain|envelope、KMS 不可用行为明确、解密失败 dead-letter 不降级明文）",
+        "42.3 冷归档对象存储：双摘要防篡改（压缩字节 sha256 + 规范流 sha256）、对象缺失/摘要错误 fail closed、流式校验 O(1) 内存",
+        "42.2 迁移纪律：DATABASE_AUTO_MIGRATE=false 零 DDL 启动、migration 独立 release job、phase 元数据门禁（v33 起强制）",
+        "42.1 Web/worker 分离：PROCESS_ROLE=web|worker|all、worker 不暴露公网端点、lease fencing"
+      ],
+      "verification_evidence": [
+        "tests/test_attachment_security.py 20 例全绿（EICAR/多态/伪装 MIME/压缩炸弹/超时 fail closed/签名 URL 过期-篡改-跨租户）",
+        "tests/test_rls.py 27 例 + run_rls_drill.py scratch 集群双角色实跑 PASSED 10/10（台账 supplychain/rls-drills.json）",
+        "tests/test_webhook_envelope.py 10 例 + test_envelope_runtime.py 7 例（KMS 不可用 503 fail-closed 端到端）",
+        "tests/test_archive_store.py 6 例 + retention 集成 5 例（篡改与缺失 fail closed）、10× 档 P95 <300ms",
+        "migration gate OK（33 迁移链连续）、run_migrations apply 0→32/verify-only 只读通过",
+        "pytest 全量（含 42.x 各套件）绿、ruff/pyright 干净"
+      ]
+    },
+    {
+      "release": "2.0.0",
+      "date": "2026-09-03",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "43.1 租户控制面：版本化 TenantPolicy（plan/region/cell/feature/model_policy/credential_reference）、HMAC-SHA256 签名 ConfigSnapshot、存储篡改 fail closed、LKG 降级有时限、控制面不可用拒绝高风险变更",
+        "43.2 RLS + 信封加密 + 搜索字段分类 gate（ensure_searchable_fields_are_classified 接入 knowledge/message FTS 初始化）",
+        "43.3 API v2 事件契约：Idempotency-Key 重放返回原资源、事务 outbox 原子 claim、schema registry 向后/向前兼容强制、deprecation Deprecation/Sunset 头",
+        "43.4 区域与数据驻留：region 固定、RegionSpec 白名单、恢复目标区域校验、residency evidence pack + 跨境处理清单",
+        "43.5 AI 治理（registry 首版）：eval dataset content_hash 钉死、maker-checker 审批 fail closed、线上反馈 redact_sensitive 前置 + pending_review、工具 capability token（schema digest 钉扎）",
+        "43.6 前端性能预算与视觉回归 gate（LCP/CLS/长任务/heap/10k 渲染、visual_gate 四基线）"
+      ],
+      "verification_evidence": [
+        "tests/test_control_plane.py 12 例全绿（签名验证/存储篡改/伪造快照拒绝/LKG 降级/TTL 过期 fail closed）",
+        "tests/test_residency.py 20 例全绿（region 默认值/恢复门双向/pack 结构/mismatch 标记）",
+        "tests/test_api_v2.py 7 例 + test_event_outbox/test_outbox_consumer 9 例 + test_deprecation.py",
+        "tests/test_ai_governance.py 29 例全绿（provider 元数据/工具 token 篡改-过期-跨 subject/drift 越限停 canary）",
+        "run_rls_drill.py PASSED（auto-migrate 关闭启动 fail fast + RLS 18/18 enable）",
+        "performance_gate 静态+浏览器层 + visual_gate 四基线 0% 差分"
+      ]
+    },
+    {
+      "release": "2.1.0",
+      "date": "2026-09-03",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "影子流量系统：v1 请求按采样率重放到 v2 端点做字段级对比，隔离真实生产流量（影子请求带 X-Shadow-Request 标记、永不二次影子）",
+        "影子监控 24h 窗口健康告警接 housekeeping（SHADOW_TRAFFIC_BASE_URL 配置化，替代硬编码出站目标）",
+        "影子对比写入独立表（shadow_traffic_comparisons），不触碰生产业务行"
+      ],
+      "verification_evidence": [
+        "tests/test_shadow_traffic.py 全绿（采样/标记/比较行写入/禁用态零行为）",
+        "中间件集成测试：真实体捕获/404 状态传递/重放标记永不二次影子",
+        "pytest 全量绿、ruff/pyright 干净"
+      ]
+    },
+    {
+      "release": "2.3.0",
+      "date": "2026-09-04",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "AI 成本归因：ModelResponse 结构化 + 真实成本计算，inference_costs/tenant_cost_daily 双表（4 类模型调用点全部接线）",
+        "成本异常检测（CostAttributionService.check_anomaly），基线/因子语义，analytics 端点走 CostTolerance",
+        "成本遥测零敏感字段（仅 token 用量与 USD 成本，不记录 prompt/response 内容）"
+      ],
+      "verification_evidence": [
+        "tests/test_cost_attribution.py 全绿（记录/聚合/维度拆分/异常检测 10 例）",
+        "tests/test_cost_analytics_api.py 全绿（4 个 analytics 端点 RBAC/租户作用域）",
+        "PG 方言修复验证：check_anomaly 可移植 SQL 在真实 PG 18 实跑绿（74 例集成套件）"
+      ]
+    },
+    {
+      "release": "2.4.0",
+      "date": "2026-09-05",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "线上 drift 四信号：质量/拒绝计数/成本因子/引用失效，越限自动停 canary 回 draft 并审计（ai.drift_canary_stopped 携带 signal kind）",
+        "DRIFT_* 配置组窗口/样本门槛/显式停用；默认 DRIFT_ENABLED=False 惰性启用",
+        "drift 信号零新写路径（复用 tenant_cost_daily/messages.metadata_json/knowledge_articles），turn 路径零新增写入"
+      ],
+      "verification_evidence": [
+        "tests/test_ai_governance.py DriftCostCitationSignalTests 8 例全绿（成本越限/引用失效/阈值静默/停用）",
+        "test_config_validation.py 2 例负向校验（DRIFT_MAX_COST_FACTOR >1、DRIFT_MAX_STALE_CITATION_RATE (0,1]）",
+        "PG 方言守卫：AST 字符串常量级源码守卫 + test_cost_anomaly_uses_portable_sql（稀释语义 + 2× 异常边界）"
+      ]
+    },
+    {
+      "release": "2.5.0",
+      "date": "2026-09-05",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "AI 治理生产接线：AiGovernanceService 首次进入生产装配（此前纯测试机器）、CAPABILITY_SECRET 配置化",
+        "首个真实 mutating 工具（knowledge.draft）经全治理链：capability token 验签 + 工具策略 + high_risk 需人工审批",
+        "治理审批 API（maker-checker 审批可操作化，请求者不能自批）",
+        "生产空 secret 时 token 呈现 fail closed（token_unsupported 既有语义）"
+      ],
+      "verification_evidence": [
+        "tests/test_governance_api.py 全绿（审批列表/decide/自批拒绝 409/RBAC 403）",
+        "工具治理链测试：token 篡改/过期/跨 subject/schema digest 失效全拒绝",
+        "knowledge.draft 经网关全链写 draft 状态（resilient 连接器写路径 fail loud 不静默）"
+      ]
+    },
+    {
+      "release": "2.6.0",
+      "date": "2026-09-05",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "线上反馈管线：负评分翻转自动脱敏入册（ingest 即 redact_sensitive，存储即脱敏文档）",
+        "评审队列 API + 晋级 API（accepted 行折进具名数据集新版本；pending/rejected 搭车整批 409 中止）",
+        "exactly-once per flip（仅新评分=-1 且旧评分≠-1 触发），best-effort 不阻塞评分写入"
+      ],
+      "verification_evidence": [
+        "tests/test_governance_feedback.py 6 例全绿（翻转入册且脱敏文档落库/exactly-once/评审+晋级 round-trip/搭车 409/RBAC 403）",
+        "pytest 全量绿、ruff/pyright 干净"
+      ]
+    },
+    {
+      "release": "2.7.0",
+      "date": "2026-09-05",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "治理操作台（admin 岛第 10 卡）：审批批准/拒绝、反馈评审、数据集读数——写桥 helix-admin-governance-decide/-feedback-review 经 legacy api() 认证生命周期",
+        "治理写操作走既有身份门控（admin:manage），岛写桥 fail-closed"
+      ],
+      "verification_evidence": [
+        "tests/ui_admin_island.py 治理段真机绿（种子审批经直接 DB 插入——maker-checker 自批语义保持）",
+        "vitest +2（治理卡渲染契约 + 桥契约）",
+        "pytest 全量绿、frontend gate 绿"
+      ]
+    },
+    {
+      "release": "2.8.0",
+      "date": "2026-09-06",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "影子流量保真第二层修复：信封感知 v2 驱动对比（对齐 {data,next_cursor} 信封、v2 独有键语义）、路径资格（仅会话/消息列表两实测面）",
+        "cell 健康循环逐 cell 隔离：坏 health_url 不再冻结全部 cell 健康状态（区域故障切换决策面修复）",
+        "影子请求 256KB 有界缓冲 + 懒透传，绝不截断客户端响应"
+      ],
+      "verification_evidence": [
+        "tests/test_shadow_traffic.py +10 例（response_json_body 边界 + 真实 app 中间件集成）",
+        "tests/test_cell_router.py +2 例（坏 URL 永不抛出/确定性 tick 逐 cell 隔离）",
+        "全量后端套件绿、ruff/pyright 干净"
+      ]
+    },
+    {
+      "release": "2.9.0",
+      "date": "2026-09-06",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "评测运行面：eval-run 列表/详情 API 随行 WORM 报告内容（EvalReportStore 首次入生产装配）",
+        "eval-run 租户作用域经 ai_eval_datasets JOIN（runs 表无 tenant 列，作用域即数据集属主）",
+        "provisioning 发布租户初始控制面策略（幂等守卫 current_version==0、deployment_cell=当前 cell）"
+      ],
+      "verification_evidence": [
+        "tests/test_governance_api.py +4 例（列表/详情租户作用域经 other-admin 主键、WORM 报告随行、404/RBAC）",
+        "双实例真机故障切换演练全链绿（开通 v1→dry-run→committed v2→issue_snapshot 确认切换）",
+        "pytest 全量绿、OpenAPI 快照仅 info.version 变更"
+      ]
+    },
+    {
+      "release": "2.10.0",
+      "date": "2026-09-06",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "Widget CSAT 客户面：history 端点暴露 X-CSAT-Survey-URL（resolved+pending 才暴露，已答复不暴露，一次性语义）",
+        "评分链接暴露不引入新端点/新权限面（复用既有 get_pending_csat_survey 查询）"
+      ],
+      "verification_evidence": [
+        "tests/test_widget_routes.py +2 例（resolved+pending 暴露/已答复不暴露）",
+        "tests/ui_widget.py 跨面旅程真机绿（解决→横幅/链接→一次性评分页→感谢态）",
+        "全量后端套件绿、browser job CI 全绿"
+      ]
+    },
+    {
+      "release": "2.11.0",
+      "date": "2026-09-07",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "expand 迁移执行级语义门禁（check_expand_additivity）：标注 expand 却 DROP 表/列/改列类型的迁移在 scratch 后端执行时被超集检查抓住，杜绝静默破坏 N/N+1 滚动窗口",
+        "行级数据保全矩阵（test_migration_data_matrix）：种子行逐迁移步骤逐位不变，幂等重跑零变化",
+        "成本异常测试日期漂移修复（基线相对今天，不再随真实日期滑出窗口）"
+      ],
+      "verification_evidence": [
+        "tests/test_migration_additivity.py 7 例全绿（真实链 + 红光 DROP 表/列/重建改类型/执行失败 + 绿光 additive/contract）",
+        "tests/test_migration_data_matrix.py 3 例全绿（逐步保全/幂等/红光数据改写被抓）",
+        "migration gate OK（44 迁移链连续、12 phase 标注）、migration drill passed",
+        "pytest 全量绿、ruff 0.9.9/pyright 0 errors、browser job CI 全绿"
+      ]
     }
   ]
 }
