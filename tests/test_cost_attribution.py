@@ -124,8 +124,11 @@ class TestAnomalyDetection(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_no_anomaly_within_baseline(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        today = datetime.now(timezone.utc).date()
         service = self.service
-        for day in ("2026-08-30", "2026-08-31", "2026-09-01"):
+        for day in (today - timedelta(days=3), today - timedelta(days=2), today - timedelta(days=1)):
             service.record_inference_cost(
                 "tenant-1",
                 provider="openai",
@@ -133,7 +136,7 @@ class TestAnomalyDetection(unittest.TestCase):
                 prompt_tokens=1000,
                 completion_tokens=500,
                 cost_usd=0.01,
-                date_str=day,
+                date_str=day.isoformat(),
             )
         # Today's cost at the same level as the baseline: no anomaly.
         service.record_inference_cost(
@@ -154,7 +157,14 @@ class TestAnomalyDetection(unittest.TestCase):
         service = CostAttributionService(
             self.service.database, tolerance=CostTolerance(baseline_days=7, anomaly_factor=2.0)
         )
-        for _ in range(5):
+        # Baseline days relative to the real today: check_anomaly compares
+        # against utc_now()'s 7-day window, so an absolute date drifts out of
+        # the window as time passes (2026-08-30 baselines broke ~2026-09-06).
+        from datetime import datetime, timedelta, timezone
+
+        today = datetime.now(timezone.utc).date()
+        baseline_days = [today - timedelta(days=offset) for offset in (3, 2, 1)]
+        for day in baseline_days:
             service.record_inference_cost(
                 "tenant-1",
                 provider="openai",
@@ -162,7 +172,7 @@ class TestAnomalyDetection(unittest.TestCase):
                 prompt_tokens=1000,
                 completion_tokens=500,
                 cost_usd=0.01,
-                date_str="2026-08-30",
+                date_str=day.isoformat(),
             )
         # A 10x spike on the real today: the anomaly check compares against
         # the real today, so the spike row must land there.
