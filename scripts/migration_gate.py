@@ -10,6 +10,10 @@ fails in CI before any database runs it:
 2. Phase annotations (``check_migration_phases``): every migration from
    version 33 on declares ``expand``/``migrate``/``contract``, and a
    ``contract`` migration is always preceded by an ``expand`` one.
+3. Expand additivity (``check_expand_additivity``): every ``expand``
+   migration is executed against a scratch backend and its schema effect
+   must be a strict superset — dropping a table or a column (however the
+   SQL is spelled) breaks the N/N+1 rolling window and fails the gate.
 
 Usage:
     python scripts/migration_gate.py [--json]
@@ -33,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.migrations import (
     all_migrations,
+    check_expand_additivity,
     check_migration_phases,
     verify_migration_chain,
 )
@@ -45,7 +50,11 @@ def main() -> int:
     args = parser.parse_args()
 
     migrations = all_migrations()
-    problems = verify_migration_chain(migrations) + check_migration_phases(migrations)
+    problems = (
+        verify_migration_chain(migrations)
+        + check_migration_phases(migrations)
+        + check_expand_additivity(migrations)
+    )
 
     if args.json:
         print(
