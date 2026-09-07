@@ -2,6 +2,27 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.11.0 — 迁移可运维性: expand 语义门禁与 N/N+1 混跑矩阵 (2026-09-07)
+
+Version 2.11.0 把 42.2 expand/migrate/contract 纪律从"标注门禁"升级为"执行级语义门禁"，并同步 README 到 2.10.0 面。
+
+**无后端契约变更、无新迁移**（纯治理 + 文档）。
+
+### Added
+
+- **expand 迁移执行级 additivity 检查**（`app/migrations.py` `check_expand_additivity`）: phase gate 此前只校验 `@migration(phase="expand")` 的*标注*，从不校验*语句*——一个标注 expand 却 DROP 表/列或重建表改类型的迁移能直接通过门禁，静默破坏滚动升级 N/N+1 窗口（N-1 二进制在滚出期间继续读同一数据库）。新检查把整条迁移链在 scratch 内存 SQLite 上执行，要求每个 expand 步骤的 schema 增量（表集、逐表列集、列声明类型）是执行前的**严格超集**。基于执行而非语法：无论破坏性 SQL 怎么写（直接 execute、executescript、或 `_ensure_column` 类帮助函数）都被抓住。触发器正文与索引变更刻意不比较（触发器可合法改自身表；expand 可增/换索引而不破坏 N-1 读者）。
+- **`scripts/migration_gate.py` 接线**: `verify_migration_chain` + `check_migration_phases` + `check_expand_additivity` 三合一进 supply-chain CI job。
+- **测试**（`tests/test_migration_additivity.py` 7 例）: 真实链零问题 + 红光（DROP 表 / DROP 列 / 重建表改列类型 / 执行失败）+ 绿光（纯 additive / contract 阶段允许删列）。
+
+### Fixed
+
+- **成本异常测试日期漂移（2026-09-07 全量跑发现）**: `tests/test_cost_attribution.py` 的 anomaly 基线写死绝对日期（2026-08-30/31、09-01），而 `check_anomaly` 用 `utc_now()` 算 7 天窗口——真实日期走过 2026-09-06 后基线滑出窗口，spike 对空基线比较导致 `test_anomaly_when_cost_spikes` 必失败。基线改为相对真实今天（today-3/-2/-1），两测试永久在窗口内。
+
+### Changed
+
+- **README**: 徽章版本 v2.4.0 → v2.10.0；2.x 平台化清单补 2.5–2.10 列车（治理注册表接线/capability token、线上反馈管线、治理操作台卡、评测运行 WORM 报告、租户开通即发布初始控制面策略、Widget CSAT 客户面闭环）。
+- **`ROADMAP_2_X.md` Gate C**: N/N+1 混跑项从待办标记为已自动化落地（执行级超集检查），全量动态矩阵与真实 PG 双后端混跑归发布周期。
+
 ## 2.10.0 — Widget CSAT 客户面: 解决状态与评分链接跨面闭环 (2026-09-06)
 
 Version 2.10.0 打通 CSAT 循环的客户侧：此前运营者解决会话后，评分链接只回给运营端（ConversationOut.survey_url）——**widget 渠道的客户永远看不到评分入口**。

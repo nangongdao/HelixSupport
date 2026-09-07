@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>v2.4.0</code>&nbsp;
+  <code>v2.10.0</code>&nbsp;
   <code>Python 3.11+</code>&nbsp;
   <code>FastAPI</code>&nbsp;
   <code>SQLite / PostgreSQL</code>&nbsp;
@@ -226,7 +226,9 @@ sequenceDiagram
 - v1→v2 影子流量：按采样率把 v1 读请求重放到 v2 端点做字段级对比，24 小时健康窗口自动告警
 - 多 cell：注册表驱动的 cell 路由、跨区异步复制（内部认证入口）、受控区域故障切换 runbook
 - 数据面/控制面：HMAC 签名租户策略快照、LKG 降级、restricted 字段信封加密、外部审计锚定（Ed25519 + WORM）
-- SDK v2：游标分页、Idempotency-Key 重放语义与跨版本一致性测试（clients/python）
+- AI 治理注册表：工具启用 maker-checker 审批、线上负反馈自动脱敏入册与评审/晋级、评测运行 WORM 报告、capability token 工具授权
+- 租户开通即发布初始控制面策略：版本化 tenant_control_policies 幂等写入，故障切换 runbook 前置有生产路径
+- SDK v2：游标分页、Idempotency-Key 重放语义与跨版本一致性测试（clients/python）；Widget CSAT 客户面：解决后横幅 + 一次性评分链接跨面闭环
 
 </details>
 

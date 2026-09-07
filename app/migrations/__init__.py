@@ -284,6 +284,93 @@ def check_migration_phases(migrations: list[Migration] | None = None) -> list[st
     return problems
 
 
+def check_expand_additivity(migrations: list[Migration] | None = None) -> list[str]:
+    """Enforce that every ``expand`` migration is SQL-additive (42.2 discipline).
+
+    The phase gate (:func:`check_migration_phases`) validates *annotations*;
+    this gate validates the *runtime effect*. An ``expand`` migration must
+    only create new objects (tables, indexes, views, triggers) or add columns
+    — never drop, rename, or rewrite existing schema or data, since the N-1
+    binary keeps reading the same database during a rolling upgrade.
+
+    Implementation is execution-based, not syntactic: the whole chain runs
+    against a scratch in-memory SQLite database, and after every migration
+    the table set and per-table column set must be a superset of the state
+    before it. A migration that drops a table or a column — regardless of
+    how it spells the SQL (direct execute, ``executescript``, or a helper
+    like :func:`_ensure_column`) — fails the superset check. Trigger bodies
+    and index changes are not compared: a trigger may legitimately mutate
+    its own table, and an expand may add or replace an index without
+    breaking the N-1 binary.
+
+    Returns a list of problems; an empty list means every expand migration
+    is additive on a real backend.
+    """
+    chain = migrations if migrations is not None else _MIGRATIONS
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    problems: list[str] = []
+    try:
+        _ensure_migrations_table(connection)
+        for migration in chain:
+            before = _schema_tables(connection)
+            try:
+                migration.up(connection)
+            except Exception as error:
+                problems.append(
+                    f"migration {migration.version} ({migration.phase}): "
+                    f"execution failed on scratch backend: {type(error).__name__}: {error}"
+                )
+                continue
+            after = _schema_tables(connection)
+            if migration.phase == "expand":
+                for table, columns in before.items():
+                    if table not in after:
+                        problems.append(
+                            f"migration {migration.version} ({migration.phase}): "
+                            f"dropped table {table} — not additive for N/N+1 coexistence"
+                        )
+                        continue
+                    for column, column_type in columns.items():
+                        if column not in after[table]:
+                            problems.append(
+                                f"migration {migration.version} ({migration.phase}): "
+                                f"removed column {column} from {table} — "
+                                f"not additive for N/N+1 coexistence"
+                            )
+                            continue
+                        # A type change is a table-rebuild (SQLite rewrites the
+                        # row storage), which reads differently under the N-1
+                        # binary — same breakage as a column drop.
+                        if column_type != after[table][column]:
+                            problems.append(
+                                f"migration {migration.version} ({migration.phase}): "
+                                f"changed type of {table}.{column} "
+                                f"({column_type} -> {after[table][column]}) — "
+                                f"not additive for N/N+1 coexistence"
+                            )
+    finally:
+        connection.close()
+    return problems
+
+
+def _schema_tables(connection: sqlite3.Connection) -> dict[str, dict[str, str]]:
+    """Table name -> {column name: declared type} for the current schema."""
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    return {
+        table: {
+            row[1]: (row[2] or "")
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for table in tables
+    }
+
+
 def pending_migration_versions(
     connection: sqlite3.Connection,
     migrations: list[Migration] | None = None,
