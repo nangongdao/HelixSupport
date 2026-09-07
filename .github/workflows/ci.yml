@@ -122,7 +122,9 @@ jobs:
           python -m pytest tests/test_migration_registry.py -q
 
       - name: Migration additivity gate (Gate C N/N+1)
-        run: python -m pytest tests/test_migration_additivity.py -q
+        run: |
+          python -m pytest tests/test_migration_additivity.py -q
+          python -m pytest tests/test_migration_data_matrix.py -q
 
   supply-chain:
     runs-on: ubuntu-latest
