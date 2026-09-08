@@ -11,6 +11,7 @@ rolling forward.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -203,6 +204,77 @@ class DataPreservationMatrixTests(unittest.TestCase):
                 self.assertIn("customer_name changed", problems[0])
             finally:
                 connection.close()
+
+
+@unittest.skipUnless(
+    os.getenv("HELIX_PG_INTEGRATION") and os.getenv("DATABASE_URL"),
+    "Requires PostgreSQL instance and HELIX_PG_INTEGRATION=1",
+)
+class PostgresDataPreservationTests(unittest.TestCase):
+    """The same seed-then-migrate matrix against the live PostgreSQL backend.
+
+    The migration chain runs through ``pg_dialect``'s translated SQL, so a
+    migration that is additive on SQLite but drops/rewrites rows via a
+    PostgreSQL-only spelling would escape the in-memory SQLite check. Seeding
+    at v01 and stepping to v44 on the real backend closes that gap.
+    """
+
+    def test_seed_rows_survive_full_chain_on_postgres(self) -> None:
+        import psycopg2
+
+        from app.pg_dialect import PostgresConnection
+
+        migrations = all_migrations()
+        url = os.environ["DATABASE_URL"]
+
+        # Start from a clean schema so repeat runs are deterministic.
+        connection = psycopg2.connect(url)
+        connection.autocommit = True
+        connection.cursor().execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+        connection.close()
+
+        raw = psycopg2.connect(url)
+        try:
+            pc = PostgresConnection(raw)
+            run_migrations(pc, migrations[:1])  # type: ignore[arg-type]
+            raw.commit()
+            _seed_baseline(pc)  # type: ignore[arg-type]
+            raw.commit()
+            # Snapshot the seeded tables through the translation layer.
+            before: dict[str, list[tuple]] = {}
+            for table in (
+                "tenants",
+                "conversations",
+                "messages",
+                "audit_events",
+                "knowledge_articles",
+                "turn_requests",
+            ):
+                try:
+                    result = pc.execute(f"SELECT * FROM {table}")
+                    before[table] = [tuple(row.items()) for row in result.fetchall()]
+                except Exception:
+                    before[table] = []
+
+            run_migrations(pc, migrations[1:])  # type: ignore[arg-type]
+            raw.commit()
+            self.assertEqual(
+                migration_schema_version(pc),
+                migrations[-1].version,  # type: ignore[arg-type], "chain must reach head"
+            )
+            after = {}
+            for table, rows in before.items():
+                if not rows:
+                    continue
+                result = pc.execute(f"SELECT * FROM {table}")
+                after[table] = [tuple(row.items()) for row in result.fetchall()]
+            problems = _intersection_match(before, after)
+            self.assertEqual(problems, [], "seed rows changed across the PG chain")
+            # The demo tenant seeded via Database.initialize is absent on the
+            # raw connection path; assert the seed itself landed.
+            self.assertGreaterEqual(len(before.get("tenants", [])), 1)
+        finally:
+            raw.close()
 
 
 if __name__ == "__main__":
