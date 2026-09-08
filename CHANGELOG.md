@@ -11,7 +11,7 @@ Version 2.11.0 把 42.2 expand/migrate/contract 纪律从"标注门禁"升级为
 ### Added
 
 - **expand 迁移执行级 additivity 检查**（`app/migrations.py` `check_expand_additivity`）: phase gate 此前只校验 `@migration(phase="expand")` 的*标注*，从不校验*语句*——一个标注 expand 却 DROP 表/列或重建表改类型的迁移能直接通过门禁，静默破坏滚动升级 N/N+1 窗口（N-1 二进制在滚出期间继续读同一数据库）。新检查把整条迁移链在 scratch 内存 SQLite 上执行，要求每个 expand 步骤的 schema 增量（表集、逐表列集、列声明类型）是执行前的**严格超集**。基于执行而非语法：无论破坏性 SQL 怎么写（直接 execute、executescript、或 `_ensure_column` 类帮助函数）都被抓住。触发器正文与索引变更刻意不比较（触发器可合法改自身表；expand 可增/换索引而不破坏 N-1 读者）。
-- **行级数据保全矩阵**（`tests/test_migration_data_matrix.py` 3 例）: additivity 门禁证明 *schema* 超集，本套件证明*行*在迁移链上保全——v01 基线库种子代表性行（tenant/conversation/message/audit/turn_request/knowledge）逐步执行 44 个迁移，每步后既有列值逐位不变（新列带默认值/回填允许出现在行尾）。覆盖逐步保全、幂等重跑、红光（数据改写迁移被准确抓住）。
+- **行级数据保全矩阵**（`tests/test_migration_data_matrix.py` 4 例，SQLite + PostgreSQL 双后端）: additivity 门禁证明 *schema* 超集，本套件证明*行*在迁移链上保全——v01 基线库种子代表性行（tenant/conversation/message/audit/turn_request/knowledge）逐步执行 44 个迁移，每步后既有列值逐位不变（新列带默认值/回填允许出现在行尾）。覆盖逐步保全、幂等重跑、红光（数据改写迁移被准确抓住）；PG 用例经 `pg_dialect` 转译路径在真实后端验证（`HELIX_PG_INTEGRATION=1` 门控，与 test_postgres.py 一致）。
 - **`scripts/migration_gate.py` 接线**: `verify_migration_chain` + `check_migration_phases` + `check_expand_additivity` 三合一进 supply-chain CI job；数据矩阵随 CI migration additivity gate 步骤运行。
 - **测试**（`tests/test_migration_additivity.py` 7 例）: 真实链零问题 + 红光（DROP 表 / DROP 列 / 重建表改列类型 / 执行失败）+ 绿光（纯 additive / contract 阶段允许删列）。
 
