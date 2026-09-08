@@ -23,6 +23,7 @@ Version 2.11.0 把 42.2 expand/migrate/contract 纪律从"标注门禁"升级为
 
 - **README**: 徽章版本 v2.4.0 → v2.10.0；2.x 平台化清单补 2.5–2.10 列车（治理注册表接线/capability token、线上反馈管线、治理操作台卡、评测运行 WORM 报告、租户开通即发布初始控制面策略、Widget CSAT 客户面闭环）。
 - **`ROADMAP_2_X.md` Gate C**: N/N+1 混跑项从待办标记为已自动化落地（执行级超集检查 + 行级保全矩阵）。
+- **治理补全（同日）**: threat-model deltas 补 1.5.0–2.11.0 共 12 条（此前台账只有 1.4.0——41.7 发布纪律从未在发布时刻强制执行，`--release <v>` 对每个版本红灯）；game-day 六 focus 全轮换（8 月只有 objectstore，补 database/model/connector/webhook/redis 五个 focus，`supplychain/game-days.json` 台账完整）。
 
 ## 2.10.0 — Widget CSAT 客户面: 解决状态与评分链接跨面闭环 (2026-09-06)
 
