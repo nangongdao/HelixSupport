@@ -25,6 +25,12 @@
       "ran_at": "2026-08-23T15:40:11.222143+00:00",
       "passed": true,
       "details": "backup→restore→verify intact; tamper→TAMPER"
+    },
+    {
+      "drill_type": "audit_anchor_restore",
+      "ran_at": "2026-09-07T15:40:42.979574+00:00",
+      "passed": true,
+      "details": "backup→restore→verify intact; tamper→TAMPER"
     }
   ]
 }

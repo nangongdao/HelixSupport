@@ -28,6 +28,15 @@
       "rto_budget_seconds": 1800,
       "rpo_budget_seconds": 900,
       "details": "T0/T1 backups → restore-to-T1 → anchors intact, window data complete, post-T1 excluded, job/attachments/tombstone verified"
+    },
+    {
+      "drill_type": "pitr_restore",
+      "ran_at": "2026-09-07T15:40:44.531951+00:00",
+      "passed": true,
+      "rto_seconds": 0.453,
+      "rto_budget_seconds": 1800,
+      "rpo_budget_seconds": 900,
+      "details": "T0/T1 backups → restore-to-T1 → anchors intact, window data complete, post-T1 excluded, job/attachments/tombstone verified"
     }
   ]
 }

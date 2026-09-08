@@ -19,6 +19,76 @@
         }
       ],
       "details": "all exercises green"
+    },
+    {
+      "ran_at": "2026-09-07T15:40:44.567472+00:00",
+      "focus": "database",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "database",
+          "exercise": "restore-drill",
+          "passed": true
+        },
+        {
+          "focus": "database",
+          "exercise": "pitr-drill",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
+    },
+    {
+      "ran_at": "2026-09-07T15:41:20.098010+00:00",
+      "focus": "model",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "model",
+          "exercise": "chaos-provider-failure",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
+    },
+    {
+      "ran_at": "2026-09-07T15:41:23.211828+00:00",
+      "focus": "connector",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "connector",
+          "exercise": "rotation-drill",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
+    },
+    {
+      "ran_at": "2026-09-07T15:41:35.586322+00:00",
+      "focus": "webhook",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "webhook",
+          "exercise": "provider-conformance",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
+    },
+    {
+      "ran_at": "2026-09-07T15:42:41.907152+00:00",
+      "focus": "redis",
+      "passed": true,
+      "exercises": [
+        {
+          "focus": "redis",
+          "exercise": "redis-failure-drill",
+          "passed": true
+        }
+      ],
+      "details": "all exercises green"
     }
   ]
 }
