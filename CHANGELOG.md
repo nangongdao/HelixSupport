@@ -2,6 +2,42 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.11.1 — 跨 cell 复制入口: 目标侧状态保全与 PostgreSQL 可用性 (2026-09-12)
+
+Version 2.11.1 收敛对跨 cell 复制入口（ROADMAP 2.2.2 / §43.4）的交付后审计发现的两层缺陷。该入口用 SQLite 专有的 `INSERT OR REPLACE` 写目标侧，于是：
+
+1. **在 PostgreSQL 生产档位上直接不可用**——方言层只翻译 `INSERT OR IGNORE`，`INSERT OR REPLACE` 原样透传，PG 回报 `语法错误 在 "OR" 或附近的`，入口 500。而 ROADMAP §1.2 明确多实例生产档位固定为 PostgreSQL，"跨区复制" 因此在生产档位上从未工作过。
+2. **在 SQLite 上冲突时摧毁目标侧状态**——`REPLACE` 的语义是删除冲突行再插入，因此源侧从未复制的列（`status`/`version`/`last_message_at`/`first_response_at`/`preview`）连同 `_REPLICATED_SYNTHETIC` 合成默认值一起被重置；复制的更新会把目标 cell 上一个已 `resolved` 的会话改回 `open`、`version` 从 7 掉回 1。
+
+既有 `tests/test_replication_ingress.py` 只跑 SQLite 且从不触发冲突路径，两个半边都不可见——与 2.3.0 成本异常方言缺陷同属一类。
+
+**无后端契约变更**（入口新增 409 语义，且仅对跨租户 id 冲突生效）。
+
+### Fixed
+
+- **复制入口在 PostgreSQL 上不可用**（`app/routers/system.py`）: upsert 改写为 `INSERT ... ON CONFLICT(id) DO UPDATE SET <复制的列> = excluded.<列>`——SQLite（≥3.24）与 PostgreSQL 都接受的可移植形式。
+- **复制的更新冲掉目标侧运行态**: 冲突路径只更新**源侧载荷实际携带**的白名单列；`REPLACE` 的整行替换语义使这一意图失效。
+- **合成默认值在冲突路径覆盖真实值**: `_REPLICATED_SYNTHETIC` 的占位默认值（`status='open'`/`channel='replicated'`/`customer_name='Replicated'`）改为仅插入生效——它们的存在意义是让首次插入不撞 NOT NULL 约束，而不是在每次复制时把目标侧的真实值改回占位值。
+- **跨租户行可被复制载荷改名**: 行 id 是主键，无守卫的 upsert 允许对端把一条属于别的租户的会话改写进自己的租户。冲突更新加租户守卫（`WHERE <表>.tenant_id = excluded.tenant_id`），守卫不成立时以 409 明确拒绝而不是静默改写。
+
+### Added
+
+- **方言层 `reject` 指令**（`app/pg_dialect.py`）: `INSERT OR REPLACE` 不再原样透传，而是携带可诊断理由硬失败（`INSERT OR REPLACE is SQLite-only and destructive on conflict … Rewrite it as INSERT ... ON CONFLICT (...) DO UPDATE`），`execute` 与 `executemany` 两条路径一致。
+- **源码守卫**（`tests/test_pg_dialect_guard.py`）: 扫描 `app/` 内的 SQL 字符串常量禁止 `INSERT OR REPLACE INTO`（跳过 docstring，因此注释与说明文字仍可指称该构造）；含守卫自证断言（正例命中、可移植写法不误报）。与 2.3.0 的 `CostDialectPortabilityTests` 互补：那份守卫因具体缺陷而生，这份守护方言面本身。
+- **复制入口的 PostgreSQL 契约**（`tests/test_replication_ingress.py`）: 把入口契约抽成后端无关的 mixin，SQLite 与 `HELIX_PG_INTEGRATION=1` 门控的真实 PostgreSQL 各跑一遍（冲突保全、合成默认值仅插入、新建行仍拿默认值、跨租户 id 冲突 409）。
+
+### Changed
+
+- **CI 首次真正运行 PostgreSQL 集成套件**: supply-chain 作业本就为 RLS 演练起了 PostgreSQL 服务并装好 psycopg2/pytest，但三个"只有 SQLite 跑得通"的缺陷（2.3.0 成本分析的 `date(x, modifier)`、2.4.0 SLA 的 `IS ?`、本次复制入口的 `INSERT OR REPLACE`）能上线都是同一条路径——PG 门控套件存在，却从未在 CI 里跑过。新增步骤在该作业上运行 `test_postgres` / `test_replication_ingress` / `test_multi_instance` / `test_migration_data_matrix`（`HELIX_PG_INTEGRATION=1`，本地对真实 PostgreSQL 18 实跑 101 passed / 356s）。`test_drills` 的恢复演练需要本地安装的 `pg_dump`/`pg_restore`（`PG_BIN`），暂不纳入。
+- **诊断包版本断言去硬编码**（`tests/test_operability.py`）: 原本写死 `body["version"] == "2.11.0"`，每次版本递增都要改测试。改为与 `APP_VERSION` 比较——断言的不变量是"诊断包与构建版本一致"，不是某个版本字面量。
+- **`api/openapi.json` 版本同步**: `info.version` 2.11.0 → 2.11.1（门禁的比较器不覆盖该字段，但发布物应与实际版本一致；`tests/test_openapi_gate.py::test_snapshot_is_current_with_code` 会做逐字节比对，可用 `--dump` 重生成）。
+- **版本号**: `app/main.py` APP_VERSION 更新至 "2.11.1"（含 `supplychain/threat-model-deltas.json` 的 2.11.1 delta）。
+
+### Tests
+
+- 新测试在修复前代码上红光成立：SQLite 侧 `test_update_keeps_columns_the_source_did_not_send` 与 `test_synthetic_defaults_are_insert_only` 断言 `'open' != 'resolved'`，跨租户用例报错；PostgreSQL 侧 4 例全部失败（修复前经 `pg_dialect` 透传时报 PG 语法错误，加守卫后经 reject 指令失败）。
+- 修复后：`tests.test_replication_ingress` + `tests.test_pg_dialect_guard` 20 例全绿（含 PG 真实后端），`test_postgres`/`test_cost_attribution`/`test_region_replication` 94 例无回归；PG 集成四模块 101 例在真实 PostgreSQL 18 上全绿；ruff 0.9.9 format/lint 全仓干净；`migration_gate` / `openapi_snapshot` / `threat_model_gate --release 2.11.1` 全绿。
+
 ## 2.11.0 — 迁移可运维性: expand 语义门禁与 N/N+1 混跑矩阵 (2026-09-07)
 
 Version 2.11.0 把 42.2 expand/migrate/contract 纪律从"标注门禁"升级为"执行级语义门禁"，并同步 README 到 2.10.0 面。
