@@ -1,6 +1,12 @@
 """Rebuild app/main.py from the backup, removing extracted route blocks and
 mounting the domain routers (Phase 27.2). Line numbers are 1-based against
 app/main.py.bak (the pre-split single file).
+
+This is historical one-shot tooling: it *replaces* app/main.py wholesale with a
+reconstruction of the pre-split file, so anything added since the split is
+dropped, and the block ranges below only make sense against that 1.3.0-era
+snapshot. It therefore refuses to write without an explicit ``--apply``,
+matching ``scripts/split_main.py``.
 """
 
 from __future__ import annotations
@@ -78,4 +84,11 @@ def rebuild() -> None:
 
 if __name__ == "__main__":
     use_utf8_console()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="actually rewrite app/main.py")
+    args = parser.parse_args()
+    if not args.apply:
+        parser.error("refusing to overwrite app/main.py without --apply")
     rebuild()
