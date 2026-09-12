@@ -78,6 +78,13 @@ def build_router(deps: RouteDeps) -> APIRouter:
         in both the whitelist and the live table; when the row cannot be
         applied (missing required columns), the entry stays pending on the
         source so the worker retries and operations can inspect the failure.
+
+        The upsert is deliberately narrow: only the whitelisted columns the
+        payload actually carried may overwrite an existing row, so the
+        receiving cell's locally-maintained state (status, version, SLA
+        timestamps) survives replication. A conflict on a row id that belongs
+        to a *different* tenant is refused with 409 — the id is the primary key,
+        and a peer must not be able to take over another tenant's row.
         """
         from uuid import uuid4
 
@@ -107,29 +114,56 @@ def build_router(deps: RouteDeps) -> APIRouter:
                 )
             else:
                 incoming = payload.get("payload") or {}
-                values: dict[str, Any] = {
+                # Only the columns the source *actually replicated* may
+                # overwrite a target row.  The whitelist deliberately omits
+                # derived/summary columns (message_count, version, SLA
+                # timestamps) so the ingress cannot fight the target's own
+                # maintenance triggers — that intent was defeated as long as a
+                # whole-row replace ran on conflict.
+                replicated: dict[str, Any] = {
                     col: incoming.get(col) for col in allowed if col in incoming
                 }
-                # NOT NULL columns without a usable incoming value get a
-                # synthetic default so the apply never dies on a constraint.
+                if not replicated:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="replicated payload carries none of the whitelisted columns",
+                    )
+                # NOT NULL columns the payload did not carry get a synthetic
+                # default so a *first* insert cannot die on a constraint.  They
+                # are insert-only: as part of a conflict update they would reset
+                # real target-side values (status -> 'open', channel ->
+                # 'replicated') on every replicated change.
+                values: dict[str, Any] = dict(replicated)
                 for col, fallback in _REPLICATED_SYNTHETIC.get(table_name, {}).items():
                     if col in live_columns and col not in values:
                         values[col] = fallback
                 for time_col in ("created_at", "updated_at"):
                     if time_col in live_columns and time_col not in values:
                         values[time_col] = utc_now()
-                if not values:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="replicated payload carries none of the whitelisted columns",
-                    )
                 columns = ", ".join(values)
                 placeholders = ", ".join("?" for _ in values)
-                conn.execute(
-                    f"INSERT OR REPLACE INTO {table_name} (id, tenant_id, {columns}) "
-                    f"VALUES (?, ?, {placeholders})",
+                assignments = ", ".join(f"{col} = excluded.{col}" for col in replicated)
+                # Portable upsert: SQLite (>=3.24) and PostgreSQL both accept
+                # ``ON CONFLICT ... DO UPDATE``.  SQLite's ``INSERT OR REPLACE``
+                # is not portable (PostgreSQL has no such syntax, and the
+                # dialect layer does not translate it) and it is destructive:
+                # REPLACE deletes the conflicting row and re-inserts, so every
+                # column the source never sent reverts to its default on the
+                # target.  The ``WHERE`` guard also keeps a peer from renaming a
+                # row into another tenant: a conflict on an id owned by somebody
+                # else is refused rather than silently reassigned.
+                cursor = conn.execute(
+                    f"INSERT INTO {table_name} (id, tenant_id, {columns}) "
+                    f"VALUES (?, ?, {placeholders}) "
+                    f"ON CONFLICT(id) DO UPDATE SET {assignments} "
+                    f"WHERE {table_name}.tenant_id = excluded.tenant_id",
                     (row_id, tenant_id, *values.values()),
                 )
+                if not cursor.rowcount:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"replicated row {row_id} already belongs to another tenant",
+                    )
             conn.execute(
                 "INSERT INTO replication_log ("
                 " id, tenant_id, source_region, target_region, table_name, row_id,"
