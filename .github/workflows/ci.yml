@@ -213,6 +213,22 @@ jobs:
         # coverage; the drill writes its own ledger entry.
         run: python scripts/run_rls_drill.py
 
+      - name: PostgreSQL integration suite (dual-backend contract)
+        # Every SQLite-only SQL defect that has shipped reached production
+        # through the same hole: the persistence layer is written once against
+        # sqlite3 and adapted to PostgreSQL, the PG-gated suites that catch the
+        # divergence (2.3.0 cost-analytics date modifier, 2.4.0 SLA `IS ?`,
+        # 2.11.1 replication `INSERT OR REPLACE`) existed, and nothing ran
+        # them. This job already provisions a live cluster, so run them here.
+        # tests/test_drills.py stays excluded: its restore drill needs
+        # pg_dump/pg_restore from a locally installed client (PG_BIN).
+        env:
+          HELIX_PG_INTEGRATION: "1"
+          DATABASE_URL: host=127.0.0.1 port=5433 user=postgres password=helix dbname=postgres
+        run: |
+          python -m pytest tests/test_postgres.py tests/test_replication_ingress.py \
+            tests/test_multi_instance.py tests/test_migration_data_matrix.py -q
+
       - name: Threat-model governance recency (post-drills)
         run: python scripts/threat_model_gate.py --check-today --drill-max-days 90
 
