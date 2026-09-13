@@ -10,6 +10,13 @@ The adapter handles:
 
 * ``?`` -> ``%s`` placeholder translation (string-literal aware).
 * ``INSERT OR IGNORE`` -> ``INSERT ... ON CONFLICT DO NOTHING``.
+* ``INSERT OR REPLACE`` -> rejected with a diagnostic ``reject`` directive.
+  PostgreSQL has no such syntax, and the SQLite form is destructive on
+  conflict (it deletes the row and re-inserts it, dropping every column the
+  source never supplied), so silently forwarding it would either fail deep in
+  the server or quietly discard target-side state.  Call sites must spell the
+  upsert portably as ``INSERT ... ON CONFLICT (...) DO UPDATE``, which both
+  backends accept.
 * ``PRAGMA`` statements -> no-ops (or ``information_schema`` lookups).
 * ``sqlite_master`` introspection -> ``information_schema``.
 * SQLite ``CREATE TRIGGER``/FTS5 DDL -> skipped or rejected, so the caller's
@@ -50,6 +57,19 @@ _PRAGMA_TABLE_INFO = re.compile(
 )
 _SQLITE_MASTER = re.compile(r"\bsqlite_master\b", re.IGNORECASE)
 _INSERT_OR_IGNORE = re.compile(r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\b", re.IGNORECASE)
+_INSERT_OR_REPLACE = re.compile(r"^\s*INSERT\s+OR\s+REPLACE\s+INTO\b", re.IGNORECASE)
+# Emitted instead of the statement when the construct cannot be made portable.
+# ``execute``/``executemany`` turn it into a hard failure rather than emitting
+# SQL the server will reject with a bare syntax error.  This only guards the
+# PostgreSQL backend — the SQLite path talks to sqlite3 directly — so the
+# app-wide ban is enforced at build time by the source guard in
+# ``tests/test_pg_dialect_guard.py``.
+_REJECT_INSERT_OR_REPLACE = (
+    "reject:INSERT OR REPLACE is SQLite-only and destructive on conflict "
+    "(it deletes the conflicting row, so columns the source never sent revert "
+    "to their defaults). Rewrite it as INSERT ... ON CONFLICT (...) DO UPDATE, "
+    "which SQLite >= 3.24 and PostgreSQL both accept."
+)
 _COLLATE_NOCASE = re.compile(r"\s+COLLATE\s+NOCASE\b", re.IGNORECASE)
 _CREATE_TRIGGER = re.compile(r"^\s*CREATE\s+TRIGGER\b", re.IGNORECASE)
 _VIRTUAL_TABLE = re.compile(r"^\s*CREATE\s+VIRTUAL\s+TABLE\b", re.IGNORECASE)
@@ -182,13 +202,21 @@ def _qualify_upsert_self_references(sql: str) -> str:
     return head + ",".join(assignments)
 
 
+def _rejection(directive: str | None) -> str | None:
+    """Return the reason carried by a ``reject`` directive, if there is one."""
+    if directive and directive.startswith("reject:"):
+        return directive.split(":", 1)[1]
+    return None
+
+
 def translate(sql: str, has_params: bool = False) -> tuple[str, str | None]:
     """Translate one SQLite statement to PostgreSQL.
 
     Returns ``(sql, directive)`` where ``directive`` is ``"skip"`` for
     statements PostgreSQL neither needs nor understands (SQLite triggers,
-    ``PRAGMA`` tuning knobs), or ``"unsupported"`` for constructs whose failure
-    the caller is expected to handle (FTS5 virtual tables).
+    ``PRAGMA`` tuning knobs), ``"unsupported"`` for constructs whose failure
+    the caller is expected to handle (FTS5 virtual tables), or
+    ``"reject:<reason>"`` for SQL that must never reach either backend.
     """
     stripped = sql.strip()
     if not stripped:
@@ -218,6 +246,8 @@ def translate(sql: str, has_params: bool = False) -> tuple[str, str | None]:
     stripped = _CASE_WHEN_PARAM.sub("CASE WHEN (?)::int::boolean", stripped)
 
     append_on_conflict = False
+    if _INSERT_OR_REPLACE.match(stripped):
+        return stripped, _REJECT_INSERT_OR_REPLACE
     if _INSERT_OR_IGNORE.match(stripped):
         stripped = _INSERT_OR_IGNORE.sub("INSERT INTO", stripped, count=1)
         append_on_conflict = True
@@ -380,6 +410,9 @@ class PostgresConnection:
             return StatementResult([], 0)
         if directive == "unsupported":
             raise sqlite3.OperationalError(f"unsupported on postgresql: {sql.strip()[:60]}")
+        rejection = _rejection(directive)
+        if rejection is not None:
+            raise sqlite3.OperationalError(rejection)
         if directive and directive.startswith("table_info:"):
             params = (directive.split(":", 1)[1],)
 
@@ -408,6 +441,9 @@ class PostgresConnection:
         if not rows:
             return StatementResult([], 0)
         translated, directive = translate(sql, True)
+        rejection = _rejection(directive)
+        if rejection is not None:
+            raise sqlite3.OperationalError(rejection)
         if directive in ("skip", "unsupported"):
             return StatementResult([], 0)
 

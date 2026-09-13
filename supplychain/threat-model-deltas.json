@@ -228,6 +228,30 @@
         "migration gate OK（44 迁移链连续、12 phase 标注）、migration drill passed",
         "pytest 全量绿、ruff 0.9.9/pyright 0 errors、browser job CI 全绿"
       ]
+    },
+    {
+      "release": "2.11.1",
+      "date": "2026-09-12",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "跨 cell 复制入口（POST /api/internal/replication/apply）冲突更新加租户守卫：行 id 与既有行冲突但租户不同时以 409 拒绝，不再允许对端把别的租户的会话改写进自己的租户",
+        "复制入口 upsert 改为可移植形式（ON CONFLICT(id) DO UPDATE SET 复制的列 = excluded.列）：SQLite 与 PostgreSQL 双后端可用，消除生产档位（PostgreSQL）上入口 500 的可用性缺陷",
+        "冲突更新只覆盖源侧载荷实际携带的白名单列：REPLACE 的整行替换语义（含合成占位默认值）不再冲掉目标 cell 的 status/version/SLA 时间戳等本地运行态",
+        "方言层 reject 指令：INSERT OR REPLACE 在 PostgreSQL 适配层硬失败并携带改写指引，不再产出会让服务器报裸语法错误的 SQL",
+        "源码守卫 tests/test_pg_dialect_guard.py：app/ 内禁止 INSERT OR REPLACE INTO 语句（docstring 除外），防止同类缺陷再次静默上线",
+        "CI supply-chain 作业新增 PostgreSQL 集成套件步骤（HELIX_PG_INTEGRATION=1 + 既有 PG 服务）：把三个已发货的 SQLite-only SQL 缺陷所共用的漏检路径——PG 门控套件从未在 CI 运行——合上；覆盖 test_postgres/test_replication_ingress/test_multi_instance/test_migration_data_matrix/test_drills，其中备份恢复演练需 pg_dump/psql，步骤内安装 postgresql-client-16 并置 PG_BIN=/usr/bin",
+        "历史重写脚本防护：scripts/rebuild_main.py 按 1.3.0 快照的硬编码行号整份覆盖 app/main.py，原本裸运行即写；现与 scripts/split_main.py 一致改为要求显式 --apply，并由 tests/test_script_guards.py 断言两个脚本在无 --apply 时拒绝写入且 app/main.py 字节不变"
+      ],
+      "verification_evidence": [
+        "真实 PostgreSQL 18.4（工作区 data/pgrun，5433）复现旧语句：psql 报 语法错误 在 \"OR\" 或附近的；新语句 INSERT 0 1 且 status/version/last_message_at 逐位保持",
+        "红光：修复前 tests/test_replication_ingress.py 新增断言在 SQLite 侧失败（'open' != 'resolved'）并在 PostgreSQL 侧 4 例全错；修复后 SQLite+PG 合计 20 例全绿（tests.test_replication_ingress + tests.test_pg_dialect_guard，HELIX_PG_INTEGRATION=1）",
+        "tests/test_replication_ingress.py 契约抽为后端无关 mixin，SQLite 与 PG 各跑一遍（冲突保全/合成默认值仅插入/新建行仍拿默认值/跨租户 409）",
+        "tests/test_pg_dialect_guard.py 6 例全绿（守卫自证 + 全 app 源码扫描 + reject 指令 + execute/executemany 两条路径 + INSERT OR IGNORE 未被误伤）",
+        "新增 CI 步骤的同一命令本地对真实 PostgreSQL 18 实跑：tests/test_postgres + test_replication_ingress + test_multi_instance + test_migration_data_matrix + test_drills 共 105 passed、0 skipped（394s，EXIT=0；其中备份恢复演练为真实 pg_dump→DROP SCHEMA→psql 恢复往返）",
+        "scripts/rebuild_main.py 守卫红光取证：把 MAIN 重定向到临时目录后调用 rebuild()，确实产出 714 行的旧重建文件（对照当前 app/main.py 525 行），说明守卫拦住的是真实的整份覆盖；真实 app/main.py 在测试前后 sha256 一致（719c8d93…）",
+        "无回归：tests.test_postgres / test_cost_attribution / test_region_replication 94 例 passed（27 skipped）；ruff 0.9.9 format --check 356 文件全格式化、check 全绿；migration_gate / openapi_snapshot / threat_model_gate --release 2.11.1 全绿"
+      ]
     }
   ]
 }

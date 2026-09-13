@@ -213,6 +213,35 @@ jobs:
         # coverage; the drill writes its own ledger entry.
         run: python scripts/run_rls_drill.py
 
+      - name: Install PostgreSQL client (backup/restore drill)
+        # tests/test_drills.py shells out to pg_dump/psql. pg_dump refuses to
+        # dump a server newer than itself, so the client major has to reach the
+        # service's (postgres:16 above); ubuntu-latest carries 16 in its own
+        # archive, which is why the package is pinned rather than generic.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16
+          pg_dump --version
+
+      - name: PostgreSQL integration suite (dual-backend contract)
+        # Every SQLite-only SQL defect that has shipped reached production
+        # through the same hole: the persistence layer is written once against
+        # sqlite3 and adapted to PostgreSQL, the PG-gated suites that catch the
+        # divergence (2.3.0 cost-analytics date modifier, 2.4.0 SLA `IS ?`,
+        # 2.11.1 replication `INSERT OR REPLACE`) existed, and nothing ran
+        # them. This job already provisions a live cluster, so run them here.
+        # test_drills.py goes last on purpose: its PostgreSQL drill drops and
+        # restores the public schema, so it must not do that under a suite that
+        # is still holding the database.
+        env:
+          HELIX_PG_INTEGRATION: "1"
+          DATABASE_URL: host=127.0.0.1 port=5433 user=postgres password=helix dbname=postgres
+          PG_BIN: /usr/bin
+        run: |
+          python -m pytest tests/test_postgres.py tests/test_replication_ingress.py \
+            tests/test_multi_instance.py tests/test_migration_data_matrix.py \
+            tests/test_drills.py -q
+
       - name: Threat-model governance recency (post-drills)
         run: python scripts/threat_model_gate.py --check-today --drill-max-days 90
 

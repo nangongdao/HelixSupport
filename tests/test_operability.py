@@ -20,7 +20,7 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.main import create_app
+from app.main import APP_VERSION, create_app
 
 ADMIN_KEY = "ops-admin-key-0001"
 OPERATOR_KEY = "ops-op-key-000001"
@@ -66,7 +66,11 @@ class DiagnosticsTests(unittest.TestCase):
         body = response.json()
         for key in ("version", "config", "queue", "turn_worker", "audit_chain_head"):
             self.assertIn(key, body, f"missing diagnostics key {key}")
-        self.assertEqual(body["version"], "2.11.0")
+        # The bundle must report the running build's version. Comparing against
+        # the constant rather than a literal keeps this assertion about the
+        # invariant (bundle agrees with the build) instead of about the release
+        # number, which otherwise has to be edited on every version bump.
+        self.assertEqual(body["version"], APP_VERSION)
         # Config is redacted: no secrets.
         self.assertNotIn("api_keys", body["config"])
         self.assertNotIn("secret", json.dumps(body["config"]))

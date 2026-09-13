@@ -507,7 +507,13 @@ before promoting v2.
 **Multi-cell** (`CELL_REGISTRY_JSON`): when a registry is configured, the
 process starts per-peer replication workers (internal-authenticated
 `POST /api/internal/replication/apply`) and periodic cell health checks as
-background tasks. **Regional failover** is an operator runbook, not an
+background tasks. The ingress applies a payload as a portable upsert
+(`ON CONFLICT(id) DO UPDATE`) and only ever overwrites the whitelisted columns
+the source actually sent — columns maintained locally on the receiving cell
+(`status`, `version`, SLA timestamps, …) are left alone, synthetic NOT NULL
+defaults apply to first inserts only, and a conflict on a row id owned by
+another tenant is refused with 409 rather than reassigned.
+**Regional failover** is an operator runbook, not an
 automatic behavior: `python scripts/run_region_failover.py --target-region
 <r> [--dry-run]` verifies target-cell health, enforces data residency, and
 publishes a signed new control-plane snapshot; `--dry-run` validates without
