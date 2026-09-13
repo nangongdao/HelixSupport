@@ -11,6 +11,8 @@ Version 2.11.1 收敛对跨 cell 复制入口（ROADMAP 2.2.2 / §43.4）的交�
 
 既有 `tests/test_replication_ingress.py` 只跑 SQLite 且从不触发冲突路径，两个半边都不可见——与 2.3.0 成本异常方言缺陷同属一类。
 
+同一轮审计还查到仓库里另有同类的"静默破坏"隐患：`scripts/split_main.py` 与 `scripts/rebuild_main.py` 都会整份覆盖 `app/main.py`。前者早已要求显式 `--apply`，后者却是裸运行即写——按 1.3.0 时代的硬编码行号，把当前 525 行的 `main.py` 换成 714 行的旧重建结果，连同 Phase 27.2 的路由挂载一起丢掉。
+
 **无后端契约变更**（入口新增 409 语义，且仅对跨租户 id 冲突生效）。
 
 ### Fixed
@@ -25,10 +27,12 @@ Version 2.11.1 收敛对跨 cell 复制入口（ROADMAP 2.2.2 / §43.4）的交�
 - **方言层 `reject` 指令**（`app/pg_dialect.py`）: `INSERT OR REPLACE` 不再原样透传，而是携带可诊断理由硬失败（`INSERT OR REPLACE is SQLite-only and destructive on conflict … Rewrite it as INSERT ... ON CONFLICT (...) DO UPDATE`），`execute` 与 `executemany` 两条路径一致。
 - **源码守卫**（`tests/test_pg_dialect_guard.py`）: 扫描 `app/` 内的 SQL 字符串常量禁止 `INSERT OR REPLACE INTO`（跳过 docstring，因此注释与说明文字仍可指称该构造）；含守卫自证断言（正例命中、可移植写法不误报）。与 2.3.0 的 `CostDialectPortabilityTests` 互补：那份守卫因具体缺陷而生，这份守护方言面本身。
 - **复制入口的 PostgreSQL 契约**（`tests/test_replication_ingress.py`）: 把入口契约抽成后端无关的 mixin，SQLite 与 `HELIX_PG_INTEGRATION=1` 门控的真实 PostgreSQL 各跑一遍（冲突保全、合成默认值仅插入、新建行仍拿默认值、跨租户 id 冲突 409）。
+- **重写脚本的守卫测试**（`tests/test_script_guards.py`）: 真跑两个脚本并断言它们在没有 `--apply` 时拒绝写入、且 `app/main.py` 字节不变；被测对象本身是破坏性的，所以用例先备份再比对，守卫一旦回归会以断言失败（而非损坏工作树）暴露。
 
 ### Changed
 
-- **CI 首次真正运行 PostgreSQL 集成套件**: supply-chain 作业本就为 RLS 演练起了 PostgreSQL 服务并装好 psycopg2/pytest，但三个"只有 SQLite 跑得通"的缺陷（2.3.0 成本分析的 `date(x, modifier)`、2.4.0 SLA 的 `IS ?`、本次复制入口的 `INSERT OR REPLACE`）能上线都是同一条路径——PG 门控套件存在，却从未在 CI 里跑过。新增步骤在该作业上运行 `test_postgres` / `test_replication_ingress` / `test_multi_instance` / `test_migration_data_matrix`（`HELIX_PG_INTEGRATION=1`，本地对真实 PostgreSQL 18 实跑 101 passed / 356s）。`test_drills` 的恢复演练需要本地安装的 `pg_dump`/`pg_restore`（`PG_BIN`），暂不纳入。
+- **CI 首次真正运行 PostgreSQL 集成套件**: supply-chain 作业本就为 RLS 演练起了 PostgreSQL 服务并装好 psycopg2/pytest，但三个"只有 SQLite 跑得通"的缺陷（2.3.0 成本分析的 `date(x, modifier)`、2.4.0 SLA 的 `IS ?`、本次复制入口的 `INSERT OR REPLACE`）能上线都是同一条路径——PG 门控套件存在，却从未在 CI 里跑过。新增步骤在该作业上运行 `test_postgres` / `test_replication_ingress` / `test_multi_instance` / `test_migration_data_matrix` / `test_drills`（`HELIX_PG_INTEGRATION=1`，本地对真实 PostgreSQL 18 实跑 105 passed / 0 skipped / 394s）。备份恢复演练此前被排除在 CI 之外（需要本地 `pg_dump`/`psql`），现补一步安装 `postgresql-client-16` 并置 `PG_BIN=/usr/bin`——客户端主版本必须 ≥ 服务端（`postgres:16`），所以钉版本而非装发行版默认包。`test_drills` 排在最后：它的 PG 演练会 DROP/RESTORE `public` schema，不能在其他套件还握着库的时候做。
+- **`scripts/rebuild_main.py` 加显式开关**: 与同目录的 `scripts/split_main.py` 对齐，裸运行改为 `parser.error("refusing to overwrite app/main.py without --apply")`；docstring 标明它是针对 1.3.0 快照的一次性历史工具。
 - **诊断包版本断言去硬编码**（`tests/test_operability.py`）: 原本写死 `body["version"] == "2.11.0"`，每次版本递增都要改测试。改为与 `APP_VERSION` 比较——断言的不变量是"诊断包与构建版本一致"，不是某个版本字面量。
 - **`api/openapi.json` 版本同步**: `info.version` 2.11.0 → 2.11.1（门禁的比较器不覆盖该字段，但发布物应与实际版本一致；`tests/test_openapi_gate.py::test_snapshot_is_current_with_code` 会做逐字节比对，可用 `--dump` 重生成）。
 - **版本号**: `app/main.py` APP_VERSION 更新至 "2.11.1"（含 `supplychain/threat-model-deltas.json` 的 2.11.1 delta）。
