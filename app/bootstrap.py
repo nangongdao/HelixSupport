@@ -419,6 +419,13 @@ def build_application(settings: Settings) -> ApplicationContext:
         control_plane = None
         data_plane_config = None
 
+    # H04/T02: the orchestrator's model gate resolves the control plane through
+    # ``orchestrator.data_plane_config``, but the plane is built after the
+    # orchestrator (it owns the tenant snapshot store). Attach it here so the
+    # 43.5 disable surface actually reaches the turn path in production — the
+    # gate had only ever been wired in tests before this.
+    orchestrator.data_plane_config = data_plane_config
+
     # Phase 41.4 DATA: DSR SLA/approval board, deletion-proof tombstones, and a
     # deferred queue for large deletions (kept off the synchronous API path).
     from app.privacy import DataProtectionService
@@ -504,7 +511,11 @@ def build_application(settings: Settings) -> ApplicationContext:
         quality=quality_service,
         prompts=PromptRegistry(database),
         copilot=CopilotService(
-            database, provider, orchestrator.languages, cost_attribution_service
+            database,
+            provider,
+            orchestrator.languages,
+            cost_attribution_service,
+            model_gate=orchestrator.model_gate,
         ),
         reports=report_service,
         attachments=attachment_service,

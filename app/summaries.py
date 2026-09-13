@@ -7,6 +7,10 @@ when a ``ModelProvider`` is configured its output is preferred, and any failure
 (provider error, malformed JSON, empty result) falls back to the deterministic
 summary projection built from the conversation row and its recent messages, so
 the lifecycle path never waits on an external model.
+
+H04/T02: generation first clears the tenant's model policy through the shared
+:class:`~app.model_gateway.ModelCallGate`; a refused call is never attempted
+and the deterministic projection is used instead.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import logging
 from typing import Any
 
 from app.cost_attribution import InferenceContext, record_model_response
+from app.model_gateway import PURPOSE_SUMMARY, ModelCallGate
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -67,10 +72,14 @@ class SummaryService:
         database: Any,
         model_provider: ModelProvider | None = None,
         cost_attribution: Any = None,
+        *,
+        model_gate: ModelCallGate | None = None,
     ) -> None:
         self.database = database
         self.model_provider = model_provider
         self.cost_attribution = cost_attribution
+        # H04/T02: the tenant policy is consulted before any transport.
+        self.model_gate = model_gate
 
     # ------------------------------------------------------------- generation
 
@@ -101,7 +110,9 @@ class SummaryService:
         if conversation is None:
             raise LookupError("Conversation not found")
         messages = self.database.list_messages(tenant_id, conversation_id, limit=100)
-        if self.model_provider is not None:
+        if self.model_provider is not None and (
+            self.model_gate is None or self.model_gate.is_allowed(tenant_id, PURPOSE_SUMMARY)
+        ):
             try:
                 content, response = self._model_summary(kind, conversation, messages)
                 record_model_response(

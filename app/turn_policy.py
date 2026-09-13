@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
-from app.database import utc_now
 from app.domain import AgentName, ConversationStatus, RiskAssessment, TriageDecision
-from app.model_provider import ModelPolicyDecision, check_model_policy
+from app.model_gateway import ModelCallGate
+from app.model_provider import ModelPolicyDecision
 from app.prompts import PromptVersion
 from app.turn_services import TurnServices
 
@@ -292,17 +292,11 @@ class TurnPolicyStage:
 
         Returns ``(exceeded, used, limit)``. ``limit`` is None when the tenant
         has no budget configured (unlimited), in which case ``exceeded`` is
-        always False -- the backward-compatible default.
+        always False -- the backward-compatible default. The check itself lives
+        in the shared gate so the main chain and the auxiliary model calls
+        cannot drift apart (H04/T02).
         """
-        try:
-            policy = self.services.database.get_tenant_model_policy(tenant_id)
-        except LookupError:
-            return False, 0, None
-        limit = policy["daily_turn_budget"]
-        if limit is None:
-            return False, 0, None
-        used = self.services.database.get_tenant_daily_usage(tenant_id, utc_now()[:10])
-        return used >= limit, used, limit
+        return self._gate().budget_exceeded(tenant_id)
 
     def _model_allowed(self, tenant_id: str, model_ref: str | None) -> bool:
         """Enforce the tenant's allowed-models allow-list (Phase 19.4).
@@ -311,41 +305,36 @@ class TurnPolicyStage:
         ``model_ref`` outside the allow-list is not permitted for this tenant;
         the turn then falls back to the deterministic routing path.
         """
-        try:
-            policy = self.services.database.get_tenant_model_policy(tenant_id)
-        except LookupError:
-            return True
-        allowed = policy["allowed_models"]
-        if not allowed or not model_ref:
-            return True
-        return model_ref in allowed
+        return self._gate().model_allowed(tenant_id, model_ref)
 
     def _governance_decision(self, tenant_id: str, model_ref: str | None) -> ModelPolicyDecision:
         """Evaluate the 43.5 control-plane disable surface for one model ref.
 
-        Reads ``model_policy`` (disabled providers/models, data-egress flag)
-        from the signed control-plane policy when one is attached; without a
-        control plane, an unreachable plane, or no snapshot the check passes —
-        the pre-43.5 fail-open default is preserved so existing deployments
-        are unaffected.
+        Delegates to the shared gate, which reads ``model_policy`` (disabled
+        providers/models, data-egress flag) from the signed control-plane
+        policy when one is attached; without a control plane, an unreachable
+        plane, or no snapshot the check passes -- the pre-43.5 fail-open
+        default is preserved so existing deployments are unaffected.
         """
-        plane = getattr(self.services, "data_plane_config", None)
-        if plane is None:
-            return ModelPolicyDecision(True, "")
-        try:
-            policy = plane.effective_policy(tenant_id).model_policy or {}
-        except Exception:
-            # PolicyUnavailableError / lookup failure: keep serving with the
-            # 19.4 surface only rather than blocking every turn.
-            logger.info("model governance policy unavailable; skipping 43.5 gate")
-            return ModelPolicyDecision(True, "")
-        tenant_region = "local"
-        try:
-            quota = self.services.database.get_tenant_quota(tenant_id)
-            tenant_region = str(quota.get("region") or "local")
-        except LookupError:
-            pass
-        return check_model_policy(policy, model_ref, tenant_region=tenant_region)
+        return self._gate().governance_decision(tenant_id, model_ref)
+
+    def _gate(self) -> ModelCallGate:
+        """Resolve the shared model gate for this turn (H04/T02).
+
+        The orchestrator always provides one; a services object without it (a
+        narrow test double) gets an equivalent gate built from what it does
+        expose, so there is exactly one implementation of the policy checks.
+        """
+        gate = getattr(self.services, "model_gate", None)
+        if gate is not None:
+            return gate
+        return ModelCallGate(
+            getattr(self.services, "database", None),
+            plane_resolver=lambda: getattr(self.services, "data_plane_config", None),
+            default_model_ref=getattr(
+                getattr(self.services, "settings", None), "openai_model", None
+            ),
+        )
 
 
 __all__ = ["TurnPolicyContext", "TurnPolicyResult", "TurnPolicyStage"]
