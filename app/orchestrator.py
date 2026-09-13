@@ -19,6 +19,7 @@ from app.connectors import (
     SandboxKnowledgeConnector,
     SandboxOrderConnector,
 )
+from app.control_plane import DataPlaneConfig
 from app.conversation_lifecycle import ConversationLifecycleMixin
 from app.connectors_runtime import (
     CircuitBreakerRegistry,
@@ -104,12 +105,14 @@ class ConversationOrchestrator(ConversationLifecycleMixin):
         self.queue = queue or SQLiteTaskQueue(database)
         self.prompt_registry = PromptRegistry(database)
         self.quality_service = QualityService(database)
-        # H04/T02: one governed entry for every model transport (triage,
-        # language, summaries, copilot). The control plane is resolved lazily
-        # because deployments and tests attach ``data_plane_config`` to the
-        # orchestrator after construction; the default ref is the model the
-        # provider would use for a call that carries none, so a
-        # ``disabled_models`` entry can match an auxiliary call.
+        # H04/T02: declared here, attached by the composition root after
+        # construction (the plane owns the snapshot store and is built later),
+        # resolved lazily by the gate -- which is also the one governed entry
+        # for every model transport (triage, language, summaries, copilot).
+        # ``default_model_ref`` is the model the provider would use for a call
+        # that carries none, so a ``disabled_models`` entry can match an
+        # auxiliary call.
+        self.data_plane_config: DataPlaneConfig | None = None
         self.model_gate = ModelCallGate(
             database,
             plane_resolver=lambda: getattr(self, "data_plane_config", None),

@@ -363,6 +363,38 @@ class BootstrapWiringTests(unittest.TestCase):
             finally:
                 ctx.database.close()
 
+    def test_orchestrator_declares_the_plane_it_has_not_been_given_yet(self) -> None:
+        """The plane attribute belongs to the orchestrator, not to bootstrap.
+
+        bootstrap builds the plane *after* the orchestrator and then assigns it,
+        so the orchestrator has to declare the attribute itself. An undeclared
+        attribute type-checks as unknown (``reportAttributeAccessIssue`` -- CI
+        rejected exactly that) and makes the fail-open default implicit. Pin the
+        declaration at runtime so a local gate set without pyright still sees
+        its removal.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                database_path=root / "orchestrator.db",
+                auth_mode="demo",
+                docs_enabled=False,
+                turn_worker_enabled=False,
+                eval_worm_dir=str(root / "worm"),
+            )
+            database = Database(settings.database_path)
+            database.initialize()
+            database.ensure_tenant(TENANT)
+            try:
+                orchestrator = ConversationOrchestrator(database, settings)
+                # Declared, not injected: reading it before bootstrap runs is
+                # legal and yields the "no control plane" default.
+                self.assertIsNone(orchestrator.data_plane_config)
+                self.assertIsNone(orchestrator.model_gate.plane_resolver())
+                self.assertTrue(orchestrator.model_gate.is_allowed(TENANT, PURPOSE_LANGUAGE_DETECT))
+            finally:
+                database.close()
+
     def test_short_secret_leaves_the_gate_fail_open(self) -> None:
         from app.bootstrap import build_application
 

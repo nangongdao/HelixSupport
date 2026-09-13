@@ -27,10 +27,12 @@ Version 2.12.0 是路线图 H04 / T02 的第一个切片（工作区 `docs/devel
 
 ### Tests
 
-- 新增 `tests/test_model_call_governance.py`（25 例）：闸门三个面（预算/白名单/禁用面与区域出境）逐项断言，`ModelCallDenied`/未知用途/无策略 fail-open 边界，五处辅助调用在"拒绝→transport 计数为 0、回退到规则"与"放行→恰好 1 次模型调用"两侧都验证（后者守住"闸门没有把一切都关掉"），以及装配层断言 `orchestrator.data_plane_config`、`model_gate` 与三个辅助服务共享同一闸门、密钥过短时保持 fail-open。
+- 新增 `tests/test_model_call_governance.py`（26 例）：闸门三个面（预算/白名单/禁用面与区域出境）逐项断言，`ModelCallDenied`/未知用途/无策略 fail-open 边界，五处辅助调用在"拒绝→transport 计数为 0、回退到规则"与"放行→恰好 1 次模型调用"两侧都验证（后者守住"闸门没有把一切都关掉"），以及装配层断言 `orchestrator.data_plane_config`、`model_gate` 与三个辅助服务共享同一闸门、密钥过短时保持 fail-open。
 - **红光**：实现前 `tests/test_model_call_governance.py` 无法导入 `app.model_gateway`（19 例无法收集），装配点与调用点均无治理；补齐闸门但未接线时，`zero_transports` 用例在语言/摘要/Copilot 面上失败（真实调用计数为 1）。
-- **绿光**：25 例全绿；受影响的既有套件 `test_ai_governance`/`test_multilingual`/`test_summaries`/`test_copilot`/`test_tenant_model_policy`/`test_audit_fixes`/`test_control_plane`/`test_cost_attribution` 146 例无回归。
-- 全量 `pytest tests`：1827 例（1780 通过、47 跳过、0 失败）+ `coverage --fail-under=85`：覆盖率 89%（14440 语句、1314 未覆盖），门禁通过；ruff 0.9.9 `format --check`/`check` 全仓 359 文件干净；`frontend_gate`（语法 + ≤400 行 + 351 前端用例）、`migration_gate`（44 迁移链连续）、`openapi_snapshot`、`threat_model_gate`（含 `--check-today --drill-max-days 90`）全绿。
+- **绿光**：26 例全绿；受影响的既有套件 `test_ai_governance`/`test_multilingual`/`test_summaries`/`test_copilot`/`test_tenant_model_policy`/`test_audit_fixes`/`test_control_plane`/`test_cost_attribution` 146 例无回归。
+- **交付后 CI 修正（pyright 类型门禁）**：首个 PR 的 `quality` 作业在 `python -m pyright app` 上报 `app/bootstrap.py` 赋值未声明属性（`Cannot assign to attribute "data_plane_config" ... reportAttributeAccessIssue`）。本机未安装 pyright，这道门禁不在本地可跑集合里，故只有 CI 能发现。改为在 `ConversationOrchestrator` 显式声明 `data_plane_config: DataPlaneConfig | None = None`（默认 None 即"无控制平面"→ fail-open），并补 `test_orchestrator_declares_the_plane_it_has_not_been_given_yet` 作为**本地**可见的运行时守卫（红光：去掉声明后该用例报 `AttributeError`）。无行为变更。
+- 全量 `pytest tests`：1828 例（1781 通过、47 跳过、0 失败）+ `coverage --fail-under=85`：覆盖率 89%（14442 语句、1319 未覆盖），门禁通过；ruff 0.9.9 `format --check`/`check` 全仓 359 文件干净；`frontend_gate`（语法 + ≤400 行 + 351 前端用例）、`migration_gate`（44 迁移链连续）、`openapi_snapshot`、`threat_model_gate`（含 `--check-today --drill-max-days 90`）全绿。
+- **本机环境敏感**（与本次改动无关，未触及遥测）：本机用户 site-packages 在本次交付期间装上了可选的 `opentelemetry` SDK，`test_telemetry_otel_branches::test_configure_logs_nothing_when_otel_absent` 与 `test_telemetry_edge::test_debug_log_emitted_at_span_end` 随之失败——两个用例断言的是"未安装 opentelemetry 时"的分支，而 `_reload_without_otel()` 只把 mock 的 otel 从 `sys.modules` 弹出，拦不住真实包，于是 `_otel_available` 仍为 True（已实测）。CI 不装 `[otel]` 额外依赖，故不受影响；本地跑这两个用例失败时不要当作回归。
 - **本切片未覆盖**（H04 其余项，留待后续）：翻译发生在最终文本质量检查之后（`turn_persist` 在 Quality 通过后翻译），翻译后的最终文本尚未再回炉做安全/质量复核；辅助调用也未计入每日预算消耗（当前仅在预算已耗尽时拒绝，不做预留）。
 
 ## 2.11.1 — 跨 cell 复制入口: 目标侧状态保全与 PostgreSQL 可用性 (2026-09-12)
