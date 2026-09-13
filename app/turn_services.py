@@ -24,6 +24,7 @@ from app.agents import (
 from app.config import Settings
 from app.database import Database
 from app.language import LanguageService
+from app.model_gateway import ModelCallGate
 from app.prompts import PromptRegistry
 from app.quality import QualityService
 from app.tools import ToolGateway
@@ -46,6 +47,10 @@ class TurnServices(Protocol):
     quality: QualityAgent
     quality_service: QualityService
     webhook_service: WebhookService | None
+    # H04/T02: the single governed entry for every model transport. The policy
+    # stage reads its budget/allow-list/disable-surface checks from here so the
+    # main chain and the auxiliary calls share one implementation.
+    model_gate: ModelCallGate
 
 
 __all__ = ["TurnServices"]

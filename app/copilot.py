@@ -13,6 +13,10 @@ falls back to a deterministic path — canned responses for suggestions, the
 language-aware knowledge search for recommendations, the original text for
 rewrites — so the operator workflow never waits on or breaks from the model.
 Internal notes never enter the suggestion/recommendation context.
+
+H04/T02: every model-backed path clears the tenant's policy through the shared
+:class:`~app.model_gateway.ModelCallGate` before transport; a refused call
+falls back to the deterministic path (canned responses / the original text).
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import logging
 from typing import Any
 
 from app.cost_attribution import InferenceContext, record_model_response
+from app.model_gateway import PURPOSE_COPILOT_REWRITE, PURPOSE_COPILOT_SUGGEST, ModelCallGate
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -64,6 +69,8 @@ class CopilotService:
         model_provider: ModelProvider | None = None,
         language_service: Any | None = None,
         cost_attribution: Any = None,
+        *,
+        model_gate: ModelCallGate | None = None,
     ) -> None:
         self.database = database
         self.model_provider = model_provider
@@ -71,6 +78,15 @@ class CopilotService:
         # absent, suggestions are drafted in the default language.
         self.language_service = language_service
         self.cost_attribution = cost_attribution
+        # H04/T02: both suggestions and rewrites clear the tenant policy
+        # through the shared gate before any transport.
+        self.model_gate = model_gate
+
+    def _permitted(self, purpose: str, tenant_id: str | None) -> bool:
+        """True when the tenant policy allows this model call."""
+        if self.model_gate is None:
+            return True
+        return self.model_gate.is_allowed(tenant_id, purpose)
 
     # ------------------------------------------------------------- suggestions
 
@@ -88,7 +104,7 @@ class CopilotService:
         limit = max(1, min(limit, 3))
         messages = self.database.list_messages(tenant_id, conversation_id, limit=100)
         language = conversation.get("language")
-        if self.model_provider is not None:
+        if self.model_provider is not None and self._permitted(PURPOSE_COPILOT_SUGGEST, tenant_id):
             try:
                 suggestions = self._model_suggestions(
                     conversation, messages, draft, language, tenant_id
@@ -191,7 +207,7 @@ class CopilotService:
         text = text.strip()
         if not text:
             return {"rewritten": text, "source": "rule", "tone": tone}
-        if self.model_provider is not None:
+        if self.model_provider is not None and self._permitted(PURPOSE_COPILOT_REWRITE, tenant_id):
             try:
                 response = self.model_provider.complete(
                     REWRITE_SYSTEM_PROMPT,

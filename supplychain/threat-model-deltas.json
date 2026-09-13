@@ -252,6 +252,28 @@
         "scripts/rebuild_main.py 守卫红光取证：把 MAIN 重定向到临时目录后调用 rebuild()，确实产出 714 行的旧重建文件（对照当前 app/main.py 525 行），说明守卫拦住的是真实的整份覆盖；真实 app/main.py 在测试前后 sha256 一致（719c8d93…）",
         "无回归：tests.test_postgres / test_cost_attribution / test_region_replication 94 例 passed（27 skipped）；ruff 0.9.9 format --check 356 文件全格式化、check 全绿；migration_gate / openapi_snapshot / threat_model_gate --release 2.11.1 全绿"
       ]
+    },
+    {
+      "release": "2.12.0",
+      "date": "2026-09-13",
+      "owner": "release-eng",
+      "approved_by": "platform-sec",
+      "controls": [
+        "统一治理闸门 app/model_gateway.py：triage/语言检测/语言翻译/摘要/Copilot 建议与改写全部先过同一份租户策略（每日预算 + allowed_models 白名单 + 控制平面 disabled_providers/disabled_models/数据出境区域），被拒时不发起 transport",
+        "封闭用途清单 MODEL_CALL_PURPOSES：未知 purpose 直接 ValueError，防止拼写错误静默开辟无治理调用路径；拒绝抛 ModelCallDenied（决定而非故障，不冒泡到 API 面）",
+        "拒绝可见：闸门拒绝记 model.call_denied（tenant/purpose/reason 维度），辅助调用无需自带审计即可观测被拒原因",
+        "default_model_ref 补足归属：辅助调用无 prompt 固定 model_ref，闸门以 Settings.openai_model 补齐，否则 check_model_policy 因 ref 不可归属而永不拒绝、disabled_models 对辅助调用形同虚设",
+        "策略检查收敛到一处：TurnPolicyStage._check_budget/_model_allowed/_governance_decision 委托闸门，主链与辅助调用共用同一实现，不再有两份 allow-list/预算逻辑",
+        "生产装配补接控制平面：build_application 在控制平面构建后设置 orchestrator.data_plane_config，43.5 禁用面在真实部署中首次生效（此前只在测试里手工挂载，生产一直 fail-open）；控制平面缺失/密钥过短/快照不可达仍 fail-open"
+      ],
+      "verification_evidence": [
+        "红光（实现前）：tests/test_model_call_governance.py 因 app.model_gateway 不存在而无法收集（19 例 error）；补齐闸门但未接线辅助调用时，语言检测/摘要/Copilot 的 zero-transport 断言失败——假 provider 真实收到 1 次调用",
+        "红光（装配）：bootstrap 此前从不设置 orchestrator.data_plane_config，grep 全仓 app/ 只有 turn_policy 一处读取、零处赋值，即 43.5 禁用面在生产从未生效",
+        "绿光：tests/test_model_call_governance.py 25 例全绿——三个策略面逐项、ModelCallDenied/未知 purpose/无策略 fail-open 边界、五处辅助调用在拒绝侧（transport=0 且回退规则）与放行侧（恰好 1 次模型调用）双向验证，装配层断言 orchestrator.data_plane_config/model_gate 与三服务共享同一闸门",
+        "无回归：test_ai_governance + test_multilingual + test_summaries + test_copilot + test_tenant_model_policy + test_audit_fixes + test_control_plane + test_cost_attribution 共 146 例通过",
+        "全量门禁：pytest tests 1827 例（1780 通过 / 47 跳过 / 0 失败）、coverage 89%（--fail-under=85 通过）；ruff 0.9.9 format --check 359 文件干净 / check 全绿；frontend_gate（语法 + 模块 ≤400 行 + 351 前端用例）、migration_gate（44 迁移链连续）、openapi_snapshot、threat_model_gate --check-today --drill-max-days 90 全绿",
+        "已知未验证边界：未跑真实供应商模型或渠道；区域出境与预算拒绝分支由假 provider 的 transport 计数验证，不代表真实网络行为"
+      ]
     }
   ]
 }

@@ -2,6 +2,37 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.12.0 — 模型调用统一治理: 辅助调用不再绕过租户策略 (2026-09-13)
+
+Version 2.12.0 是路线图 H04 / T02 的第一个切片（工作区 `docs/development-roadmap-2026-09-13.md`）：**每一次模型 transport 先过同一份租户策略**。
+
+**源码取证的两个既存缺陷**：
+
+1. **辅助模型调用完全没有租户策略。** `LanguageService.detect`（语言检测）、`LanguageService.translate`（回复翻译）、`SummaryService`（前情摘要/处置记录）、`CopilotService.suggest_reply`/`rewrite_tone`（坐席辅助）各自直接调用 `ModelProvider.complete`，不经预算、白名单或 43.5 禁用面。而 `TurnPolicyStage.ingest` 在 intake 阶段先做语言检测（`app/turn_policy.py`），预算/白名单/禁用裁决却排在其后——于是在"模型全局可用、但租户已禁用该 provider/model"的档位上，一次回合仍会从语言检测出口真实调用一次模型，且摘要与 Copilot 的每一次调用都不受租户约束。"一份策略事实覆盖所有模型调用"不成立。
+2. **43.5 控制平面禁用面在生产装配里从未接到编排器。** `TurnPolicyStage` 读 `orchestrator.data_plane_config`，而 `bootstrap.build_application` 只把它放进 `AppServices`，从未赋给 orchestrator（只有测试手工挂过）。即该禁用面在真实部署中一直 fail-open。
+
+**无后端契约变更**（不新增/修改任何 API 端点与响应字段）。
+
+### Added
+
+- **统一治理闸门 `app/model_gateway.py`**：`ModelCallGate` 把三项检查合成一个决定——每日回合预算（19.4）、`allowed_models` 白名单（19.4）、控制平面禁用面（43.5：`disabled_providers`/`disabled_models`/数据出境区域）。`MODEL_CALL_PURPOSES` 是封闭用途清单（`triage`/`language_detect`/`language_translate`/`summary`/`copilot_suggest`/`copilot_rewrite`），未知用途直接 `ValueError`，避免拼写错误静默开辟一条无治理调用路径；`authorize()` 拒绝时抛 `ModelCallDenied`（拒绝是决定而非故障，不冒泡到 API 面）。
+- **拒绝可见**：闸门拒绝时记 `model.call_denied` 计数（tenant/purpose/reason 维度），使"哪些调用因何被拒"无需调用方自行审计即可观测。
+- **`default_model_ref`**：辅助调用不携带 prompt 固定的 model_ref，闸门以部署默认模型（`Settings.openai_model`）补足——否则 `check_model_policy` 会因 ref 不可归属而永不拒绝，`disabled_models` 对辅助调用形同虚设。
+
+### Changed
+
+- **五处辅助调用接入闸门**：语言检测/翻译、摘要、Copilot 建议/改写在被拒时**不发起 transport**，改走各自既有的确定性回退（规则检测/原文/规则摘要/canned 建议）；三个服务的构造签名新增仅关键字参数 `model_gate`，既有位置参数调用方不受影响。
+- **策略检查收敛到一处**：`TurnPolicyStage._check_budget`/`_model_allowed`/`_governance_decision` 改为委托闸门，主链与辅助调用共用同一实现，不再存在两份 allow-list/预算逻辑（T02 "不新建平行 allow-list"）。
+- **生产装配补接控制平面**：`build_application` 在控制平面构建后设置 `orchestrator.data_plane_config`，43.5 禁用面在真实部署中首次生效；控制平面缺失、密钥过短或快照不可达仍按原语义 fail-open。
+
+### Tests
+
+- 新增 `tests/test_model_call_governance.py`（25 例）：闸门三个面（预算/白名单/禁用面与区域出境）逐项断言，`ModelCallDenied`/未知用途/无策略 fail-open 边界，五处辅助调用在"拒绝→transport 计数为 0、回退到规则"与"放行→恰好 1 次模型调用"两侧都验证（后者守住"闸门没有把一切都关掉"），以及装配层断言 `orchestrator.data_plane_config`、`model_gate` 与三个辅助服务共享同一闸门、密钥过短时保持 fail-open。
+- **红光**：实现前 `tests/test_model_call_governance.py` 无法导入 `app.model_gateway`（19 例无法收集），装配点与调用点均无治理；补齐闸门但未接线时，`zero_transports` 用例在语言/摘要/Copilot 面上失败（真实调用计数为 1）。
+- **绿光**：25 例全绿；受影响的既有套件 `test_ai_governance`/`test_multilingual`/`test_summaries`/`test_copilot`/`test_tenant_model_policy`/`test_audit_fixes`/`test_control_plane`/`test_cost_attribution` 146 例无回归。
+- 全量 `pytest tests`：1827 例（1780 通过、47 跳过、0 失败）+ `coverage --fail-under=85`：覆盖率 89%（14440 语句、1314 未覆盖），门禁通过；ruff 0.9.9 `format --check`/`check` 全仓 359 文件干净；`frontend_gate`（语法 + ≤400 行 + 351 前端用例）、`migration_gate`（44 迁移链连续）、`openapi_snapshot`、`threat_model_gate`（含 `--check-today --drill-max-days 90`）全绿。
+- **本切片未覆盖**（H04 其余项，留待后续）：翻译发生在最终文本质量检查之后（`turn_persist` 在 Quality 通过后翻译），翻译后的最终文本尚未再回炉做安全/质量复核；辅助调用也未计入每日预算消耗（当前仅在预算已耗尽时拒绝，不做预留）。
+
 ## 2.11.1 — 跨 cell 复制入口: 目标侧状态保全与 PostgreSQL 可用性 (2026-09-12)
 
 Version 2.11.1 收敛对跨 cell 复制入口（ROADMAP 2.2.2 / §43.4）的交付后审计发现的两层缺陷。该入口用 SQLite 专有的 `INSERT OR REPLACE` 写目标侧，于是：

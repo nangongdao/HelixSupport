@@ -38,6 +38,7 @@ from app.domain import (
     TurnInProgressError,  # noqa: F401  (re-export)
 )
 from app.language import LanguageService
+from app.model_gateway import ModelCallGate
 from app.model_provider import ModelProvider
 from app.prompts import PromptRegistry
 from app.quality import QualityService
@@ -103,13 +104,29 @@ class ConversationOrchestrator(ConversationLifecycleMixin):
         self.queue = queue or SQLiteTaskQueue(database)
         self.prompt_registry = PromptRegistry(database)
         self.quality_service = QualityService(database)
+        # H04/T02: one governed entry for every model transport (triage,
+        # language, summaries, copilot). The control plane is resolved lazily
+        # because deployments and tests attach ``data_plane_config`` to the
+        # orchestrator after construction; the default ref is the model the
+        # provider would use for a call that carries none, so a
+        # ``disabled_models`` entry can match an auxiliary call.
+        self.model_gate = ModelCallGate(
+            database,
+            plane_resolver=lambda: getattr(self, "data_plane_config", None),
+            default_model_ref=getattr(settings, "openai_model", None),
+        )
         # Backlog: session intelligent summaries — model-first, deterministic
         # projection fallback so the lifecycle path never depends on the model.
-        self.summaries = SummaryService(database, model_provider, cost_attribution=cost_attribution)
+        self.summaries = SummaryService(
+            database, model_provider, cost_attribution=cost_attribution, model_gate=self.model_gate
+        )
         # Backlog: multi-language customer service — script-based detection
         # with a model-first detector, and best-effort reply translation.
         self.languages = LanguageService(
-            model_provider, settings.service_language, cost_attribution=cost_attribution
+            model_provider,
+            settings.service_language,
+            cost_attribution=cost_attribution,
+            model_gate=self.model_gate,
         )
         # Phase 41.6 (ARC-001): the turn pipeline is composed of three deep
         # stages (policy/triage, specialist execution, persistence), each with

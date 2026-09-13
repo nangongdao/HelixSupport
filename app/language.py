@@ -10,6 +10,11 @@ Reply translation follows the same model-first contract: the assistant reply
 is translated to the customer's language when it differs from the service
 language; on any failure the original reply is returned unchanged and marked
 ``translated=False`` so the turn always completes.
+
+H04/T02: both calls first clear the tenant's model policy through the shared
+:class:`~app.model_gateway.ModelCallGate`. A refused call is not attempted —
+the deterministic detector / the original reply is used instead — so a tenant
+that disables the provider no longer egresses from the language surface.
 """
 
 from __future__ import annotations
@@ -20,6 +25,11 @@ import unicodedata
 from typing import Any
 
 from app.cost_attribution import InferenceContext, record_model_response
+from app.model_gateway import (
+    PURPOSE_LANGUAGE_DETECT,
+    PURPOSE_LANGUAGE_TRANSLATE,
+    ModelCallGate,
+)
 from app.model_provider import ModelProvider
 
 logger = logging.getLogger("helix")
@@ -137,10 +147,26 @@ class LanguageService:
         model_provider: ModelProvider | None = None,
         service_language: str = "zh",
         cost_attribution: Any = None,
+        *,
+        model_gate: ModelCallGate | None = None,
     ) -> None:
         self.model_provider = model_provider
         self.service_language = service_language
         self.cost_attribution = cost_attribution
+        # H04/T02: the tenant policy is consulted before any transport. The
+        # gate is absent only for callers that construct the service directly
+        # (tests, embedded use); the orchestrator always wires one.
+        self.model_gate = model_gate
+
+    def _permitted(self, purpose: str, tenant_id: str | None) -> bool:
+        """True when the tenant policy allows this model call.
+
+        Denial is a decision, not an error: every caller falls back to its
+        deterministic path and the turn never blocks on the gate.
+        """
+        if self.model_gate is None:
+            return True
+        return self.model_gate.is_allowed(tenant_id, purpose)
 
     def _record_cost(self, tenant_id: str | None, response: Any, agent: str) -> None:
         if tenant_id is None:
@@ -159,9 +185,10 @@ class LanguageService:
 
         ``source`` is ``"model"`` when the provider answered with a known
         code, otherwise ``"rule"``. Never raises: provider failures and
-        unusable output fall back to the deterministic detector.
+        unusable output fall back to the deterministic detector, and a tenant
+        policy refusal never reaches the transport at all.
         """
-        if self.model_provider is not None:
+        if self.model_provider is not None and self._permitted(PURPOSE_LANGUAGE_DETECT, tenant_id):
             try:
                 response = self.model_provider.complete(
                     DETECT_SYSTEM_PROMPT, f"Customer message:\n{text[:2000]}"
@@ -195,6 +222,8 @@ class LanguageService:
         if not target_language or target_language == self.service_language:
             return text, False, "none"
         if self.model_provider is None:
+            return text, False, "rule"
+        if not self._permitted(PURPOSE_LANGUAGE_TRANSLATE, tenant_id):
             return text, False, "rule"
         try:
             response = self.model_provider.complete(
