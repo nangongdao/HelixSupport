@@ -2,6 +2,38 @@
 
 所有版本遵循[语义化版本](https://semver.org)。API 变更遵循 `docs/API_POLICY.md`(响应体只增不改、弃用需 `Deprecation`/`Sunset` 头 + 至少一个次版本过渡、每次变更记录于此)。
 
+## 2.13.0 — 译后复核: 译文的批准不再继承原文 (2026-09-13)
+
+Version 2.13.0 收口路线图 H04 验收的最后一条：**翻译改变含义/引入敏感内容时不能沿用原文批准结论**（工作区 `docs/development-roadmap-2026-09-13.md`；2.12.0 段末已把该项列为未覆盖）。
+
+**源码取证**：主链上有两处内容检查，都不覆盖出站译文。
+
+1. `PolicyAgent.inspect`（`app/agents.py`）是唯一的内容检查器（注入/邮箱/电话/支付卡/凭据话题 + 脱敏）。它只在两处被调用：`app/turn_policy.py` 检查**客户入站消息**、`app/turn_execution.py` 检查**知识检索产物**。对出站回复——无论原文还是译文——零处调用。
+2. `QualityAgent.review`（`app/agents.py`）在 specialist 阶段审查**原文**回复，结论写进 `metadata["quality_approved"]`。而翻译发生在更晚的持久化阶段（`app/turn_persist.py`，2.12.0 段已记录其位置）：译文直接覆盖 `assistant_content` 发给客户，中间没有任何复核。于是一个在目标语言里幻觉出邮箱、卡号或指令覆盖的模型，可以把文本绕过全部检查送达客户，同时该回合仍记录 `quality_approved: true`。
+
+**无后端契约变更**（仅消息 metadata 新增字段，不改任何 API 端点与响应形状）。
+
+### Added
+
+- **译后复核 `app/turn_persist.py:introduced_risk_categories`**：译文在替换原文之前重新过同一份 `PolicyAgent.inspect`，返回"译文携带而原文没有"的风险类别。
+- **只拦新增类别**：判据是差集。原文已含的类别（例如正常回复引用的支持邮箱）在译文中重复不算新增——否则含邮箱的回复将永远无法本地化；这也避免把复核变成一刀切的禁译。
+- **拒绝可见可计数**：审计事件 `reply.translated` 的 payload 增加 `source: "rejected"` 与 `rejected_categories`；消息 metadata 增加 `translation_rejected_categories`，运营可据此告警。
+
+### Changed
+
+- **译文被拒时回退原文**：`translated=false`、`translation_source="rejected"`，`assistant_content` 保持已获批准的原文，且不写 `original_content`（没有发生替换）。回合照常完成，不因复核进入错误路径。
+- **复核只作用于翻译路径**：同语言回合（`translation_source="none"`）与既有回退（无 provider / transport 失败 / 译文为空）不受影响、不新增元数据。`LanguageService` 的 transport 与回退契约完全不变——拒绝发生在 transport 之后的裁决点。
+- 复用唯一的内容检查器，不新增第二份敏感词表（T02「不新建平行 allow-list」）。
+
+### Tests
+
+- 新增 `tests/test_translation_review.py`（12 例）。**单元层**（`introduced_risk_categories`）：干净译文零新增；幻觉邮箱 + 卡号被识别为 `["email","payment_card"]`；**原文已含邮箱时译文重复不算新增**（防误伤本地化）；译文引入 `prompt_injection` 与 `credential_topic` 被识别；类别顺序确定（便于审计比对）。**端到端**（走 API 主链）：译文注入 PII 时客户侧内容不含敏感串、`translated=false`、`translation_source="rejected"`、`translation_rejected_categories` 到位、`original_content` 不出现；译文引入注入指令被拒；**干净译文仍正常替换**（守住「没有把翻译整体关掉」）；审计 payload 带 `rejected_categories`；拒绝不阻断回合；同语言回合不引入复核元数据。
+- **红光**：实现前 `tests/test_translation_review.py` 无法导入 `app.turn_persist.introduced_risk_categories`（ImportError）。
+- **绿光**：12 例全绿；受影响的既有套件 `test_multilingual`/`test_turn_stages`/`test_turn_segments`/`test_model_call_governance` 共 61 例无回归。
+- 全量 `pytest tests`：1840 例（1794 通过、44 跳过、2 失败）+ `coverage --fail-under=85`：覆盖率 89%（14455 语句、1320 未覆盖），门禁通过；ruff 0.9.9 `format --check`/`check` 全仓 360 文件干净；`pyright app` 无实质错误（仅 57 条环境性 `reportMissingImports`）；`frontend_gate`（语法 + 模块 ≤400 行 + 351 前端用例）、`migration_gate`（44 迁移链连续）、`openapi_snapshot`、`threat_model_gate`（含 `--check-today --drill-max-days 90`）全绿。
+- **本机环境敏感（同 2.12.0 段，与本次改动无关）**：用户 site-packages 中已安装的可选 `opentelemetry` SDK 使 `test_telemetry_otel_branches` 与 `test_telemetry_edge` 各 1 例失败——两个用例断言的是"未安装 opentelemetry 时"的分支，`_reload_without_otel()` 只弹 mock、拦不住真实包。CI 不装 `[otel]`，故 CI 侧 0 失败。
+- **本切片未覆盖**（H04 其余项）：辅助调用仍不计入每日预算消耗（当前只在预算已耗尽时拒绝，不做预留）；语义层面的"改变含义"（例如把拒绝翻成批准）无法由确定性规则判定，本次只约束可确定检测的风险类别。
+
 ## 2.12.0 — 模型调用统一治理: 辅助调用不再绕过租户策略 (2026-09-13)
 
 Version 2.12.0 是路线图 H04 / T02 的第一个切片（工作区 `docs/development-roadmap-2026-09-13.md`）：**每一次模型 transport 先过同一份租户策略**。

@@ -18,7 +18,7 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from app.agents import AgentResult
+from app.agents import AgentResult, PolicyAgent
 from app.database import utc_now
 from app.domain import (
     ConversationStatus,
@@ -74,6 +74,30 @@ class TurnPersistOutcome:
     assistant_content: str
     assistant_message: dict[str, Any] | None
     elapsed: float
+
+
+def introduced_risk_categories(policy: PolicyAgent, original: str, translated: str) -> list[str]:
+    """Risk categories the translated text carries that the original did not.
+
+    H04: the specialist stage reviews the *original* reply and the policy
+    agent inspects inbound and retrieved text, but the translation is produced
+    later and used to replace the approved reply.  A model that hallucinated
+    an address, a card number, or an instruction-override in the target
+    language would have shipped it unseen while the turn still recorded
+    ``quality_approved: true``.
+
+    Only categories *new* to the translation block it: when the original
+    already carried (say) a support address, the translation repeating it adds
+    no risk and must stay translatable -- otherwise ordinary replies that
+    quote an address could never be localized.  The comparison reuses the one
+    policy implementation rather than growing a second checker.
+    """
+    original_categories = set(policy.inspect(original).categories)
+    return sorted(
+        category
+        for category in policy.inspect(translated).categories
+        if category not in original_categories
+    )
 
 
 class TurnPersistStage:
@@ -186,21 +210,37 @@ class TurnPersistStage:
                 translated, did_translate, translation_source = self.services.languages.translate(
                     result.content, inputs.language, tenant_id=tenant_id
                 )
+                # H04: the original's approval does not transfer to model-
+                # generated text in another language. Re-review the translated
+                # reply against the same policy surface and refuse it when it
+                # carries a risk the original did not.
+                rejected_categories: list[str] = []
+                if did_translate:
+                    rejected_categories = introduced_risk_categories(
+                        self.services.policy, result.content, translated
+                    )
+                    if rejected_categories:
+                        did_translate = False
+                        translation_source = "rejected"
                 if did_translate:
                     assistant_content = translated
                     metadata["original_content"] = result.content
                 metadata["translated"] = did_translate
                 metadata["translation_source"] = translation_source
+                audit_payload: dict[str, Any] = {
+                    "to_language": inputs.language,
+                    "translated": did_translate,
+                    "source": translation_source,
+                }
+                if rejected_categories:
+                    metadata["translation_rejected_categories"] = rejected_categories
+                    audit_payload["rejected_categories"] = rejected_categories
                 self.services.database.audit(
                     tenant_id,
                     conversation_id,
                     result.agent,
                     "reply.translated",
-                    {
-                        "to_language": inputs.language,
-                        "translated": did_translate,
-                        "source": translation_source,
-                    },
+                    audit_payload,
                 )
             else:
                 metadata["translated"] = False
